@@ -1335,6 +1335,13 @@ Int Solver::getBasicSolution(std::vector<double>& x, std::vector<double>& slack,
                                    cbasis, vbasis);
 }
 
+void Solver::getPointForCrossover(std::vector<double>& x,
+                                  std::vector<double>& slack,
+                                  std::vector<double>& y,
+                                  std::vector<double>& z) {
+  model_.postprocess(x, slack, y, z, *it_);
+}
+
 void Solver::maxCorrectors() {
   if (kMaxCorrectors > 0) {
     // Compute estimate of effort to factorise and solve
@@ -1394,12 +1401,5 @@ bool Solver::crossoverIsOn() const {
 bool Solver::solved() const { return statusIsSolved(); }
 bool Solver::stopped() const { return statusIsStopped(); }
 bool Solver::failed() const { return statusIsFailed(); }
-
-void Solver::getPointForCrossover(std::vector<double>& x,
-                                  std::vector<double>& slack,
-                                  std::vector<double>& y,
-                                  std::vector<double>& z) {
-  model_.postprocess(x, slack, y, z, *it_);
-}
 
 }  // namespace hipo
