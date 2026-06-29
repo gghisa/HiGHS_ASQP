@@ -123,6 +123,13 @@ void Model::postprocess(std::vector<double>& x, std::vector<double>& xl,
   preprocessor_.undo(point, *this, it);
 }
 
+void Model::postprocess(std::vector<double>& x, std::vector<double>& slack,
+                        std::vector<double>& y, std::vector<double>& z,
+                        const Iterate& it) const {
+  DroppedPoint point{x, slack, y, z};
+  preprocessor_.undo(point, *this, it);
+}
+
 void Model::computeNorms() {
   norm_scaled_obj_ = infNorm(c_);
 
@@ -424,8 +431,8 @@ void Model::adjustFreeVars(std::vector<double>& x, std::vector<double>& xl,
       // getting close to lower bound
       const double new_lower = x[i] / kFreeVarsCloseRatio;
       logger.printDetailed(
-          "Free var %5d is at %8.1e with lb %8.1e, lb changed to %8.1e\n", i, x[i],
-          lower_[i], new_lower);
+          "Free var %5d is at %8.1e with lb %8.1e, lb changed to %8.1e\n", i,
+          x[i], lower_[i], new_lower);
       lower_[i] = new_lower;
       xl[i] = x[i] - lower_[i];
     }
@@ -433,8 +440,8 @@ void Model::adjustFreeVars(std::vector<double>& x, std::vector<double>& xl,
       // getting close to upper bound
       const double new_upper = x[i] / kFreeVarsCloseRatio;
       logger.printDetailed(
-          "Free var %5d is at %8.1e with ub %8.1e, ub changed to %8.1e\n", i, x[i],
-          upper_[i], new_upper);
+          "Free var %5d is at %8.1e with ub %8.1e, ub changed to %8.1e\n", i,
+          x[i], upper_[i], new_upper);
       upper_[i] = new_upper;
       xu[i] = upper_[i] - x[i];
     }
