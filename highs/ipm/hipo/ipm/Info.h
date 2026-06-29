@@ -17,6 +17,7 @@ struct Info {
 
   // Status of solver, see IpmStatus.h
   Status status = kStatusNotRun;
+  bool pd_feas_found = false;
 
   // residuals and objectives of final solution
   double p_res_rel, p_res_abs, d_res_rel, d_res_abs, p_obj, d_obj, pd_gap;
