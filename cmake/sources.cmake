@@ -565,6 +565,7 @@ set(highs_headers
     qpsolver/a_asm.hpp
     qpsolver/a_quass.hpp
     qpsolver/g_quass.hpp
+    qpsolver/g_active_set.hpp
     qpsolver/basis.hpp
     qpsolver/dantzigpricing.hpp
     qpsolver/devexpricing.hpp
