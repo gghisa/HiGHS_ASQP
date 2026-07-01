@@ -25,6 +25,67 @@ void QpPhase1(HighsLp& lp, HighsModelStatus& model_status_,
     basis_ = highs.getBasis();
     solution_ = highs.getSolution();
     lp.col_cost_ = col_cost; // restore objective cost
+}
+
+class ActiveSet
+{
+    public:
+        explicit ActiveSet(std::vector<HighsBasisStatus>& col_status,
+                           std::vector<HighsBasisStatus>& row_status){
+            setActiveColRow(col_status, row_status); // construct basis by default. with hot starting may this be a problem?
+        };
+
+        void clear(){
+            this->active_col_.clear();
+            this->active_row_.clear();
+            this->status_col_.clear();
+            this->status_row_.clear();
+        }
+        // given a vector of statuses, extract whether active or not and the corresponding location index
+        HighsInt setActive(const std::vector<HighsBasisStatus>& status,
+                       std::vector<HighsInt>& index,
+                       std::vector<HighsBasisStatus>& active_status){
+            HighsInt count {0};
+            for (size_t i{0}; i<status.size(); i++){
+                if (status[i] == HighsBasisStatus::kLower ||
+                    status[i] == HighsBasisStatus::kUpper ||
+                    status[i] == HighsBasisStatus::kNonbasic){ // kNonbasic... does it ever happen after phase1?
+                    // when the constraints and bounds in the problem are less than the number of variables, then there may be kNonbasic elements
+                    // they are not in the simplex basis, yet we need them to construct the invertible matrix B = [A:V]
+                    index.push_back(i);
+                    active_status.push_back(status[i]);
+                    count++;
+                }
+            }
+            return count;
+        }
+        // define function to run after phase1 to extract columns and rows that are active
+        void setActiveColRow(const std::vector<HighsBasisStatus>& col_status,
+                          const std::vector<HighsBasisStatus>& row_status){
+            clear();
+            HighsInt count_col {0}, count_row{0};
+            count_col = setActive(col_status, this->active_col_, this->status_col_);
+            count_row = setActive(row_status, this->active_row_, this->status_row_);
+            assert(count_col + count_row == col_status.size()); // check  that the number of active contraints equals the number of variables
+        }
+
+        void print(){
+            std::cout<<"Active columns:\n";
+            for (size_t i {0}; i<active_col_.size(); i++){
+                std::cout<< active_col_[i] << " -- ";
+            }
+            std::cout<<"\nActive rows:\n";
+            for (size_t i {0}; i<active_row_.size(); i++){
+                std::cout<< active_row_[i] << " -- ";
+            }
+        }
+    private:
+        // define vectors for storing the indexes of the active columns and rows
+        std::vector<HighsInt> active_col_;
+        std::vector<HighsInt> active_row_;
+        // define vectors for storing the status of the active columns and rows
+        std::vector<HighsBasisStatus> status_col_;
+        std::vector<HighsBasisStatus> status_row_;
 };
 
 HighsModelStatus gQP(HighsLp& lp, HighsHessian& hessian,
@@ -41,37 +102,8 @@ HighsModelStatus gQP(HighsLp& lp, HighsHessian& hessian,
     // matrix factorization. This is Micheal's suggestion, is it indeed good to implement? How?
 
     QpPhase1(lp, model_status_, basis_, solution_, timer_); // simplex
-    // now we need to create a list of QP basis which we will use to track active and inactive constraints
-    std::vector<HighsInt> active_set(lp.num_col_); // the active set should be as large as there are degrees of freedom
-    // then we need to keep track of where these active constraints/bounds are active or if they are free variables
-    std::vector<HighsBasisStatus> active_status(lp.num_col_); // for each element in active_set, there is a correponding entry here
-    // these two are going to be modified together, so it would make sense to merge them into a class and operate on them at the same time
-
-    // extract basis indexes and assign negative indexes to rows (from -1) and nonnegative indexes to columns
-    // inactive statuses are kZero and kBasic. What is kNonbasic exactly? It should not occurr
-    HighsInt k {0};
-    for (int i{0}; i<lp.num_col_; i++){
-        if (basis_.col_status[i] == HighsBasisStatus::kLower ||
-            basis_.col_status[i] == HighsBasisStatus::kUpper ||
-            basis_.col_status[i] == HighsBasisStatus::kNonbasic){
-            active_set[k] = i;
-            active_status[k] = basis_.col_status[i];
-            std::cout<< i<< " " << "active" <<"\n";
-            k++;
-        };
-    };
-    for (int i{0}; i<lp.num_row_; i++){
-        if (basis_.row_status[i] == HighsBasisStatus::kLower ||
-            basis_.row_status[i] == HighsBasisStatus::kUpper ||
-            basis_.row_status[i] == HighsBasisStatus::kNonbasic){
-            active_set[k] = -1 -i;
-            active_status[k] = basis_.row_status[i];
-            std::cout<< -1 -i<< " " << "active"<<"\n";
-            k++;
-        };
-    };
-    assert (k == lp.num_col_); // check that we have as many active constraints as variables
-
+    ActiveSet active_set(basis_.col_status, basis_.row_status); // extract active set
+    active_set.print(); // debug TOREMOVE
     // Once an initial basis is found, we can set up the loop to check whether the current point solves the current FSEP
     // by checking that a trivial step solves the EP
 
@@ -82,6 +114,6 @@ HighsModelStatus gQP(HighsLp& lp, HighsHessian& hessian,
 
     // what do we need to keep track of while we solve? timer/logging....?
 
-    printf("from inside my QP solver!!!!!\n");
+    std::cout<< "\nfrom inside my QP solver!!!!!"<<"\n";
     return HighsModelStatus::kNotset;
-};
+}
