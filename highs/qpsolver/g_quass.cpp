@@ -7,19 +7,18 @@
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 #include "qpsolver/g_quass.hpp"
 
-
 void QpPhase1(HighsLp& lp, HighsModelStatus& model_status_,
                           HighsBasis& basis_, HighsSolution& solution_,
                           HighsTimer& timer_){
-    
     // set up new linear problem
     std::vector<double> col_cost {lp.col_cost_}; // store objective cost
     lp.col_cost_.assign(lp.num_col_, 0.0); // zero out all costs
     // create Highs lp
     Highs highs;
     highs.passModel(lp);
-    highs.setOptionValue("presolve", kHighsOffString); // don't presolve phase1
+    highs.setOptionValue("presolve", kHighsOnString); // presolving phase1 makes it faster, im guessing the postsolve is included
     highs.setOptionValue("output_flag", false); // don't print anything
+    highs.setOptionValue("simplex_strategy", kSimplexStrategyPrimal); // do we need to specify this? is it always the faster option?
     HighsStatus status_phase1 = highs.run();
     if (status_phase1 == HighsStatus::kError) return; // why not returning after extracting the model status too?
     model_status_ = highs.getModelStatus(); // note Optimal in Phase1 is Feasible for ASM
@@ -41,7 +40,20 @@ HighsModelStatus gQP(HighsLp& lp, HighsHessian& hessian,
     // is as small as possible to start with, so that factorization of the reduced hessian does not start with a large
     // matrix factorization. This is Micheal's suggestion, is it indeed good to implement? How?
 
-    QpPhase1(lp, model_status_, basis_, solution_, timer_);
+    QpPhase1(lp, model_status_, basis_, solution_, timer_); // simplex
+    // now we need to create a list of QP basis which we will use to track active and inactive constraints
+    std::vector<HighsInt> active_set(lp.num_col_); // the active set should be as large as there are degrees of freedom
+    // then we need to keep track of where these active constraints/bounds are active or if they are free variables
+    std::vector<HighsBasisStatus> active_status(lp.num_col_); // for each element in active_set, there is a correponding entry here
+    // these two are going to be modified together, so it would make sense to merge them into a class and operate on them at the same time
+
+    // extract basis indexes and assign negative indexes to rows (from -1) and nonnegative indexes to columns
+    for (int i{0}; i<lp.num_col_; i++){
+
+    };
+    for (int i{0}; i<lp.num_row_; i++){
+
+    };
 
     // Once an initial basis is found, we can set up the loop to check whether the current point solves the current FSEP
     // by checking that a trivial step solves the EP
