@@ -48,12 +48,29 @@ HighsModelStatus gQP(HighsLp& lp, HighsHessian& hessian,
     // these two are going to be modified together, so it would make sense to merge them into a class and operate on them at the same time
 
     // extract basis indexes and assign negative indexes to rows (from -1) and nonnegative indexes to columns
+    // inactive statuses are kZero and kBasic. What is kNonbasic exactly? It should not occurr
+    HighsInt k {0};
     for (int i{0}; i<lp.num_col_; i++){
-
+        if (basis_.col_status[i] == HighsBasisStatus::kLower ||
+            basis_.col_status[i] == HighsBasisStatus::kUpper ||
+            basis_.col_status[i] == HighsBasisStatus::kNonbasic){
+            active_set[k] = i;
+            active_status[k] = basis_.col_status[i];
+            std::cout<< i<< " " << "active" <<"\n";
+            k++;
+        };
     };
     for (int i{0}; i<lp.num_row_; i++){
-
+        if (basis_.row_status[i] == HighsBasisStatus::kLower ||
+            basis_.row_status[i] == HighsBasisStatus::kUpper ||
+            basis_.row_status[i] == HighsBasisStatus::kNonbasic){
+            active_set[k] = -1 -i;
+            active_status[k] = basis_.row_status[i];
+            std::cout<< -1 -i<< " " << "active"<<"\n";
+            k++;
+        };
     };
+    assert (k == lp.num_col_); // check that we have as many active constraints as variables
 
     // Once an initial basis is found, we can set up the loop to check whether the current point solves the current FSEP
     // by checking that a trivial step solves the EP
