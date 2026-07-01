@@ -11,3 +11,7 @@ HighsModelStatus gQP(HighsLp& lp, HighsHessian& hessian,
                     HighsModelStatus& model_status_,
                     HighsBasis& basis_, HighsSolution& solution_,
                     HighsTimer& timer_);
+
+void QpPhase1(HighsLp& lp, HighsModelStatus& model_status_,
+                          HighsBasis& basis_, HighsSolution& solution_,
+                          HighsTimer& timer_);
