@@ -29,7 +29,7 @@ void QpPhase1(const HighsLp& lp, HighsModelStatus& model_status_,
     solution_ = qp_ph1.getSolution();
 }
 
-HighsModelStatus gQP(const HighsLp& lp, const HighsHessian& hessian,
+HighsModelStatus gQP(const HighsLp& lp, const HighsHessian& hessian, // can remove const and modify
                     HighsModelStatus& model_status_,
                     HighsBasis& basis_, HighsSolution& solution_,
                     HighsTimer& timer_){
@@ -43,11 +43,21 @@ HighsModelStatus gQP(const HighsLp& lp, const HighsHessian& hessian,
     // matrix factorization. This is Micheal's suggestion, is it indeed good to implement? How?
 
     QpPhase1(lp, model_status_, basis_, solution_, timer_); // simplex
-    ActiveSet active_set;
-    std::vector<HighsInt> basis;
-    basis = active_set.setup(basis_.col_status, basis_.row_status); // extract active set
+    ActiveSet active_set; // do we need an active set object? how would you modify vectors in here?
+    std::vector<HighsInt> basis = active_set.setup(basis_.col_status, basis_.row_status); // extract active set
     active_set.print(); // debug TOREMOVE
+    HFactor basis_mat; // basis matrix, where columns are the basis vectors
+    HighsSparseMatrix constraint_mat = lp.a_matrix_; // create a copy of the constraint matrix
+    constraint_mat.ensureRowwise(); // flip the way in which it is stored
+    constraint_mat.format_ = MatrixFormat::kColwise; // but "trick it" into thinking it is still stored columnwise
+    HighsInt temp_old_num_row = constraint_mat.num_row_; // flip the number of rows and columns
+    constraint_mat.num_row_ = constraint_mat.num_col_; // so that when the matrix is used by HFactor
+    constraint_mat.num_col_ = temp_old_num_row; // it received the constraint matrix "column wise"
+    basis_mat.setup(constraint_mat, basis); // where each column is a constraint. its inverse transpose will have as columns the nullspace basis
     // Once an initial basis is found, we can set up the loop to check whether the current point solves the current FSEP
+    // first find the reduced hessian
+    // so first compute Z by btran calls of basis_mat
+
     // by checking that a trivial step solves the EP
 
     // if we do: deactive a constraint and recompute nullspace and reduced hessian

@@ -62,7 +62,7 @@ class ActiveSet
             for (size_t i {0}; i<active_con_.size(); i++){
                 std::cout<< active_con_[i] << " -- ";
             }
-            std::cout<<"Active variables:\n";
+            std::cout<<"\nActive variables:\n";
             for (size_t i {0}; i<active_var_.size(); i++){
                 std::cout<< active_var_[i] << " -- ";
             }
