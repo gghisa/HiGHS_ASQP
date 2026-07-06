@@ -41,7 +41,7 @@ HighsModelStatus gQP(const HighsLp& lp, const HighsHessian& hessian, // can remo
         HighsStatus status_ph1 = QpPhase1(lp, model_status_, basis_, solution_, timer_); // simplex
         if (status_ph1 == HighsStatus::kError) return HighsModelStatus::kModelError; // is this returned object correct?
     }
-    ActiveSetData asm_data(basis_, lp);
+    ActiveSetData asm_data(basis_, lp, hessian);
     // first find the reduced hessian
     
     // Once an initial basis is found, we can set up the loop to check whether the current point solves the current FSEP
