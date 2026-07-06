@@ -42,8 +42,9 @@ HighsModelStatus gQP(const HighsLp& lp, const HighsHessian& hessian, // can remo
         if (status_ph1 == HighsStatus::kError) return HighsModelStatus::kModelError; // is this returned object correct?
     }
     ActiveSetData asm_data(basis_, lp);
-    // Once an initial basis is found, we can set up the loop to check whether the current point solves the current FSEP
     // first find the reduced hessian
+    
+    // Once an initial basis is found, we can set up the loop to check whether the current point solves the current FSEP
     // so first compute Z by btran calls of basis_mat
 
     // by checking that a trivial step solves the EP
