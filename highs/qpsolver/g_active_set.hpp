@@ -10,11 +10,11 @@
 class ActiveSetData
 {
     public:
-        explicit ActiveSetData(const HighsBasis& basis, const HighsLp& lp, const HighsHessian& Q){
+        explicit ActiveSetData(const HighsBasis& basis, const HighsLp& lp, HighsHessian& Q){
             this->n_ = lp.num_col_;
             this->m_ = lp.num_row_;
             this->n_inactive_ = n_;
-            // Q = Q.tosquare();
+            Q = Q.toSquare(); // make Hessian square to improve columns/rows accessing speed
             std::vector<HighsInt> basis_indices = setActiveVarCon(basis.col_status, basis.row_status);
             setupBasisMat(lp, basis, basis_indices);
         }
@@ -104,12 +104,10 @@ class ActiveSetData
         void setupBasisNullspace(){
             HighsInt n_active = this->n_ - this->n_inactive_; // wouldn't it be better to store this as a member of the class?
             for (HighsInt i {n_active}; i < this->n_; i++){
-                // create unit vector
-                std::vector<double> z_col(n_);
+                std::vector<double> z_col(n_); // create unit vector
                 z_col.assign(n_,0.);
                 z_col[i] = 1.; // set unit entry at the index for the desired column of B^{-T}
                 this->basis_mat_.btranCall(z_col); // solve B^T\cdot e_i = z_col
-                // then add newfound vector to dense matrix
                 this->basis_nullspaceT.push_back( z_col ); // add column vector to transpose of Z, effectively adding a new row
                 // do I have to check if the size of the matrix is correct? should I check if it is empty?
             }
@@ -128,5 +126,8 @@ class ActiveSetData
             // once the basis matrix is set up, extract the null spaces basis
             this->basis_mat_.build();
             setupBasisNullspace();
+        }
+        void init_reduced_hessian(const HighsHessian& Q){
+            // compute Z^T Q Z = ( Q Z )^T Z
         }
 };
