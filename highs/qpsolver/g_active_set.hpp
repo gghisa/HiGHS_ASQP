@@ -26,6 +26,36 @@ class ActiveSetData
                 std::cout<< active_var_[i] << " -- ";
             }
         }
+
+        void printvector(const std::vector<double>& vec){
+            // from Claude.ai
+            for (double val : vec) {
+                std::cout << val << " ";
+            }
+            std::cout.flush();
+        }
+        void printmatrix(const std::vector<std::vector<double>>& mat){
+            // from Claude.ai
+            for (const std::vector<double>& row : mat) {
+                for (double val : row) {
+                    std::cout << val << " ";
+                }
+                std::cout << "\n";
+            }
+            std::cout.flush();
+        }
+        void printsparse(const HighsSparseMatrix& mat){
+            std::vector<std::vector<double>> dense;
+            for (HighsInt i {0}; i < mat.num_col_; i++){
+                std::vector<double> col;
+                std::vector<double> x;
+                x.assign(mat.num_row_, 0.);
+                x[i] = 1.;
+                mat.productTranspose(col, x);
+                dense.push_back(col);
+            }
+            printmatrix(dense);
+        }
     private:
         HighsInt n_; // size of problem
         HighsInt n_active_; // size of active constraints
@@ -82,6 +112,7 @@ class ActiveSetData
                 std::vector<double> z_col(n_);
                 z_col.assign(n_,0.);
                 z_col[i] = 1.; // set unit entry at the index for the desired column of B^{-T}
+                HighsTimerClock* timer(nullptr);
                 this->basis_mat_.btranCall(z_col); // solve B^T\cdot e_i = z_col
                 // then add newfound vector to dense matrix
                 this->basis_nullspaceT.push_back( z_col ); // add column vector to transpose of Z, effectively adding a new row
@@ -91,6 +122,7 @@ class ActiveSetData
         // setup basis matrix
         void setupBasisMat(const HighsLp& lp, const HighsBasis& basis, std::vector<HighsInt>& basis_indices){
             HighsSparseMatrix constraint_mat = lp.a_matrix_; // create a copy of the constraint matrix
+            printsparse(constraint_mat);
             constraint_mat.ensureRowwise(); // flip the way in which it is stored
             constraint_mat.format_ = MatrixFormat::kColwise; // but "trick it" into thinking it is still stored columnwise
             HighsInt temp_old_num_row = constraint_mat.num_row_; // flip the number of rows and columns
@@ -98,6 +130,6 @@ class ActiveSetData
             constraint_mat.num_col_ = temp_old_num_row; // it received the constraint matrix "column wise"
             this->basis_mat_.setup(constraint_mat, basis_indices); // where each column is a constraint. its inverse transpose will have as columns the nullspace basis
             // once the basis matrix is set up, extract the null spaces basis
-            setupBasisNullspace();
+            //setupBasisNullspace();
         }
 };
