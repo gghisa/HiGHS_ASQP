@@ -42,15 +42,15 @@ HighsModelStatus gQP(const HighsLp& lp, HighsHessian hessian, // make hessian a 
         if (status_ph1 == HighsStatus::kError) return HighsModelStatus::kModelError; // is this returned object correct?
     }
     ActiveSetData asm_data(basis_, lp, hessian);
-    
-    // Once an initial basis is found, we can set up the loop to check whether the current point solves the current FSEP
-    // so first compute Z by btran calls of basis_mat
-
-    // by checking that a trivial step solves the EP
-
-    // if we do: deactive a constraint and recompute nullspace and reduced hessian
-    // otherwise: solve for a direction step and perfom ratio tests
-
+    for (HighsInt i {0}; i < 1000; i++){ // set iteration limit
+        if (asm_data.getSizeNullSpace() == 0){
+            // check if it is possible to deactivate a constraint
+            // else break and return optimal
+        } else {
+            // solve current equality problem to find descent direction
+            // perform ratio test then possibly activate constraint and continue
+        }
+    }
     // at the end gather the solution and postsolve and stuff.
 
     // what do we need to keep track of while we solve? timer/logging....?

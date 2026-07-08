@@ -20,6 +20,10 @@ class ActiveSetData
             setupReducedHessian(Q);
         }
 
+        HighsInt getSizeNullSpace(){
+            return this->n_inactive_;
+        }
+
         void print(){
             std::cout<<"\nActive constraints:\n";
             for (size_t i {0}; i<active_con_.size(); i++){
