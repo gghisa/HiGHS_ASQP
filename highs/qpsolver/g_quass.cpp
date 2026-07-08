@@ -31,17 +31,17 @@ HighsStatus QpPhase1(const HighsLp& lp, HighsModelStatus& model_status_,
 }
 
 HighsModelStatus gQP(const HighsLp& lp, HighsHessian hessian, // make hessian a copy so that rest of QP solver from Micheal still works.
-                    HighsModelStatus& model_status_,
-                    HighsBasis& basis_, HighsSolution& solution_,
-                    HighsTimer& timer_){
+                    HighsModelStatus& model_status,
+                    HighsBasis& basis, HighsSolution& solution,
+                    HighsTimer& timer){
 
     // first we need a presolve. How many rules are needed? Is presolve used to fix issues that would otherwise
     // lead to the solver not solving?
-    if (!basis_.valid) { // if the basis is not valid run phase 1
-        HighsStatus status_ph1 = QpPhase1(lp, model_status_, basis_, solution_, timer_); // simplex
+    if (!basis.valid) { // if the basis is not valid run phase 1
+        HighsStatus status_ph1 = QpPhase1(lp, model_status, basis, solution, timer); // simplex
         if (status_ph1 == HighsStatus::kError) return HighsModelStatus::kModelError; // is this returned object correct?
     }
-    ActiveSetData asm_data(basis_, lp, hessian, solution_);
+    ActiveSetData asm_data(basis, lp, solution, hessian);
     for (HighsInt i {0}; i < 1000; i++){ // set iteration limit
         if (asm_data.getSizeNullSpace() == 0){
             // check if it is possible to deactivate a constraint

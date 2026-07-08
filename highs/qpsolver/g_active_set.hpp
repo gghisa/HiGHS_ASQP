@@ -7,186 +7,47 @@
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 #include "Highs.h"
 
-class ActiveSetData
-{
+class ActiveSetData {
     public:
-        explicit ActiveSetData(const HighsBasis& basis, const HighsLp& lp, HighsHessian& Q,const HighsSolution& solution){
-            this->n_ = lp.num_col_;
-            this->m_ = lp.num_row_;
-            this->solution_ = solution.col_value;
-            this->n_inactive_ = n_; // potentially reduced in setupActiveVarCon
-            if (Q.format_ == HessianFormat::kTriangular) Q = Q.toSquare(); // make Hessian square to improve columns/rows accessing speed
-            std::vector<HighsInt> basis_indices = setupActiveVarCon(basis.col_status, basis.row_status);
-            setupBasisMat(lp, basis, basis_indices);
-            setupReducedHessian(Q);
-        }
+        explicit ActiveSetData(const HighsBasis& basis,
+                               const HighsLp& lp,
+                               HighsSolution& solution,
+                               HighsHessian& Q);
 
-        HighsInt getSizeNullSpace(){
-            return this->n_inactive_;
-        }
-
-        void print(){
-            std::cout<<"\nActive constraints:\n";
-            for (size_t i {0}; i<active_con_.size(); i++){
-                std::cout<< active_con_[i] << " -- ";
-            }
-            std::cout<<"\nActive variables:\n";
-            for (size_t i {0}; i<active_var_.size(); i++){
-                std::cout<< active_var_[i] << " -- ";
-            }
-        }
-
-        void printvector(const std::vector<double>& vec){
-            // from Claude.ai
-            for (double val : vec) {
-                std::cout << val << " ";
-            }
-            std::cout.flush();
-        }
-        void printmatrix(const std::vector<std::vector<double>>& mat){
-            // from Claude.ai
-            for (const std::vector<double>& row : mat) {
-                for (double val : row) {
-                    std::cout << val << " ";
-                }
-                std::cout <<"\n";
-            }
-            std::cout << "-----\n";
-            std::cout.flush();
-        }
-        void printsparse(const HighsSparseMatrix& mat){
-            std::vector<std::vector<double>> dense;
-            for (HighsInt i {0}; i < mat.num_row_; i++){
-                std::vector<double> col;
-                std::vector<double> x;
-                x.assign(mat.num_row_, 0.);
-                x[i] = 1.;
-                mat.productTranspose(col, x);
-                dense.push_back(col);
-            }
-            printmatrix(dense);
-        }
+        size_t getSizeNullSpace();
+        void printActive();
+        void printvector(const std::vector<double>& vec);
+        void printmatrix(const std::vector<std::vector<double>>& mat);
+        void printsparse(const HighsSparseMatrix& mat);
     private:
-        HighsInt n_; // number of variables
-        HighsInt m_; // number of constraints
-        HighsInt n_inactive_; // size of null space
-        // need to store active set
+            // members from initialisation arguments
+        const HighsLp& lp_;
+        HighsSolution& solution_;
+        HighsHessian& Q_;
+        // define own basis (better way?)
         std::vector<HighsInt> active_var_; // store indices of variables at bounds
         std::vector<HighsInt> active_con_; // store indices of constraints at bounds
         std::vector<HighsBasisStatus> status_var_; // store type of activity for each active variable bound
         std::vector<HighsBasisStatus> status_con_; // store type of activity for each active constraint
-        // need to store matrix B (HFactor object)
-        HFactor basis_mat_;
-        // need to store reduced hessian (dense matrix)
-        std::vector<std::vector<double>> basis_nullspaceT_; // store dense Z^T to have column-wise access to Z
-        std::vector<std::vector<double>> red_hessian_; // do we store the reduced hessian or the representation of its inverse?
-        //
-        std::vector<double> solution_; // x_k
-        std::vector<double> loc_grad_; // g + Q x_k
-        std::vector<double> red_grad_; // reduced gradient Z^T (g + Q x_k)
-        std::vector<double> pricing_; // lambdas, a value for each active constraint, based on which the choice of which to deactivate is made
-        // given a vector of statuses, extract whether active or not and the corresponding location index
+        // matrices
+        HFactor B_; // basis matrix
+        std::vector<std::vector<double>> ZT_; // nullspace basis, dense, gives column-wise access to Z
+        std::vector<std::vector<double>> redhes_; // do we store the reduced hessian or the representation of its inverse?
+        // vectors
+        std::vector<double> loc_grad_; // current gradient g + Q x_k, where x_k = solution_.col_value
+        std::vector<double> red_grad_; // current reduced gradient Z^T (g + Q x_k)
+        std::vector<double> pricing_; // a value for each active constraint, based on which the choice of which to deactivate is made
+        // setup functions
         void setupActive(const std::vector<HighsBasisStatus>& status,
-                         std::vector<HighsInt>& index,
-                         std::vector<HighsBasisStatus>& active_status,
-                         const size_t offset){
-            size_t count {0};
-            for (size_t i {0}; i<status.size(); i++){
-                if (status[i] != HighsBasisStatus::kBasic){
-                    // when the constraints and bounds in the problem are less than the number of variables, then there may be kNonbasic elements
-                    // they are not in the simplex basis, yet we need them to construct the invertible matrix B = [A:V]
-                    index.push_back(i + offset);
-                    active_status.push_back(status[i]);
-                    if (status[i] != HighsBasisStatus::kZero) this->n_inactive_--; // kZero means one available nullspace dimension
-                    // kNonbasic is ignored
-                }
-            }
-        }
-        // define function to run after phase1 to extract varumns and cons that are active
+                            std::vector<HighsInt>& index,
+                            std::vector<HighsBasisStatus>& active_status,
+                            const HighsInt offset);
         std::vector<HighsInt> setupActiveVarCon(const std::vector<HighsBasisStatus>& var_status,
-                             const std::vector<HighsBasisStatus>& con_status){
-            // variables' indexes start counting from m, which is the number of constraints. Constraint count starts from 0, as required by HFactor
-            setupActive(var_status, this->active_var_, this->status_var_, this->m_);
-            setupActive(con_status, this->active_con_, this->status_con_, 0);
-            std::vector<HighsInt> basis_indices; // create vector for the basis required by HFactor
-            basis_indices.insert(basis_indices.end(), this->active_con_.begin(), this->active_con_.end());
-            basis_indices.insert(basis_indices.end(), this->active_var_.begin(), this->active_var_.end());
-            return basis_indices;
-        }
-        void setupBasisNullspace(){
-            HighsInt n_active = this->n_ - this->n_inactive_; // wouldn't it be better to store this as a member of the class?
-            for (HighsInt i {n_active}; i < this->n_; i++){
-                std::vector<double> z_col(n_); // create unit vector
-                z_col.assign(n_,0.);
-                z_col[i] = 1.; // set unit entry at the index for the desired column of B^{-T}
-                this->basis_mat_.btranCall(z_col); // solve B^T\cdot e_i = z_col
-                this->basis_nullspaceT_.push_back( z_col ); // add column vector to transpose of Z, effectively adding a new row
-                // do I have to check if the size of the matrix is correct? should I check if it is empty?
-            }
-            printmatrix(this->basis_nullspaceT_);
-        }
-        // setup basis matrix
-        void setupBasisMat(const HighsLp& lp, const HighsBasis& basis, std::vector<HighsInt>& basis_indices){
-            HighsSparseMatrix constraint_mat = lp.a_matrix_; // create a copy of the constraint matrix
-            printsparse(constraint_mat);
-            constraint_mat.ensureRowwise(); // flip the way in which it is stored
-            constraint_mat.format_ = MatrixFormat::kColwise; // but "trick it" into thinking it is still stored columnwise
-            HighsInt temp_old_num_row = constraint_mat.num_row_; // flip the number of rows and columns
-            constraint_mat.num_row_ = constraint_mat.num_col_; // so that when the matrix is used by HFactor
-            constraint_mat.num_col_ = temp_old_num_row; // it received the constraint matrix "column wise"
-            this->basis_mat_.setup(constraint_mat, basis_indices); // where each column is a constraint. its inverse transpose will have as columns the nullspace basis
-            // once the basis matrix is set up, extract the null spaces basis
-            this->basis_mat_.build();
-            setupBasisNullspace();
-        }
-        void setupReducedHessian(const HighsHessian& Q){
-            assert (Q.format_ == HessianFormat::kSquare);
-            assert (this->n_inactive_ == (HighsInt)this->basis_nullspaceT_.size());
-            assert (this->n_ == Q.dim_);
-            assert (this->red_hessian_.empty());
-            for (HighsInt i {0}; i < this->n_inactive_; i++){// loop over the rows of the reduced hessian
-                std:vector<double> empty_row_red_hessian(this->n_inactive_);
-                this->red_hessian_.push_back(empty_row_red_hessian); // initialise new row of reduced hessian
-            }
-            for (HighsInt i {0}; i < this->n_inactive_; i++){// loop over the rows of Z^T
-                std::vector<double> row(n_); // row of Z^T Q
-                Q.product(this->basis_nullspaceT_[i], row); // compute it
-                double sum {0.};
-                for (HighsInt j {0}; j <= i; j++){ // loop through columns of Z, up to the current row of Z^T, to only compute lower triangle of red_hessian_
-                    for (HighsInt k {0}; k < this->n_; k++){ // inner produce of row of Z^T Q with column of Z
-                        sum += row[k] * basis_nullspaceT_[j][k];
-                    }
-                    this->red_hessian_[i][j] = sum;
-                    this->red_hessian_[j][i] = sum; // off-diagonal symmetric element, could i make this a pointer instead?
-                    // i could check that second assignment only happens when i != j, but the check would run for nothing most of the time
-                } // TO CHECK: could I do this calculation just by looping through columns of Z and computing the hessian.objectiveValue()?
-            }
-            for (HighsInt i {0}; i < this->n_inactive_; i++){// loop over the rows of the reduced hessian
-                assert(this->red_hessian_[i].size() == this->red_hessian_.size()); // check that every row is as long as it needs to be
-            }
-            printmatrix(this->red_hessian_);
-        }
-
-        void computeLocGrad(const HighsLp& lp, const HighsHessian& Q){// g + Q x_k
-            Q.product(this->solution_, this->loc_grad_);
-            for (HighsInt i {0}; i < this->n_; i++){ // add g to Q x_k
-                this->loc_grad_[i] += lp.col_cost_[i];
-            }
-        }
-
-        void computeRedGrad(){
-            this->red_grad_.clear();
-            for (HighsInt i {0}; i < this->n_inactive_; i++){
-                double sum {0};
-                for (HighsInt j {0}; j < this->n_; j++){
-                    sum += this->basis_nullspaceT_[i][j] * this->loc_grad_[j];
-                }
-                this->red_grad_.push_back(sum);// Z^T (g + Q x_k)
-            }
-        }
-
-        void price(){
-            // compute pricing for each active constraint: Y^T (g + Qx)
-            computeRedGrad();
-        }
+                                                const std::vector<HighsBasisStatus>& con_status);
+        void setupBasisMat(const HighsBasis& basis, std::vector<HighsInt>& basis_indices);
+        void setupBasisNullSpace();
+        void setupReducedHessian();
+        void computeLocGrad();
+        void computeRedGrad();
+        void price();
 };
