@@ -30,7 +30,7 @@ HighsStatus QpPhase1(const HighsLp& lp, HighsModelStatus& model_status_,
     return status_ph1;
 }
 
-HighsModelStatus gQP(const HighsLp& lp, const HighsHessian& hessian, // can remove const and modify
+HighsModelStatus gQP(const HighsLp& lp, HighsHessian hessian, // make hessian a copy so that rest of QP solver from Micheal still works.
                     HighsModelStatus& model_status_,
                     HighsBasis& basis_, HighsSolution& solution_,
                     HighsTimer& timer_){
@@ -42,7 +42,6 @@ HighsModelStatus gQP(const HighsLp& lp, const HighsHessian& hessian, // can remo
         if (status_ph1 == HighsStatus::kError) return HighsModelStatus::kModelError; // is this returned object correct?
     }
     ActiveSetData asm_data(basis_, lp, hessian);
-    // first find the reduced hessian
     
     // Once an initial basis is found, we can set up the loop to check whether the current point solves the current FSEP
     // so first compute Z by btran calls of basis_mat
