@@ -41,7 +41,7 @@ HighsModelStatus gQP(const HighsLp& lp, HighsHessian hessian, // make hessian a 
         HighsStatus status_ph1 = QpPhase1(lp, model_status, basis, solution, timer); // simplex
         if (status_ph1 == HighsStatus::kError) return HighsModelStatus::kModelError; // is this returned object correct?
     }
-    ActiveSetData asm_data(basis, lp, solution, hessian);
+    ActiveSetData asm_data(lp, basis, solution, hessian);
     for (HighsInt i {0}; i < 1000; i++){ // set iteration limit
         if (asm_data.getSizeNullSpace() == 0){
             // check if it is possible to deactivate a constraint

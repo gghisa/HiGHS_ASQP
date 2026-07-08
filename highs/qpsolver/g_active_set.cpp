@@ -8,48 +8,44 @@
 #include "Highs.h"
 #include "qpsolver/g_active_set.hpp"
 
-ActiveSetData::ActiveSetData(const HighsBasis& basis, // we will discard this, or can we make use of it?
-                             const HighsLp& lp,
+ActiveSetData::ActiveSetData(const HighsLp& lp,
+                             HighsBasis& basis,
                              HighsSolution& solution,
                              HighsHessian& Q)
                             : lp_(lp),
+                            basis_(basis),
                             solution_(solution),
                             Q_(Q){
     if (Q.format_ == HessianFormat::kTriangular) Q = Q.toSquare(); // make Hessian square to improve columns/rows accessing speed
-    std::vector<HighsInt> basis_indices = setupActiveVarCon(basis.col_status, basis.row_status); // basis indices can be local because they'll be stored in HFactor
-    setupBasisMat(basis, basis_indices);
+    std::vector<HighsInt> basis_indices = countActiveConVar(); // basis indices can be local because they'll be stored in HFactor
+    setupBasisMat(basis_indices);
     setupReducedHessian();
 };
-// given a vector of statuses, extract whether active or not and the corresponding location index
-void ActiveSetData::setupActive(const std::vector<HighsBasisStatus>& status,
-                                std::vector<HighsInt>& index,
-                                std::vector<HighsBasisStatus>& active_status,
-                                const HighsInt offset){
-    std::vector<double> emptyvec;
-    for (size_t i {0}; i<status.size(); i++){
-        if (status[i] != HighsBasisStatus::kBasic){
-            // when the constraints and bounds in the problem are less than the number of variables, then there may be kNonbasic elements
-            // they are not in the simplex basis, yet we need them to construct the invertible matrix B = [A:V]
-            index.push_back(i + offset);
-            active_status.push_back(status[i]);
-            if (status[i] == HighsBasisStatus::kZero) this->ZT_.push_back(emptyvec); // kZero means one available nullspace dimension
-            // kNonbasic is ignored
+// define function to run after phase1 to extract varumns and cons that are active
+std::vector<HighsInt> ActiveSetData::countActiveConVar(){
+    // if a variable is kBasic, it is not in the ASM basis
+    // if it is kLower or kUpper, it is in the ASM basis
+    // kNonbasic is never returned by simplex phase 1 (though here it would become a basis)
+    // so each dimension in the null space corresponds to a kZero variable (can constraints be kZero? if not, remove option below)
+    std::vector<HighsInt> basis_indices; // create vector for the basis required by HFactor
+    for (size_t i {0}; i<basis_.row_status.size(); i++){ // loop through variables
+        std::vector<double> emptyvec;
+        if (basis_.row_status[i] != HighsBasisStatus::kBasic){
+            basis_indices.push_back(i); // Constraint count starts from 0
+            if (basis_.row_status[i] == HighsBasisStatus::kZero) this->ZT_.push_back(emptyvec); // kZero means one available nullspace dimension
         }
     }
-}
-// define function to run after phase1 to extract varumns and cons that are active
-std::vector<HighsInt> ActiveSetData::setupActiveVarCon(const std::vector<HighsBasisStatus>& var_status,
-                                                       const std::vector<HighsBasisStatus>& con_status){
-    // variables' indexes start counting from m, which is the number of constraints. Constraint count starts from 0, as required by HFactor
-    setupActive(var_status, this->active_var_, this->status_var_, this->lp_.num_row_);
-    setupActive(con_status, this->active_con_, this->status_con_, 0);
-    std::vector<HighsInt> basis_indices; // create vector for the basis required by HFactor
-    basis_indices.insert(basis_indices.end(), this->active_con_.begin(), this->active_con_.end());
-    basis_indices.insert(basis_indices.end(), this->active_var_.begin(), this->active_var_.end());
+    for (size_t i {0}; i<basis_.col_status.size(); i++){ // loop through constraints
+        std::vector<double> emptyvec;
+        if (basis_.col_status[i] != HighsBasisStatus::kBasic){
+            basis_indices.push_back(i + this->lp_.num_row_); // Variable count starts from m (nr of constraints)
+            if (basis_.col_status[i] == HighsBasisStatus::kZero) this->ZT_.push_back(emptyvec); // kZero means one available nullspace dimension
+        }
+    }
     return basis_indices;
 }
 // setup basis matrix
-void ActiveSetData::setupBasisMat(const HighsBasis& basis, std::vector<HighsInt>& basis_indices){
+void ActiveSetData::setupBasisMat(std::vector<HighsInt>& basis_indices){
             HighsSparseMatrix constraint_mat = this->lp_.a_matrix_; // create a copy of the constraint matrix
             printsparse(constraint_mat);
             constraint_mat.ensureRowwise(); // flip the way in which it is stored
@@ -58,9 +54,8 @@ void ActiveSetData::setupBasisMat(const HighsBasis& basis, std::vector<HighsInt>
             constraint_mat.num_row_ = constraint_mat.num_col_; // so that when the matrix is used by HFactor
             constraint_mat.num_col_ = temp_old_num_row; // it received the constraint matrix "column wise"
             this->B_.setup(constraint_mat, basis_indices); // where each column is a constraint. its inverse transpose will have as columns the nullspace basis
-            // once the basis matrix is set up, extract the null spaces basis
             this->B_.build();
-            setupBasisNullSpace();
+            setupBasisNullSpace();// once the basis matrix is set up, extract the null spaces basis
 }
 void ActiveSetData::setupBasisNullSpace(){
             HighsInt n_active = this->lp_.num_col_ - (HighsInt)this->ZT_.size(); // wouldn't it be better to store this as a member of the class?
@@ -108,12 +103,16 @@ size_t ActiveSetData::getSizeNullSpace(){
 
 void ActiveSetData::printActive(){
     std::cout<<"\nActive constraints:\n";
-    for (size_t i {0}; i<this->active_con_.size(); i++){
-        std::cout<< active_con_[i] << " -- ";
+    for (size_t i {0}; i<this->basis_.row_status.size(); i++){
+        if (basis_.row_status[i] == HighsBasisStatus::kLower ||
+            basis_.row_status[i] == HighsBasisStatus::kUpper)
+        std::cout<< i << " -- ";
     }
     std::cout<<"\nActive variables:\n";
-    for (size_t i {0}; i<this->active_var_.size(); i++){
-        std::cout<< active_var_[i] << " -- ";
+    for (size_t i {0}; i<this->basis_.col_status.size(); i++){
+        if (basis_.col_status[i] == HighsBasisStatus::kLower ||
+            basis_.col_status[i] == HighsBasisStatus::kUpper)
+        std::cout<< i << " -- ";
     }
 }
 
