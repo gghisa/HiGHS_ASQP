@@ -10,12 +10,13 @@
 class ActiveSetData
 {
     public:
-        explicit ActiveSetData(const HighsBasis& basis, const HighsLp& lp, HighsHessian& Q){
+        explicit ActiveSetData(const HighsBasis& basis, const HighsLp& lp, HighsHessian& Q,const HighsSolution& solution){
             this->n_ = lp.num_col_;
             this->m_ = lp.num_row_;
-            this->n_inactive_ = n_;
+            this->solution_ = solution.col_value;
+            this->n_inactive_ = n_; // potentially reduced in setupActiveVarCon
             if (Q.format_ == HessianFormat::kTriangular) Q = Q.toSquare(); // make Hessian square to improve columns/rows accessing speed
-            std::vector<HighsInt> basis_indices = setActiveVarCon(basis.col_status, basis.row_status);
+            std::vector<HighsInt> basis_indices = setupActiveVarCon(basis.col_status, basis.row_status);
             setupBasisMat(lp, basis, basis_indices);
             setupReducedHessian(Q);
         }
@@ -79,8 +80,13 @@ class ActiveSetData
         // need to store reduced hessian (dense matrix)
         std::vector<std::vector<double>> basis_nullspaceT_; // store dense Z^T to have column-wise access to Z
         std::vector<std::vector<double>> red_hessian_; // do we store the reduced hessian or the representation of its inverse?
+        //
+        std::vector<double> solution_; // x_k
+        std::vector<double> loc_grad_; // g + Q x_k
+        std::vector<double> red_grad_; // reduced gradient Z^T (g + Q x_k)
+        std::vector<double> pricing_; // lambdas, a value for each active constraint, based on which the choice of which to deactivate is made
         // given a vector of statuses, extract whether active or not and the corresponding location index
-        void setActive(const std::vector<HighsBasisStatus>& status,
+        void setupActive(const std::vector<HighsBasisStatus>& status,
                          std::vector<HighsInt>& index,
                          std::vector<HighsBasisStatus>& active_status,
                          const size_t offset){
@@ -97,11 +103,11 @@ class ActiveSetData
             }
         }
         // define function to run after phase1 to extract varumns and cons that are active
-        std::vector<HighsInt> setActiveVarCon(const std::vector<HighsBasisStatus>& var_status,
+        std::vector<HighsInt> setupActiveVarCon(const std::vector<HighsBasisStatus>& var_status,
                              const std::vector<HighsBasisStatus>& con_status){
             // variables' indexes start counting from m, which is the number of constraints. Constraint count starts from 0, as required by HFactor
-            setActive(var_status, this->active_var_, this->status_var_, this->m_);
-            setActive(con_status, this->active_con_, this->status_con_, 0);
+            setupActive(var_status, this->active_var_, this->status_var_, this->m_);
+            setupActive(con_status, this->active_con_, this->status_con_, 0);
             std::vector<HighsInt> basis_indices; // create vector for the basis required by HFactor
             basis_indices.insert(basis_indices.end(), this->active_con_.begin(), this->active_con_.end());
             basis_indices.insert(basis_indices.end(), this->active_var_.begin(), this->active_var_.end());
@@ -153,11 +159,34 @@ class ActiveSetData
                     this->red_hessian_[i][j] = sum;
                     this->red_hessian_[j][i] = sum; // off-diagonal symmetric element, could i make this a pointer instead?
                     // i could check that second assignment only happens when i != j, but the check would run for nothing most of the time
-                }
+                } // TO CHECK: could I do this calculation just by looping through columns of Z and computing the hessian.objectiveValue()?
             }
             for (HighsInt i {0}; i < this->n_inactive_; i++){// loop over the rows of the reduced hessian
                 assert(this->red_hessian_[i].size() == this->red_hessian_.size()); // check that every row is as long as it needs to be
             }
             printmatrix(this->red_hessian_);
+        }
+
+        void computeLocGrad(const HighsLp& lp, const HighsHessian& Q){// g + Q x_k
+            Q.product(this->solution_, this->loc_grad_);
+            for (HighsInt i {0}; i < this->n_; i++){ // add g to Q x_k
+                this->loc_grad_[i] += lp.col_cost_[i];
+            }
+        }
+
+        void computeRedGrad(){
+            this->red_grad_.clear();
+            for (HighsInt i {0}; i < this->n_inactive_; i++){
+                double sum {0};
+                for (HighsInt j {0}; j < this->n_; j++){
+                    sum += this->basis_nullspaceT_[i][j] * this->loc_grad_[j];
+                }
+                this->red_grad_.push_back(sum);// Z^T (g + Q x_k)
+            }
+        }
+
+        void price(){
+            // compute pricing for each active constraint: Y^T (g + Qx)
+            computeRedGrad();
         }
 };
