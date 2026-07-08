@@ -19,6 +19,7 @@ class ActiveSetData {
         void printvector(const std::vector<double>& vec);
         void printmatrix(const std::vector<std::vector<double>>& mat);
         void printsparse(const HighsSparseMatrix& mat);
+        void price();
     private:
         // members from initialisation arguments
         const HighsLp& lp_;
@@ -45,5 +46,4 @@ class ActiveSetData {
         void setupReducedHessian();
         void computeLocGrad();
         void computeRedGrad();
-        void price();
 };

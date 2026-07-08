@@ -42,8 +42,10 @@ HighsModelStatus gQP(const HighsLp& lp, HighsHessian hessian, // make hessian a 
         if (status_ph1 == HighsStatus::kError) return HighsModelStatus::kModelError; // is this returned object correct?
     }
     ActiveSetData asm_data(lp, basis, solution, hessian);
-    for (HighsInt i {0}; i < 1000; i++){ // set iteration limit
+    for (HighsInt i {0}; i < 1; i++){ // set iteration limit
         if (asm_data.getSizeNullSpace() == 0){
+            asm_data.price();
+            // we now have access to a list of prices, but what price corresponds to what constraint?
             // check if it is possible to deactivate a constraint
             // else break and return optimal
         } else {

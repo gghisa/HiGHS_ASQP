@@ -147,6 +147,7 @@ void ActiveSetData::printsparse(const HighsSparseMatrix& mat){
     printmatrix(dense);
 }
 void ActiveSetData::computeLocGrad(){// g + Q x_k
+    this->loc_grad_.clear(); // is this clearing memory efficient?
     this->Q_.product(this->solution_.col_value, this->loc_grad_);
     for (HighsInt i {0}; i < this->lp_.num_col_; i++){ // add g to Q x_k
         this->loc_grad_[i] += this->lp_.col_cost_[i];
@@ -154,7 +155,7 @@ void ActiveSetData::computeLocGrad(){// g + Q x_k
 }
 
 void ActiveSetData::computeRedGrad(){
-    this->red_grad_.clear();
+    this->red_grad_.clear(); // is this clearing memory efficient?
     for (size_t i {0}; i < this->ZT_.size(); i++){
         double sum {0};
         for (HighsInt j {0}; j < this->lp_.num_col_; j++){
@@ -164,6 +165,18 @@ void ActiveSetData::computeRedGrad(){
     }
 }
 void ActiveSetData::price(){
-    // compute pricing for each active constraint: Y^T (g + Qx)
-    computeRedGrad();
+    // compute pricing for each active constraint: Y^T (g + Q x_k)
+    computeLocGrad();
+    this->pricing_.clear();
+    for (HighsInt i {0}; i < this->lp_.num_col_ - (HighsInt)this->ZT_.size(); i++){
+        std::vector<double> yt_row(this->lp_.num_col_);
+        yt_row[i] = 1.;
+        this->B_.btranCall(yt_row);
+        double sum {0.};
+        for (HighsInt j {0}; j < this->lp_.num_col_; j ++){
+            sum += yt_row[j] * this->loc_grad_[j];
+        }
+        this->pricing_.push_back(sum);
+    }
+    printvector(this->pricing_);
 }
