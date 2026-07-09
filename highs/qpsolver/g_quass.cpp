@@ -43,9 +43,10 @@ HighsModelStatus gQP(const HighsLp& lp, HighsHessian hessian, // make hessian a 
     }
     ActiveSetData asm_data(lp, basis, solution, hessian);
     for (HighsInt i {0}; i < 1; i++){ // set iteration limit
-        if (asm_data.getSizeNullSpace() == 0){
-            asm_data.price();
-            // we now have access to a list of prices, but what price corresponds to what constraint?
+        // solve current equality problem to find descent direction
+        // can be null if size null space is null OR we need to free more constraints
+        if (asm_data.getSizeNullSpace() == 0){ // TO CHANGE if descent direction is null size
+            asm_data.deactivate();            
             // check if it is possible to deactivate a constraint
             // else break and return optimal
         } else {
