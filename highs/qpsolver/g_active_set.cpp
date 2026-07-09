@@ -20,16 +20,37 @@ ActiveSetData::ActiveSetData(const HighsLp& lp,
     setupBasisMat();
     setupReducedHessian();
 };
+// convert Asm Status to Highs
+HighsBasisStatus ActiveSetData::AsmStatusToHighs(const AsmBasisStatus& status){
+    if (status==AsmBasisStatus::kLower || status==AsmBasisStatus::kEquality) return HighsBasisStatus::kLower;
+    else if (status==AsmBasisStatus::kFreeInBasis) return HighsBasisStatus::kZero;// should not happen with constraints but how do I check it?
+    else if (status==AsmBasisStatus::kInactive) return HighsBasisStatus::kBasic;
+    else return HighsBasisStatus::kNonbasic; // should never happen
+};
+// convert Highs Status to Asm
+AsmBasisStatus ActiveSetData::HighsStatusToAsm(const HighsBasisStatus& status, HighsInt index){
+    if (index >= this->lp_.num_row_){ // it is a variable
+        index -= this->lp_.num_row_; // if equality this should be a fixed variable and needs presolve
+        if (this->lp_.col_lower_[index] == this->lp_.col_upper_[index]) return AsmBasisStatus::kEquality;
+    // row_ check should only happen if it is indeed a row we are working with
+    } else if (this->lp_.row_lower_[index] == this->lp_.row_upper_[index]) return AsmBasisStatus::kEquality;
+    // if no equality is found:
+    if(status == HighsBasisStatus::kLower) return AsmBasisStatus::kLower;
+    else if(status == HighsBasisStatus::kUpper) return AsmBasisStatus::kUpper;
+    else return AsmBasisStatus::kInactive;
+};
 //
 void ActiveSetData::initAsmBasisLoop(const std::vector<HighsBasisStatus>& status, const bool isconstr){
     for (size_t i {0}; i<status.size(); i++){ // loop through variables
-        if (status[i] != HighsBasisStatus::kBasic){
-            this->basis_status_.push_back(status[i]);
+        if (status[i] != HighsBasisStatus::kBasic){// inside the loop we deal with simplex nonbasic variables only
             if (isconstr){
                 this->basis_idxs_.push_back(i); // Constraint count starts from 0
+                this->basis_status_.push_back(HighsStatusToAsm(status[i],i));
                 assert(status[i] != HighsBasisStatus::kZero); // kZero should not occurr for constraints
             } else {
-                this->basis_idxs_.push_back(i + this->lp_.num_row_); // Variable count starts from number of constraints
+                HighsInt index = i + this->lp_.num_row_;
+                this->basis_idxs_.push_back(index); // Variable count starts from number of constraints
+                this->basis_status_.push_back(HighsStatusToAsm(status[i],index));
                 if (status[i] == HighsBasisStatus::kZero){
                     std::vector<double> emptyvec;
                     this->ZT_.push_back(emptyvec); // kZero means one available nullspace dimension
@@ -155,19 +176,47 @@ void ActiveSetData::price(){
     // compute pricing for each active constraint: Y^T (g + Q x_k)
     computeLocGrad();
     this->pricing_.clear();
-    for (HighsInt i {0}; i < this->lp_.num_col_ - (HighsInt)this->ZT_.size(); i++){
-        std::vector<double> yt_row(this->lp_.num_col_);
-        yt_row[i] = 1.;
-        this->B_.btranCall(yt_row);
-        double sum {0.};
-        for (HighsInt j {0}; j < this->lp_.num_col_; j ++){
-            sum += yt_row[j] * this->loc_grad_[j];
+    // loop over all basis and only count values for the active ones
+    HighsInt countActive {0};
+    for (size_t i {0}; i < this->basis_status_.size(); i++){
+        if (this->basis_status_[i]!=AsmBasisStatus::kFreeInBasis){ // we already are in the basis, we need to check it's active
+            // Equality is expected less frequent, should this check be moved down?
+            if (this->basis_status_[i]==AsmBasisStatus::kEquality) this->pricing_.push_back(0.);
+            else {
+            std::vector<double> yt_row(this->lp_.num_col_);
+            yt_row[i] = 1.; // select column i of B^{-T}
+            this->B_.btranCall(yt_row);
+            double sum {0.};
+            for (HighsInt j {0}; j < this->lp_.num_col_; j ++){
+                sum += yt_row[j] * this->loc_grad_[j];
+            }
+            if (this->basis_status_[i]==AsmBasisStatus::kLower) this->pricing_.push_back(sum);
+            else if (this->basis_status_[i]==AsmBasisStatus::kUpper) this->pricing_.push_back(-sum);
+            }
         }
-        this->pricing_.push_back(sum);
     }
     printvector(this->pricing_);
 }
-
-void ActiveSetData::deactivate(){
+// deactivate a constraint
+HighsModelStatus ActiveSetData::deactivate(){
+    // should we check that there is at least one active constraint? or is it guaranteed here?
     price();
+    // loop through basis elements
+    HighsInt chosen {0};
+    double value_chosen {this->pricing_[0]};
+    for (size_t i {1}; i < this->basis_idxs_.size(); i++){
+        if (this->pricing_[i] > value_chosen){
+            chosen = i;
+            value_chosen = this->pricing_[i];
+        }
+    }
+    if (value_chosen >= 0.) return HighsModelStatus::kOptimal;// if all prices are non negative, nothing to deactivate
+    // else
+    this->basis_idxs_.erase(this->basis_idxs_.begin() + chosen); // remove index
+    this->basis_idxs_.push_back(chosen); // and place it back at the end of it
+    this->basis_status_.erase(this->basis_status_.begin() + chosen); // remove status
+    this->basis_status_.push_back(AsmBasisStatus::kFreeInBasis); // add the free in basis status
+    // update basis inverse by extracting relevant vector from Y and moving it to Z
+    // TODO
+    return HighsModelStatus::kNotset;
 }
