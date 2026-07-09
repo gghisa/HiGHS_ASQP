@@ -23,6 +23,7 @@ class ActiveSetData {
                                HighsHessian& Q);
 
         size_t getSizeNullSpace();
+        size_t getSizeRangeSpace();
         // void printActive(); TODO if needed
         void printvector(const std::vector<double>& vec);
         void printmatrix(const std::vector<std::vector<double>>& mat);
@@ -40,6 +41,9 @@ class ActiveSetData {
         HighsHessian& Q_;
         // matrices
         HFactor B_; // basis matrix
+        // would it be better to only have one inverse matrix?
+        // also, since I am extracting it, I am getting an explicit representation of the inverse
+        // is that normal?
         std::vector<std::vector<double>> YT_; // rangespace basis, dense, gives column-wise access to Y
         std::vector<std::vector<double>> ZT_; // nullspace basis, dense, gives column-wise access to Z
         std::vector<std::vector<double>> redhes_; // do we store the reduced hessian or the representation of its inverse?
@@ -56,7 +60,7 @@ class ActiveSetData {
         void initAsmBasis(const HighsBasis& basis);
         void initAsmBasisLoop(const std::vector<HighsBasisStatus>& status, const bool isconstr);
         void setupBasisMat();
-        void setupBasisNullSpace();
+        void setupInvBasisSpace();
         void setupReducedHessian();
         HighsBasisStatus AsmStatusToHighs(const AsmBasisStatus& status);
         AsmBasisStatus HighsStatusToAsm(const HighsBasisStatus& status, HighsInt index);

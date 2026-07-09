@@ -40,7 +40,7 @@ HighsModelStatus gQP(const HighsLp& lp, HighsHessian hessian, // make hessian a 
     if (!basis.valid) { // if the basis is not valid run phase 1
         HighsStatus status_ph1 = QpPhase1(lp, model_status, basis, solution, timer); // simplex
         if (status_ph1 == HighsStatus::kError) return HighsModelStatus::kModelError; // is this returned object correct?
-    }
+    } // else make sure you are ready to hot start
     ActiveSetData asm_data(lp, basis, solution, hessian);
     for (HighsInt i {0}; i < 1; i++){ // set iteration limit
         // solve current equality problem to find descent direction
