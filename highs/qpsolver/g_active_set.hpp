@@ -8,9 +8,9 @@
 #include "Highs.h"
 
 enum class AsmBasisStatus : HighsInt {
-    kLower = 1, // active at lower bound
     kUpper = -1, // active at upper bound, sign flip for pricing
     kEquality = 0, // always active
+    kLower = 1, // active at lower bound
     kFreeInBasis = 2, // not active but in basis matrix, considered in ratio test
     kInactive = 3 // not active and not in basis, considered in ratio test
 };
@@ -68,4 +68,5 @@ class ActiveSetData {
         void computeLocGrad();
         void computeRedGrad();
         void price();
+        void extendReducedHessian();
 };

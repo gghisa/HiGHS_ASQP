@@ -116,6 +116,12 @@ void ActiveSetData::setupReducedHessian(){
     }
 }
 
+void ActiveSetData::extendReducedHessian(){ // algo from Feldmeier thesis 
+    // TODO requires having a factorization of the reduced hessian
+    // so do we need to compute it explicitly to start with?
+    // maybe we should factorize it to start with
+}
+
 size_t ActiveSetData::getSizeNullSpace(){
     return this->ZT_.size();
 }
@@ -217,6 +223,9 @@ HighsModelStatus ActiveSetData::deactivate(){
     this->basis_status_.erase(this->basis_status_.begin() + chosen); // remove status
     this->basis_status_.push_back(AsmBasisStatus::kFreeInBasis); // add the free in basis status
     // update basis inverse by extracting relevant vector from Y and moving it to Z
-    // TODO
+    this->ZT_.push_back(this->YT_[chosen]); // add to the end of Z
+    this->YT_.erase(this->YT_.begin() + chosen); // remove from Y
+    // recompute reduced hessian
+    extendReducedHessian();
     return HighsModelStatus::kNotset;
 }
