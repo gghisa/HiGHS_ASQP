@@ -42,18 +42,16 @@ AsmBasisStatus ActiveSetData::HighsStatusToAsm(const HighsBasisStatus& status, H
 void ActiveSetData::initAsmBasisLoop(const std::vector<HighsBasisStatus>& status, const bool isconstr){
     for (size_t i {0}; i<status.size(); i++){ // loop through vector of statuses
         if (status[i] != HighsBasisStatus::kBasic){// inside the loop we deal with simplex nonbasic variables only
-            HighsInt index; // declare index for HFactor basis_index
-            if (isconstr){ // if we are dealing with constraints
-                index = i; // for constraints, we count from 0
-                assert(status[i] != HighsBasisStatus::kZero); // kZero should not occurr for constraints
-            } else { // if we are dealing with variables
-                index = i + this->lp_.num_row_; // variable count starts from number of constraints
-                std::vector<double> emptyvec(this->lp_.num_col_); // initialise with correct lenght
-                if (status[i] == HighsBasisStatus::kZero){ // initialise null space
-                    this->ZT_.push_back(emptyvec); // kZero means one available nullspace dimension
-                } else this->YT_.push_back(emptyvec); // initialise range space so that we can know its size
-                // is this saving many empty vectors memory efficient?
-                // should I make ZT_ and YT_ one long vector?
+            HighsInt index {(HighsInt)i}; // declare index for HFactor basis_index
+            std::vector<double> emptyvec(this->lp_.num_col_); // initialise with correct lenght
+            if (status[i] == HighsBasisStatus::kZero){
+                assert(!isconstr); // constraints shouldnt be kZero
+                index += this->lp_.num_row_;
+                this->ZT_.push_back(emptyvec); // kZero means one available nullspace dimension
+            }
+            else { // non free variables contribute to range space
+                if (!isconstr) index +=  this->lp_.num_row_; // variable count starts from number of constraints
+                this->YT_.push_back(emptyvec);
             }
             this->basis_idxs_.push_back(index); // add index
             this->basis_status_.push_back(HighsStatusToAsm(status[i], index)); // and add its status
@@ -91,7 +89,7 @@ void ActiveSetData::setupInvBasisSpace(){
         col.assign(this->lp_.num_col_,0.); // (re)start unit vector
         col[i] = 1.; // set unit entry at the index for the desired column of B^{-T}
         this->B_.btranCall(col); // solve B^T\cdot e_i = col
-        if (i < (HighsInt)this->YT_.size()) this->ZT_[i] = col; // extract copy for Y^T
+        if (i < (HighsInt)this->YT_.size()) this->YT_[i] = col; // extract copy for Y^T
         else this->ZT_[i - YT_.size()] = col; // extract copy for Z^T
     }
 }
