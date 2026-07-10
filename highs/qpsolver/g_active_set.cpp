@@ -14,7 +14,13 @@ ActiveSetData::ActiveSetData(const HighsLp& lp,
                              HighsHessian& Q)
                             : lp_(lp),
                             solution_(solution),
-                            Q_(Q){
+                            Q_(Q),
+                            nullsp_dim_(0),
+                            basis_idxs_(lp.num_col_),
+                            basis_status_(lp.num_col_),
+                            loc_grad_(lp.num_col_),
+                            red_grad_(lp.num_col_),
+                            pricing_(lp.num_col_){
     if (Q.format_ == HessianFormat::kTriangular) Q = Q.toSquare(); // make Hessian square to improve columns/rows accessing speed
     initAsmBasis(basis);
     setupBasisMat();
@@ -36,6 +42,7 @@ AsmBasisStatus ActiveSetData::HighsStatusToAsm(const HighsBasisStatus& status, H
     // if no equality is found:
     if(status == HighsBasisStatus::kLower) return AsmBasisStatus::kLower;
     else if(status == HighsBasisStatus::kUpper) return AsmBasisStatus::kUpper;
+    else if(status == HighsBasisStatus::kZero) return AsmBasisStatus::kFreeInBasis;
     else return AsmBasisStatus::kInactive;
 };
 //
@@ -43,30 +50,27 @@ void ActiveSetData::initAsmBasisLoop(const std::vector<HighsBasisStatus>& status
     for (size_t i {0}; i<status.size(); i++){ // loop through vector of statuses
         if (status[i] != HighsBasisStatus::kBasic){// inside the loop we deal with simplex nonbasic variables only
             HighsInt index {(HighsInt)i}; // declare index for HFactor basis_index
-            std::vector<double> emptyvec(this->lp_.num_col_); // initialise with correct lenght
+            std::vector<double> emptyvec(this->lp_.num_col_); // initialise with correct lenght TODO remove when removing explicit Z representation
             if (status[i] == HighsBasisStatus::kZero){
                 assert(!isconstr); // constraints shouldnt be kZero
                 index += this->lp_.num_row_;
                 this->ZT_.push_back(emptyvec); // kZero means one available nullspace dimension
+                this->nullsp_dim_ += 1;
             }
             else { // non free variables contribute to range space
                 if (!isconstr) index +=  this->lp_.num_row_; // variable count starts from number of constraints
-                this->YT_.push_back(emptyvec);
             }
-            this->basis_idxs_.push_back(index); // add index
-            this->basis_status_.push_back(HighsStatusToAsm(status[i], index)); // and add its status
+            this->basis_idxs_[i] = index; // add index
+            this->basis_status_[i] = HighsStatusToAsm(status[i], index); // and add its status
         } // else basic variables are just inactive and don't come into play until ratio test
     }
 }
 // initialise basis data members
 void ActiveSetData::initAsmBasis(const HighsBasis& basis){
     assert(basis.valid);
-    this->con_status_ = basis.row_status; // copy row statuses
-    this->var_status_ = basis.col_status; // copy col statuses
-    this->basis_idxs_.clear();// clear vector for the basis required by HFactor
     // by looking at active constraints, initialise range and null spaces, and basis indices for HFactor
-    initAsmBasisLoop(this->con_status_, true);
-    initAsmBasisLoop(this->var_status_, false);
+    initAsmBasisLoop(basis.row_status, true);
+    initAsmBasisLoop(basis.col_status, false);
 }
 // setup basis matrix
 void ActiveSetData::setupBasisMat(){
@@ -78,23 +82,21 @@ void ActiveSetData::setupBasisMat(){
     constraint_mat.num_col_ = temp_old_num_row; // it received the constraint matrix "column wise"
     this->B_.setup(constraint_mat, this->basis_idxs_); // where each column is a constraint. its inverse transpose will have as columns the nullspace basis
     this->B_.build(); // factorize method
-    setupInvBasisSpace();// once the basis matrix is set up, extract its inverse
+    setupInvBasisSpace();
 }
 
-void ActiveSetData::setupInvBasisSpace(){
-    // extracting the entire inverse of B^T may be inefficient. Find a way to extract it only when needed TODO
-    HighsInt n_active = this->lp_.num_col_ - (HighsInt)this->ZT_.size(); // wouldn't it be better to store this as a member of the class?
+void ActiveSetData::setupInvBasisSpace(){ // eventually remove this explicit representation of Z TODO
+    HighsInt n_active = this->lp_.num_col_ - this->nullsp_dim_; // wouldn't it be better to store this as a member of the class?
     std::vector<double> col(this->lp_.num_col_); // declare vector (column of Z, row of Z^T)
-    for (HighsInt i {0}; i < this->lp_.num_col_ ; i++){
+    for (HighsInt i {0}; i < this->nullsp_dim_ ; i++){
         col.assign(this->lp_.num_col_,0.); // (re)start unit vector
-        col[i] = 1.; // set unit entry at the index for the desired column of B^{-T}
+        col[n_active + i] = 1.; // set unit entry at the index for the desired column of B^{-T}
         this->B_.btranCall(col); // solve B^T\cdot e_i = col
-        if (i < (HighsInt)this->YT_.size()) this->YT_[i] = col; // extract copy for Y^T
-        else this->ZT_[i - YT_.size()] = col; // extract copy for Z^T
+        this->ZT_[i] = col; // extract copy for Z^T
     }
 }
 
-void ActiveSetData::setupReducedHessian(){
+void ActiveSetData::setupReducedHessian(){ // this function assumes explicit representation of Z. it has to change TODO
     assert (this->Q_.format_ == HessianFormat::kSquare);
     assert (this->redhes_.empty());
     for (size_t i {0}; i < this->ZT_.size(); i++){// loop over the rows of the reduced hessian
@@ -122,12 +124,12 @@ void ActiveSetData::extendReducedHessian(){ // algo from Feldmeier thesis
     // maybe we should factorize it to start with
 }
 
-size_t ActiveSetData::getSizeNullSpace(){
-    return this->ZT_.size();
+HighsInt ActiveSetData::getSizeNullSpace(){
+    return this->nullsp_dim_;
 }
 
-size_t ActiveSetData::getSizeRangeSpace(){
-    return this->YT_.size();
+HighsInt ActiveSetData::getSizeRangeSpace(){
+    return this->lp_.num_col_ - this->nullsp_dim_;
 }
 
 void ActiveSetData::printvector(const std::vector<double>& vec){
@@ -180,38 +182,21 @@ void ActiveSetData::computeRedGrad(){
 }
 
 void ActiveSetData::price(){
-    // compute pricing for each active constraint: Y^T (g + Q x_k)
+    // compute pricing for each basis element: B \lambda = (g + Q x_k)
     computeLocGrad();
-    this->pricing_.clear();
-    // loop over all basis and only count values for the active ones
-    HighsInt countActive {0};
-    for (size_t i {0}; i < this->basis_status_.size(); i++){
-        if (this->basis_status_[i]!=AsmBasisStatus::kFreeInBasis){ // we already are in the basis, we need to check it's active
-            // Equality is expected less frequent, should this check be moved down?
-            if (this->basis_status_[i]==AsmBasisStatus::kEquality) this->pricing_.push_back(0.);
-            else {
-                std::vector<double> yt_row(this->lp_.num_col_);
-                yt_row[i] = 1.; // select column i of B^{-T}
-                this->B_.btranCall(yt_row);
-                double sum {0.};
-                for (HighsInt j {0}; j < this->lp_.num_col_; j ++){
-                    sum += yt_row[j] * this->loc_grad_[j];
-                }
-                if (this->basis_status_[i]==AsmBasisStatus::kLower) this->pricing_.push_back(sum);
-                else if (this->basis_status_[i]==AsmBasisStatus::kUpper) this->pricing_.push_back(-sum);
-            }
-        }
-    }
+    this->pricing_ = this->loc_grad_;
+    this->B_.btranCall(this->pricing_);
 }
 // deactivate a constraint
 HighsModelStatus ActiveSetData::deactivate(){
     // should we check that there is at least one active constraint? or is it guaranteed here?
     price();
     // loop through basis elements
+    assert(this->nullsp_dim_ != this->lp_.num_col_); // check that there is at least one active constraints (can be equality)
     HighsInt chosen {0};
     double value_chosen {this->pricing_[0]};
-    for (size_t i {1}; i < this->basis_idxs_.size(); i++){
-        if (this->pricing_[i] > value_chosen){
+    for (HighsInt i {1}; i < this->lp_.num_col_; i++){ // loop through all elements of this->pricing_ or equivalently through all basis indices
+        if (isActiveInequality(this->basis_status_[i]) && this->pricing_[i] > value_chosen){
             chosen = i;
             value_chosen = this->pricing_[i];
         }
@@ -222,10 +207,15 @@ HighsModelStatus ActiveSetData::deactivate(){
     this->basis_idxs_.push_back(chosen); // and place it back at the end of it
     this->basis_status_.erase(this->basis_status_.begin() + chosen); // remove status
     this->basis_status_.push_back(AsmBasisStatus::kFreeInBasis); // add the free in basis status
-    // update basis inverse by extracting relevant vector from Y and moving it to Z
-    this->ZT_.push_back(this->YT_[chosen]); // add to the end of Z
-    this->YT_.erase(this->YT_.begin() + chosen); // remove from Y
+    this->nullsp_dim_ += 1;
+    // TODO how is this change communicated to the matrix this->B_? TODO
     // recompute reduced hessian
     extendReducedHessian();
     return HighsModelStatus::kNotset;
+}
+
+bool ActiveSetData::isActiveInequality(const AsmBasisStatus& status){
+    if (status == AsmBasisStatus::kLower ||
+        status == AsmBasisStatus::kUpper) return true;
+    else return false;
 }
