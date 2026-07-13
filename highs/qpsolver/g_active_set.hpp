@@ -41,13 +41,12 @@ class ActiveSetData {
         HighsSolution& solution_;
         HighsHessian& Q_;
         // matrices
-        HFactor B_; // basis matrix
+        ReducedHessian redhes_; // basis matrix
         // would it be better to only have one inverse matrix?
         // also, since I am extracting it, I am getting an explicit representation of the inverse
         // is that normal?
         HighsInt nullsp_dim_; // Null Space dimension
         std::vector<std::vector<double>> ZT_; // nullspace basis, dense, gives column-wise access to Z
-        std::vector<std::vector<double>> redhes_; // do we store the reduced hessian or the representation of its inverse?
         // basis information
         std::vector<HighsInt> basis_idxs_; // for HFactor and to keep up to date
         std::vector<AsmBasisStatus> basis_status_; // to keep up to date
@@ -60,7 +59,6 @@ class ActiveSetData {
         void initAsmBasisLoop(const std::vector<HighsBasisStatus>& status, const bool isconstr);
         void setupBasisMat();
         void setupInvBasisSpace();
-        void setupReducedHessian();
         HighsBasisStatus AsmStatusToHighs(const AsmBasisStatus& status);
         AsmBasisStatus HighsStatusToAsm(const HighsBasisStatus& status, HighsInt index);
         // computations

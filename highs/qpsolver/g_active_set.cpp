@@ -16,6 +16,7 @@ ActiveSetData::ActiveSetData(const HighsLp& lp,
                             : lp_(lp),
                             solution_(solution),
                             Q_(Q),
+                            redhes_(Q),
                             nullsp_dim_(0),
                             basis_idxs_(lp.num_col_),
                             basis_status_(lp.num_col_),
@@ -25,7 +26,7 @@ ActiveSetData::ActiveSetData(const HighsLp& lp,
     if (Q.format_ == HessianFormat::kTriangular) Q = Q.toSquare(); // make Hessian square to improve columns/rows accessing speed
     initAsmBasis(basis);
     setupBasisMat();
-    setupReducedHessian();
+    this->redhes_.build();
 };
 // convert Asm Status to Highs
 HighsBasisStatus ActiveSetData::AsmStatusToHighs(const AsmBasisStatus& status){
@@ -51,15 +52,9 @@ void ActiveSetData::initAsmBasisLoop(const std::vector<HighsBasisStatus>& status
     for (size_t i {0}; i<status.size(); i++){ // loop through vector of statuses
         if (status[i] != HighsBasisStatus::kBasic){// inside the loop we deal with simplex nonbasic variables only
             HighsInt index {(HighsInt)i}; // declare index for HFactor basis_index
-            std::vector<double> emptyvec(this->lp_.num_col_); // initialise with correct lenght TODO remove when removing explicit Z representation
-            if (status[i] == HighsBasisStatus::kZero){
-                assert(!isconstr); // constraints shouldnt be kZero
-                index += this->lp_.num_row_;
-                this->ZT_.push_back(emptyvec); // kZero means one available nullspace dimension
-                this->nullsp_dim_ += 1;
-            }
-            else { // non free variables contribute to range space
-                if (!isconstr) index +=  this->lp_.num_row_; // variable count starts from number of constraints
+            if (!isconstr){ // constraints shouldnt be kZero
+                index += this->lp_.num_row_; // variable count starts from number of constraints
+                if (status[i] == HighsBasisStatus::kZero) this->nullsp_dim_ += 1;
             }
             this->basis_idxs_[i] = index; // add index
             this->basis_status_[i] = HighsStatusToAsm(status[i], index); // and add its status
@@ -81,48 +76,8 @@ void ActiveSetData::setupBasisMat(){
     HighsInt temp_old_num_row = constraint_mat.num_row_; // flip the number of rows and columns
     constraint_mat.num_row_ = constraint_mat.num_col_; // so that when the matrix is used by HFactor
     constraint_mat.num_col_ = temp_old_num_row; // it received the constraint matrix "column wise"
-    this->B_.setup(constraint_mat, this->basis_idxs_); // where each column is a constraint. its inverse transpose will have as columns the nullspace basis
-    this->B_.build(); // factorize method
-    setupInvBasisSpace();
-}
-
-void ActiveSetData::setupInvBasisSpace(){ // eventually remove this explicit representation of Z TODO
-    HighsInt n_active = this->lp_.num_col_ - this->nullsp_dim_; // wouldn't it be better to store this as a member of the class?
-    std::vector<double> col(this->lp_.num_col_); // declare vector (column of Z, row of Z^T)
-    for (HighsInt i {0}; i < this->nullsp_dim_ ; i++){
-        col.assign(this->lp_.num_col_,0.); // (re)start unit vector
-        col[n_active + i] = 1.; // set unit entry at the index for the desired column of B^{-T}
-        this->B_.btranCall(col); // solve B^T\cdot e_i = col
-        this->ZT_[i] = col; // extract copy for Z^T
-    }
-}
-
-void ActiveSetData::setupReducedHessian(){ // this function assumes explicit representation of Z. it has to change TODO
-    assert (this->Q_.format_ == HessianFormat::kSquare);
-    assert (this->redhes_.empty());
-    for (size_t i {0}; i < this->ZT_.size(); i++){// loop over the rows of the reduced hessian
-        std::vector<double> empty_row_red_hessian(this->ZT_.size());
-        this->redhes_.push_back(empty_row_red_hessian); // initialise new row of reduced hessian
-    }
-    for (size_t i {0}; i < this->ZT_.size(); i++){// loop over the rows of Z^T
-        std::vector<double> row(this->lp_.num_col_); // row of Z^T Q
-        this->Q_.product(this->ZT_[i], row); // compute it
-        double sum {0.};
-        for (size_t j {0}; j <= i; j++){ // loop through columns of Z, up to the current row of Z^T, to only compute lower triangle of red_hessian_
-            for (HighsInt k {0}; k < this->lp_.num_col_; k++){ // inner produce of row of Z^T Q with column of Z
-                sum += row[k] * this->ZT_[j][k];
-            }
-            this->redhes_[i][j] = sum;
-            this->redhes_[j][i] = sum; // off-diagonal symmetric element
-            // i could check that second assignment only happens when i != j, but the check would run for nothing most of the time
-        }
-    }
-}
-
-void ActiveSetData::extendReducedHessian(){ // algo from Feldmeier thesis 
-    // TODO requires having a factorization of the reduced hessian
-    // so do we need to compute it explicitly to start with?
-    // maybe we should factorize it to start with
+    this->redhes_.Hsetup(constraint_mat, this->basis_idxs_); // where each column is a constraint. its inverse transpose will have as columns the nullspace basis
+    this->redhes_.Hbuild(); // factorize method
 }
 
 HighsInt ActiveSetData::getSizeNullSpace(){
@@ -140,6 +95,7 @@ void ActiveSetData::printvector(const std::vector<double>& vec){
     }
     std::cout.flush();
 }
+
 void ActiveSetData::printmatrix(const std::vector<std::vector<double>>& mat){
     // from Claude.ai
     for (const std::vector<double>& row : mat) {
@@ -151,6 +107,7 @@ void ActiveSetData::printmatrix(const std::vector<std::vector<double>>& mat){
     std::cout << "-----\n";
     std::cout.flush();
 }
+
 void ActiveSetData::printsparse(const HighsSparseMatrix& mat){
     std::vector<std::vector<double>> dense;
     for (HighsInt i {0}; i < mat.num_row_; i++){
@@ -171,7 +128,7 @@ void ActiveSetData::computeLocGrad(){// g + Q x_k
     }
 }
 
-void ActiveSetData::computeRedGrad(){
+void ActiveSetData::computeRedGrad(){ // TODO change to Hftran
     this->red_grad_.assign(this->ZT_.size(), 0.);
     for (size_t i {0}; i < this->red_grad_.size(); i++){
         double sum {0};
@@ -186,7 +143,7 @@ void ActiveSetData::price(){
     // compute pricing for each basis element: B \lambda = (g + Q x_k)
     computeLocGrad();
     this->pricing_ = this->loc_grad_;
-    this->B_.btranCall(this->pricing_);
+    this->redhes_.Hbtran(this->pricing_);
 }
 // deactivate a constraint
 HighsModelStatus ActiveSetData::deactivate(){
@@ -211,7 +168,7 @@ HighsModelStatus ActiveSetData::deactivate(){
     this->nullsp_dim_ += 1;
     // TODO how is this change communicated to the matrix this->B_? TODO
     // recompute reduced hessian
-    extendReducedHessian();
+    this->redhes_.extend();
     return HighsModelStatus::kNotset;
 }
 
