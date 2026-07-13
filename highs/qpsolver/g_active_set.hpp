@@ -6,6 +6,7 @@
 /*                                                                       */
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 #include "Highs.h"
+#include "qpsolver/g_red_hessian.hpp"
 
 enum class AsmBasisStatus : HighsInt {
     kUpper = -1, // active at upper bound, sign flip for pricing

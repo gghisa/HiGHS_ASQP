@@ -7,6 +7,7 @@
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 #include "Highs.h"
 #include "qpsolver/g_active_set.hpp"
+#include "qpsolver/g_red_hessian.hpp"
 
 ActiveSetData::ActiveSetData(const HighsLp& lp,
                              const HighsBasis& basis,
