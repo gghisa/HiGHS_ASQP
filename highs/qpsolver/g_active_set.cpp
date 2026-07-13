@@ -76,6 +76,7 @@ void ActiveSetData::setupBasisMat(){
     HighsInt temp_old_num_row = constraint_mat.num_row_; // flip the number of rows and columns
     constraint_mat.num_row_ = constraint_mat.num_col_; // so that when the matrix is used by HFactor
     constraint_mat.num_col_ = temp_old_num_row; // it received the constraint matrix "column wise"
+    this->redhes_.init(this->nullsp_dim_);
     this->redhes_.Hsetup(constraint_mat, this->basis_idxs_); // where each column is a constraint. its inverse transpose will have as columns the nullspace basis
     this->redhes_.Hbuild(); // factorize method
 }
