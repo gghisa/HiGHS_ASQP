@@ -42,10 +42,6 @@ class ActiveSetData {
         HighsHessian& Q_;
         // matrices
         ReducedHessian redhes_; // basis matrix
-        // would it be better to only have one inverse matrix?
-        // also, since I am extracting it, I am getting an explicit representation of the inverse
-        // is that normal?
-        HighsInt nullsp_dim_; // Null Space dimension
         std::vector<std::vector<double>> ZT_; // nullspace basis, dense, gives column-wise access to Z
         // basis information
         std::vector<HighsInt> basis_idxs_; // for HFactor and to keep up to date

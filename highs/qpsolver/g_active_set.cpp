@@ -7,7 +7,6 @@
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 #include "Highs.h"
 #include "qpsolver/g_active_set.hpp"
-#include "qpsolver/g_red_hessian.hpp"
 
 ActiveSetData::ActiveSetData(const HighsLp& lp,
                              const HighsBasis& basis,
@@ -17,7 +16,6 @@ ActiveSetData::ActiveSetData(const HighsLp& lp,
                             solution_(solution),
                             Q_(Q),
                             redhes_(Q),
-                            nullsp_dim_(0),
                             basis_idxs_(lp.num_col_),
                             basis_status_(lp.num_col_),
                             loc_grad_(lp.num_col_),
@@ -54,7 +52,7 @@ void ActiveSetData::initAsmBasisLoop(const std::vector<HighsBasisStatus>& status
             HighsInt index {(HighsInt)i}; // declare index for HFactor basis_index
             if (!isconstr){ // constraints shouldnt be kZero
                 index += this->lp_.num_row_; // variable count starts from number of constraints
-                if (status[i] == HighsBasisStatus::kZero) this->nullsp_dim_ += 1;
+                if (status[i] == HighsBasisStatus::kZero) this->redhes_.addOneNullSpaceDim();
             }
             this->basis_idxs_[i] = index; // add index
             this->basis_status_[i] = HighsStatusToAsm(status[i], index); // and add its status
@@ -67,6 +65,7 @@ void ActiveSetData::initAsmBasis(const HighsBasis& basis){
     // by looking at active constraints, initialise range and null spaces, and basis indices for HFactor
     initAsmBasisLoop(basis.row_status, true);
     initAsmBasisLoop(basis.col_status, false);
+    this->redhes_.init();
 }
 // setup basis matrix
 void ActiveSetData::setupBasisMat(){
@@ -76,17 +75,16 @@ void ActiveSetData::setupBasisMat(){
     HighsInt temp_old_num_row = constraint_mat.num_row_; // flip the number of rows and columns
     constraint_mat.num_row_ = constraint_mat.num_col_; // so that when the matrix is used by HFactor
     constraint_mat.num_col_ = temp_old_num_row; // it received the constraint matrix "column wise"
-    this->redhes_.init(this->nullsp_dim_);
     this->redhes_.Hsetup(constraint_mat, this->basis_idxs_); // where each column is a constraint. its inverse transpose will have as columns the nullspace basis
     this->redhes_.Hbuild(); // factorize method
 }
 
 HighsInt ActiveSetData::getSizeNullSpace(){
-    return this->nullsp_dim_;
+    return this->redhes_.getNullSpaceSize();
 }
 
 HighsInt ActiveSetData::getSizeRangeSpace(){
-    return this->lp_.num_col_ - this->nullsp_dim_;
+    return this->lp_.num_col_ - getSizeNullSpace();
 }
 
 void ActiveSetData::printvector(const std::vector<double>& vec){
@@ -151,7 +149,7 @@ HighsModelStatus ActiveSetData::deactivate(){
     // should we check that there is at least one active constraint? or is it guaranteed here?
     price();
     // loop through basis elements
-    assert(this->nullsp_dim_ != this->lp_.num_col_); // check that there is at least one active constraints (can be equality)
+    assert(getSizeNullSpace() != this->lp_.num_col_); // check that there is at least one active constraints (can be equality)
     HighsInt chosen {0};
     double value_chosen {this->pricing_[0]};
     for (HighsInt i {1}; i < this->lp_.num_col_; i++){ // loop through all elements of this->pricing_ or equivalently through all basis indices
@@ -166,7 +164,7 @@ HighsModelStatus ActiveSetData::deactivate(){
     this->basis_idxs_.push_back(chosen); // and place it back at the end of it
     this->basis_status_.erase(this->basis_status_.begin() + chosen); // remove status
     this->basis_status_.push_back(AsmBasisStatus::kFreeInBasis); // add the free in basis status
-    this->nullsp_dim_ += 1;
+    this->redhes_.addOneNullSpaceDim();
     // TODO how is this change communicated to the matrix this->B_? TODO
     // recompute reduced hessian
     this->redhes_.extend();

@@ -12,6 +12,14 @@ ReducedHessian::ReducedHessian(HighsHessian& Q)
                                 : Q_(Q){
 };
 
+const HighsInt ReducedHessian::getNullSpaceSize(){
+    return this->nullsp_dim_;
+};
+
+void ReducedHessian::addOneNullSpaceDim(){
+    this->nullsp_dim_++;
+}
+
 void ReducedHessian::Hsetup(HighsSparseMatrix& constraint_mat, std::vector<HighsInt>& basis_idxs){
     this->B_.setup(constraint_mat, basis_idxs);
 };
@@ -24,8 +32,9 @@ void ReducedHessian::Hftran(std::vector<double>& vec){
     this->B_.ftranCall(vec);
 };
 
-void ReducedHessian::init(HighsInt nullsp_dim){
+void ReducedHessian::init(){
     this->perm_.assign(this->nullsp_dim_, 0);
+    std::iota(this->perm_.begin(), this->perm_.end(), 0); // from claude.ai
     // dimensions are taken from the last index of the matrix, i.e. the bottom diagonal element
     this->chol_.assign(chol_idx(this->nullsp_dim_-1, this->nullsp_dim_-1) + 1, 0.);
 };
@@ -43,9 +52,9 @@ void ReducedHessian::build(){
     // while Q is dense, we can't guarantee Z is too, so M is treated as dense, and likewise its factors
     // if we order M by the largest of its diagonal entries we need to first compute it all
     // BUILD RED HESSIAN FIRST
-    for (size_t i {0}; i < this->nullsp_dim_; i++){// get Z^T
+    for (HighsInt i {0}; i < this->nullsp_dim_; i++){// get Z^T
         std::vector<double> z_col(this->Q_.dim_);
-        z_col[i] = 1.;
+        z_col[this->Q_.dim_ - this->nullsp_dim_ + i] = 1.;
         Hbtran(z_col);
         this->ZT_.push_back(z_col);
     }
@@ -53,15 +62,14 @@ void ReducedHessian::build(){
         std::vector<double> row(this->Q_.dim_); // row of Z^T Q
         this->Q_.product(this->ZT_[i], row); // compute it
         double sum {0.};
-        for (size_t j {0}; j <= i; j++){ // loop through columns of Z, up to the current row of Z^T, to only compute lower triangle of red_hessian_
+        for (HighsInt j {0}; j <= i; j++){ // loop through columns of Z, up to the current row of Z^T, to only compute lower triangle of red_hessian_
             for (HighsInt k {0}; k < this->Q_.dim_; k++){ // inner produce of row of Z^T Q with column of Z
                 sum += row[k] * this->ZT_[j][k];
             }
-            this->chol_.push_back(sum); // should be ordered such that chol_ is row-wise of M
+            chol(i,j) = sum; // should be ordered such that chol_ is row-wise of M
         }
     }
     // from claude.ai, get order of permutations based on the diagonal element's magnitude
-    std::iota(this->perm_.begin(), this->perm_.end(), 0);
     std::sort(this->perm_.begin(), this->perm_.end(), [&](int i, int j) {
        return this->chol_[chol_idx(i,i)] > this->chol_[chol_idx(j,j)];
     }); // from here on i can use chol(), which uses perm
@@ -71,15 +79,15 @@ void ReducedHessian::build(){
         for (HighsInt j {0}; j <= i; j++){
             if (i == j){
                 // diagonal element (for brevity of code i create temp variable sum)
-                for (HighsInt k {0}; k < i; k++){
-                    double square = chol(i,k);
-                    chol(i,i) -= square * square;
+                for (HighsInt k {0}; k < j; k++){
+                    double row_el = chol(i,k);
+                    chol(i,i) -= row_el * row_el;
                 }
                 chol(i,i) = std::sqrt(chol(i,i));
             }
             else {
                 // off diagonal element
-                for (HighsInt k {0}; k < i; k++){
+                for (HighsInt k {0}; k < j; k++){
                     chol(i,j) -= chol(i,k) * chol(j,k);
                 }
                 chol(i,j) /= chol(j,j);

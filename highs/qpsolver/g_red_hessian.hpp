@@ -10,16 +10,18 @@
 class ReducedHessian {
     public:
         explicit ReducedHessian(HighsHessian& Q);
+        const HighsInt getNullSpaceSize();
+        void addOneNullSpaceDim();
         void Hsetup(HighsSparseMatrix& constraint_mat, std::vector<HighsInt>& basis_idxs);
         void Hbuild();
         void Hbtran(std::vector<double>& vec);
         void Hftran(std::vector<double>& vec);
-        void init(HighsInt nullsp_dim);
+        void init();
         void build();
         void extend();
     private:
+        HighsInt nullsp_dim_{0};
         HighsHessian& Q_;
-        HighsInt nullsp_dim_;
         HFactor B_; // is this ok TODO even if the same element is member of another class?
         std::vector<double> chol_; // factorization vector storing lower triangular dense matrix row-wise
         std::vector<HighsInt> perm_; // permutation indices TODO how does this change when matrix is extended?
