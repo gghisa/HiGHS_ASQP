@@ -77,16 +77,14 @@ void ReducedHessian::build(){
     // FACTORIZE in place
     for (HighsInt i {0}; i<this->nullsp_dim_; i++){
         for (HighsInt j {0}; j <= i; j++){
-            if (i == j){
-                // diagonal element (for brevity of code i create temp variable sum)
+            if (i == j){ // diagonal element
                 for (HighsInt k {0}; k < j; k++){
                     double row_el = chol(i,k);
                     chol(i,i) -= row_el * row_el;
                 }
                 chol(i,i) = std::sqrt(chol(i,i));
             }
-            else {
-                // off diagonal element
+            else { // off diagonal element
                 for (HighsInt k {0}; k < j; k++){
                     chol(i,j) -= chol(i,k) * chol(j,k);
                 }
@@ -95,6 +93,14 @@ void ReducedHessian::build(){
         }
     }
 }
+
+void ReducedHessian::solve(std::vector<double>& vec){
+    // 1. solve Ly = P^T b
+
+    // 2. solve L^T z = y
+
+    // 3. compute x = Pz (rearrange z into x)
+};
 
 void ReducedHessian::extend(){
     // extend(std::vector<double>& y){

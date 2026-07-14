@@ -18,13 +18,15 @@ class ReducedHessian {
         void Hftran(std::vector<double>& vec);
         void init();
         void build();
+        void solve(std::vector<double>& vec);
         void extend();
     private:
         HighsInt nullsp_dim_{0};
         HighsHessian& Q_;
         HFactor B_; // is this ok TODO even if the same element is member of another class?
         std::vector<double> chol_; // factorization vector storing lower triangular dense matrix row-wise
-        std::vector<HighsInt> perm_; // permutation indices TODO how does this change when matrix is extended?
+        std::vector<HighsInt> perm_; // column permutation indices of P, row permutations indices of P^T
+        //TODO how does this^ change when matrix is extended?
         std::vector<std::vector<double>> ZT_;
         // from claude.ai
         inline HighsInt chol_idx(HighsInt i, HighsInt j) const {
