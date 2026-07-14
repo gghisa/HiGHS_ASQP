@@ -51,6 +51,8 @@ HighsModelStatus gQP(const HighsLp& lp, HighsHessian hessian, // make hessian a 
             // else break and return optimal
         } else {
             // solve current equality problem to find descent direction
+            asm_data.solveEQ();
+            asm_data.ratiotest();
             // perform ratio test then possibly activate constraint and continue
         }
     }

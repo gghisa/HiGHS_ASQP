@@ -55,7 +55,7 @@ void ReducedHessian::build(){
     for (HighsInt i {0}; i < this->nullsp_dim_; i++){// get Z^T
         std::vector<double> z_col(this->Q_.dim_);
         z_col[this->Q_.dim_ - this->nullsp_dim_ + i] = 1.;
-        Hbtran(z_col);
+        Hbtran(z_col); // solves returning a column of Z, which we store as a row of Z^T
         this->ZT_.push_back(z_col);
     }
     for (HighsInt i {0}; i < this->nullsp_dim_; i++){// loop over the rows of Z^T
@@ -94,7 +94,7 @@ void ReducedHessian::build(){
     }
 }
 
-std::vector<double> ReducedHessian::solve(std::vector<double>& vec){
+void ReducedHessian::solve(std::vector<double>& vec){
     std::vector<double> sol(vec.size()); // could do the computations without, but need it anyways for final permutation
     // 1. solve Ly = P^T b with forward substitution
     for (HighsInt i {0}; i < this->nullsp_dim_; i++){

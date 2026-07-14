@@ -18,7 +18,7 @@ class ReducedHessian {
         void Hftran(std::vector<double>& vec);
         void init();
         void build();
-        std::vector<double> solve(std::vector<double>& vec);
+        void solve(std::vector<double>& vec);
         void extend();
     private:
         HighsInt nullsp_dim_{0};
@@ -30,7 +30,7 @@ class ReducedHessian {
         std::vector<std::vector<double>> ZT_;
         // from claude.ai
         inline HighsInt chol_idx(HighsInt i, HighsInt j) const {
-            // returns the index for the chol_ vector given the indices for the lower triangular matrix it represents
+            // returns the index for the chol_ vector given the indices for the triangular matrix it represents, stored row-wise as lower triangular
             return i*(i+1)/2 + j;
         }
         // from claude.ai

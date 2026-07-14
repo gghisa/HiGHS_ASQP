@@ -30,6 +30,9 @@ class ActiveSetData {
         void printmatrix(const std::vector<std::vector<double>>& mat);
         void printsparse(const HighsSparseMatrix& mat);
         HighsModelStatus deactivate();
+        HighsModelStatus activate();
+        void solveEQ();
+        void ratiotest();
     private:
         // members from initialisation arguments
         const HighsLp& lp_;
@@ -42,7 +45,6 @@ class ActiveSetData {
         HighsHessian& Q_;
         // matrices
         ReducedHessian redhes_; // basis matrix
-        std::vector<std::vector<double>> ZT_; // nullspace basis, dense, gives column-wise access to Z
         // basis information
         std::vector<HighsInt> basis_idxs_; // for HFactor and to keep up to date
         std::vector<AsmBasisStatus> basis_status_; // to keep up to date
@@ -50,18 +52,22 @@ class ActiveSetData {
         std::vector<double> loc_grad_; // current gradient g + Q x_k, where x_k = solution_.col_value
         std::vector<double> red_grad_; // current reduced gradient Z^T (g + Q x_k)
         std::vector<double> pricing_; // a value for each active constraint, based on which the choice of which to deactivate is made
+        std::vector<double> delta_; // reduced step, solution of M \delta = Z^T (g + Q x_k)
+        std::vector<double> step_; // full step, result of Z \delta
+        double alpha_; // step size for ratio test
         // setup functions
         void initAsmBasis(const HighsBasis& basis);
         void initAsmBasisLoop(const std::vector<HighsBasisStatus>& status, const bool isconstr);
         void setupBasisMat();
-        void setupInvBasisSpace();
         HighsBasisStatus AsmStatusToHighs(const AsmBasisStatus& status);
         AsmBasisStatus HighsStatusToAsm(const HighsBasisStatus& status, HighsInt index);
         // computations
         void computeLocGrad();
         void computeRedGrad();
         void price();
-        void extendReducedHessian();
+        void compute_new_loc(const double& alpha, std::vector<double>& newloc_temp);
+        double vec2norm(const std::vector<double> vector);
         //
         bool isActiveInequality(const AsmBasisStatus& status);
+        bool isInactive(const AsmBasisStatus& status);
 };

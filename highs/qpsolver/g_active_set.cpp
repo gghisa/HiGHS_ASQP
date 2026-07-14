@@ -127,15 +127,11 @@ void ActiveSetData::computeLocGrad(){// g + Q x_k
     }
 }
 
-void ActiveSetData::computeRedGrad(){ // TODO change to Hftran
-    this->red_grad_.assign(this->ZT_.size(), 0.);
-    for (size_t i {0}; i < this->red_grad_.size(); i++){
-        double sum {0};
-        for (HighsInt j {0}; j < this->lp_.num_col_; j++){
-            sum += this->ZT_[i][j] * this->loc_grad_[j];
-        }
-        this->red_grad_[i] = sum;// Z^T (g + Q x_k)
-    }
+void ActiveSetData::computeRedGrad(){ // Z^T (g + Q x_k)
+    computeLocGrad();
+    std::vector<double> vec = this->loc_grad_;
+    this->redhes_.Hftran(vec); // compute B x = g_k
+    this->red_grad_.assign(vec.end() - getSizeNullSpace(), vec.end()); // extract last z elements of the result, i.e. Z^T (g + Q x_k)
 }
 
 void ActiveSetData::price(){
@@ -170,9 +166,79 @@ HighsModelStatus ActiveSetData::deactivate(){
     this->redhes_.extend();
     return HighsModelStatus::kNotset;
 }
+// activate a constraint
+HighsModelStatus ActiveSetData::activate(){
+    // compute step in full space
+    return HighsModelStatus::kNotset;
+}
+// solve reduced equality problem
+void ActiveSetData::solveEQ(){ // M d = red_grad_
+    computeRedGrad();
+    this->delta_ = this->red_grad_; // store info for solve
+    this->redhes_.solve(this->delta_); // solve for delta (reduced step)
+    this->step_.assign(this->Q_.dim_, 0.); // (re)initialise full space step
+    // and copy information to it
+    std::copy(this->delta_.begin(), this->delta_.end(), this->step_.begin() + (this->Q_.dim_ - getSizeNullSpace()));
+    this->redhes_.Hbtran(this->step_); // extract product Z\delta
+};
+
+void ActiveSetData::compute_new_loc(const double& alpha, std::vector<double>& newloc){
+    for (HighsInt i {0}; i < this->lp_.num_col_; i++){
+        this->step_[i] *= alpha;
+        this->alpha_ *= alpha;
+        newloc[i] = this->solution_.col_value[i] + this->step_[i];
+    } // compute x_{k+1}
+}
+
+void ActiveSetData::ratiotest(){
+    // we keep a copy of location, whereas a temporary alpha will just be local to a broken constraint
+    // at each constraint, if it is broken, we update alpha
+    // with the final alpha being the product of all the alphas (so it is also update as we go)
+    std::vector<double> newloc(this->lp_.num_col_);
+    compute_new_loc(1., newloc);
+    HighsInt newactive_idx = -1; // recall: numbering variables starts from nr of constraints
+    // it may be more efficient to check bounds first (assume feasibility ofc), so we do that here
+    for (HighsInt i {0}; i < this->lp_.num_col_; i++){ // loop through constraints
+        HighsInt index_here = i + this->lp_.num_row_;
+        if (this->lp_.col_lower_[i] > newloc[i]){
+            // compute new alpha
+            double alpha_here = ( newloc[i] - this->lp_.col_lower_[i] ) / this->step_[i];
+            compute_new_loc(alpha_here, newloc); // update alpha and temporary location
+            newactive_idx = index_here; // store new index
+        } else if (this->lp_.col_upper_[i] < newloc[i]) {
+            double alpha_here = ( this->lp_.col_upper_[i] - newloc[i] ) / this->step_[i];
+            compute_new_loc(alpha_here, newloc);
+            newactive_idx = index_here;
+        }
+    }
+    // loop through inactive (inequality) constraints
+    std::vector<double> convals(this->lp_.num_col_); // vector for constraint values
+    this->lp_.a_matrix_.productTranspose(convals, this->solution_.col_value);
+    std::vector<double> denoms(this->lp_.num_col_); // vectors for denominators of ratio test formula
+    this->lp_.a_matrix_.productTranspose(denoms, this->step_);
+    for (HighsInt i {0}; i < this->lp_.num_col_; i++){
+        if (this->lp_.row_lower_[i] > convals[i]){
+        } else if (this->lp_.row_upper_[i] < convals[i]) {}
+    }
+    // check degeneracy? TODO
+};
 
 bool ActiveSetData::isActiveInequality(const AsmBasisStatus& status){
     if (status == AsmBasisStatus::kLower ||
         status == AsmBasisStatus::kUpper) return true;
     else return false;
 }
+
+bool ActiveSetData::isInactive(const AsmBasisStatus& status){
+    if (status == AsmBasisStatus::kFreeInBasis ||
+        status == AsmBasisStatus::kInactive) return true;
+    else return false;
+}
+
+double ActiveSetData::vec2norm(const std::vector<double> vector){ // useless?
+    double sum {0.};
+    for (size_t i {0}; i < vector.size(); i++){
+        sum += vector[i] * vector[i];
+    }
+    return std::sqrt( sum );
+};
