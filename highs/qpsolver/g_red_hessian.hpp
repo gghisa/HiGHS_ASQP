@@ -18,7 +18,7 @@ class ReducedHessian {
         void Hftran(std::vector<double>& vec);
         void init();
         void build();
-        void solve(std::vector<double>& vec);
+        std::vector<double> solve(std::vector<double>& vec);
         void extend();
     private:
         HighsInt nullsp_dim_{0};

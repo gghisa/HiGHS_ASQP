@@ -94,12 +94,27 @@ void ReducedHessian::build(){
     }
 }
 
-void ReducedHessian::solve(std::vector<double>& vec){
-    // 1. solve Ly = P^T b
-
-    // 2. solve L^T z = y
-
-    // 3. compute x = Pz (rearrange z into x)
+std::vector<double> ReducedHessian::solve(std::vector<double>& vec){
+    std::vector<double> sol(vec.size()); // could do the computations without, but need it anyways for final permutation
+    // 1. solve Ly = P^T b with forward substitution
+    for (HighsInt i {0}; i < this->nullsp_dim_; i++){
+        sol[i] += vec[ this->perm_[i] ];
+        for (HighsInt j {0}; j < i; j++){
+            sol[i] -= chol(i,j) * sol[j]; 
+        }
+        sol[i] /= chol(i,i);
+    }
+    // 2. solve L^T z = y with backward substitution
+    for (HighsInt i {this->nullsp_dim_ - 1}; i > -1; i--){
+        for (HighsInt j {i}; j < this->nullsp_dim_; j++){// perform operation in place
+            sol[i] -= chol(i,j) * sol[j];
+        }
+        sol[i] /= chol(i,i);
+    }
+    // 3. compute P^T x = z (rearrange z into x)
+    for (HighsInt i {0}; i < this->nullsp_dim_; i++){
+        vec[ this->perm_[i] ] = sol[i];
+    }
 };
 
 void ReducedHessian::extend(){
