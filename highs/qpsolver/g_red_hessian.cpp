@@ -70,9 +70,10 @@ void ReducedHessian::build(){
         }
     }
     // from claude.ai, get order of permutations based on the diagonal element's magnitude
-    std::sort(this->perm_.begin(), this->perm_.end(), [&](int i, int j) {
-       return this->chol_[chol_idx(i,i)] > this->chol_[chol_idx(j,j)];
-    }); // from here on i can use chol(), which uses perm
+    // FORGET ABOUT PIVOTING FOR NOWS
+    //std::sort(this->perm_.begin(), this->perm_.end(), [&](int i, int j) {
+    //   return this->chol_[chol_idx(i,i)] > this->chol_[chol_idx(j,j)];
+    //}); // from here on i can use chol(), which uses perm
     // now get permuted elements as this->chol_[ idx(this->perm[i], this->perm[j]) ]
     // FACTORIZE in place
     for (HighsInt i {0}; i<this->nullsp_dim_; i++){
