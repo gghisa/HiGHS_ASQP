@@ -7,6 +7,7 @@
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 #include "Highs.h"
 #include "qpsolver/g_red_hessian.hpp"
+#include <unordered_set>
 
 enum class AsmBasisStatus : HighsInt {
     kUpper = -1, // active at upper bound, sign flip for pricing
@@ -21,7 +22,8 @@ class ActiveSetData {
         explicit ActiveSetData(const HighsLp& lp,
                                const HighsBasis& basis,
                                HighsSolution& solution,
-                               HighsHessian& Q);
+                               HighsHessian& Q,
+                               double& objectiveValue);
 
         HighsInt getSizeNullSpace();
         HighsInt getSizeRangeSpace();
@@ -30,9 +32,9 @@ class ActiveSetData {
         void printmatrix(const std::vector<std::vector<double>>& mat);
         void printsparse(const HighsSparseMatrix& mat);
         HighsModelStatus deactivate();
-        HighsModelStatus activate();
         void solveEQ();
         void ratiotest();
+        void computeObjective();
     private:
         // members from initialisation arguments
         const HighsLp& lp_;
@@ -43,11 +45,14 @@ class ActiveSetData {
         // kUpper    : var/con at upper bound             -> Active, necessarily in ASM basis
         HighsSolution& solution_;
         HighsHessian& Q_;
+        // objective function value
+        double& objective_;
         // matrices
         ReducedHessian redhes_; // basis matrix
         // basis information
         std::vector<HighsInt> basis_idxs_; // for HFactor and to keep up to date
         std::vector<AsmBasisStatus> basis_status_; // to keep up to date
+        std::unordered_set<HighsInt> inactive_idxs_; // tracks the indices that have to be looped through for ratio test
         // Real numbers vectors
         std::vector<double> loc_grad_; // current gradient g + Q x_k, where x_k = solution_.col_value
         std::vector<double> red_grad_; // current reduced gradient Z^T (g + Q x_k)

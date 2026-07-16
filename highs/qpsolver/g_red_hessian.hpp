@@ -19,7 +19,8 @@ class ReducedHessian {
         void init();
         void build();
         void solve(std::vector<double>& vec);
-        void extend();
+        void extend(HighsInt iRow);
+        void reduce(HighsInt iRow);
     private:
         HighsInt nullsp_dim_{0};
         HighsHessian& Q_;

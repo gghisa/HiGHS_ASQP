@@ -8,9 +8,9 @@
 #include "qpsolver/g_quass.hpp"
 #include "qpsolver/g_active_set.hpp"
 
-HighsStatus QpPhase1(const HighsLp& lp, HighsModelStatus& model_status_,
-              HighsBasis& basis_, HighsSolution& solution_,
-              HighsTimer& timer_){
+HighsStatus QpPhase1(const HighsLp& lp, HighsModelStatus& model_status,
+              HighsBasis& basis, HighsSolution& solution,
+              HighsTimer& timer, double& objectiveValue){
     //create a copy of the problem
     HighsLp ph1_lp {lp}; // local copy
     ph1_lp.col_cost_.assign(lp.num_col_, 0.0); // zero out all costs
@@ -24,9 +24,10 @@ HighsStatus QpPhase1(const HighsLp& lp, HighsModelStatus& model_status_,
     // any time limit? highs.setOptionValue("time_limit", ???);
     HighsStatus status_ph1 = qp_ph1.run();
     if (status_ph1 == HighsStatus::kError) return status_ph1; // why not returning after extracting the model status too?
-    model_status_ = qp_ph1.getModelStatus(); // note Optimal in Phase1 is Feasible for ASM
-    basis_ = qp_ph1.getBasis();
-    solution_ = qp_ph1.getSolution();
+    model_status = qp_ph1.getModelStatus(); // note Optimal in Phase1 is Feasible for ASM
+    basis = qp_ph1.getBasis();
+    solution = qp_ph1.getSolution();
+    objectiveValue = qp_ph1.getObjectiveValue();
     return status_ph1;
 }
 
@@ -37,11 +38,12 @@ HighsModelStatus gQP(const HighsLp& lp, HighsHessian hessian, // make hessian a 
 
     // first we need a presolve. How many rules are needed? Is presolve used to fix issues that would otherwise
     // lead to the solver not solving?
+    double objectiveValue;
     if (!basis.valid) { // if the basis is not valid run phase 1
-        HighsStatus status_ph1 = QpPhase1(lp, model_status, basis, solution, timer); // simplex
+        HighsStatus status_ph1 = QpPhase1(lp, model_status, basis, solution, timer, objectiveValue); // simplex
         if (status_ph1 == HighsStatus::kError) return HighsModelStatus::kModelError; // is this returned object correct?
     } // else make sure you are ready to hot start
-    ActiveSetData asm_data(lp, basis, solution, hessian);
+    ActiveSetData asm_data(lp, basis, solution, hessian, objectiveValue);
     for (HighsInt i {0}; i < 1; i++){ // set iteration limit
         // solve current equality problem to find descent direction
         // can be null if size null space is null OR we need to free more constraints
@@ -52,7 +54,8 @@ HighsModelStatus gQP(const HighsLp& lp, HighsHessian hessian, // make hessian a 
         } else {
             // solve current equality problem to find descent direction
             asm_data.solveEQ();
-            asm_data.ratiotest();
+            //asm_data.ratiotest();
+            asm_data.computeObjective();
             // perform ratio test then possibly activate constraint and continue
         }
     }

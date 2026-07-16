@@ -11,10 +11,12 @@
 ActiveSetData::ActiveSetData(const HighsLp& lp,
                              const HighsBasis& basis,
                              HighsSolution& solution,
-                             HighsHessian& Q)
+                             HighsHessian& Q,
+                             double& objectiveValue)
                             : lp_(lp),
                             solution_(solution),
                             Q_(Q),
+                            objective_(objectiveValue),
                             redhes_(Q),
                             basis_idxs_(lp.num_col_),
                             basis_status_(lp.num_col_),
@@ -26,6 +28,15 @@ ActiveSetData::ActiveSetData(const HighsLp& lp,
     setupBasisMat();
     this->redhes_.build();
 };
+// compute objective
+void ActiveSetData::computeObjective(){
+    this->objective_ = 0.;
+    this->objective_ += this->Q_.objectiveValue(this->solution_.col_value);
+    for (HighsInt i{0}; i<this->lp_.num_col_; i++){
+        this->objective_ += this->solution_.col_value[i] * this->lp_.col_cost_[i];
+    }
+    std::cout<<"objective computed again: "<< this->objective_;
+}
 // convert Asm Status to Highs
 HighsBasisStatus ActiveSetData::AsmStatusToHighs(const AsmBasisStatus& status){
     if (status==AsmBasisStatus::kLower || status==AsmBasisStatus::kEquality) return HighsBasisStatus::kLower;
@@ -48,15 +59,15 @@ AsmBasisStatus ActiveSetData::HighsStatusToAsm(const HighsBasisStatus& status, H
 //
 void ActiveSetData::initAsmBasisLoop(const std::vector<HighsBasisStatus>& status, const bool isconstr){
     for (size_t i {0}; i<status.size(); i++){ // loop through vector of statuses
-        if (status[i] != HighsBasisStatus::kBasic){// inside the loop we deal with simplex nonbasic variables only
-            HighsInt index {(HighsInt)i}; // declare index for HFactor basis_index
-            if (!isconstr){ // constraints shouldnt be kZero
-                index += this->lp_.num_row_; // variable count starts from number of constraints
-                if (status[i] == HighsBasisStatus::kZero) this->redhes_.addOneNullSpaceDim();
-            }
+        HighsInt index {(HighsInt)i};
+        if (!isconstr) index += this->lp_.num_row_; // variable count starts from number of constraints
+        if (status[i] == HighsBasisStatus::kBasic){
+            this->inactive_idxs_.insert(index);
+        } else {// basic variables are just inactive and don't come into play until ratio test
+            if (status[i] == HighsBasisStatus::kZero) this->redhes_.addOneNullSpaceDim(); // should not be happening for constraints
             this->basis_idxs_[i] = index; // add index
             this->basis_status_[i] = HighsStatusToAsm(status[i], index); // and add its status
-        } // else basic variables are just inactive and don't come into play until ratio test
+        }
     }
 }
 // initialise basis data members
@@ -163,12 +174,7 @@ HighsModelStatus ActiveSetData::deactivate(){
     this->redhes_.addOneNullSpaceDim();
     // TODO how is this change communicated to the matrix this->B_? TODO
     // recompute reduced hessian
-    this->redhes_.extend();
-    return HighsModelStatus::kNotset;
-}
-// activate a constraint
-HighsModelStatus ActiveSetData::activate(){
-    // compute step in full space
+    // TODO this->redhes_.extend();
     return HighsModelStatus::kNotset;
 }
 // solve reduced equality problem
@@ -189,7 +195,7 @@ void ActiveSetData::compute_new_loc(const double& alpha, std::vector<double>& ne
         newloc[i] = this->solution_.col_value[i] + this->step_[i];
     } // compute x_{k+1}
 }
-
+// perform ratio test and possibly activate constraint
 void ActiveSetData::ratiotest(){
     // we keep a copy of location, whereas a temporary alpha will just be local to a broken constraint
     // at each constraint, if it is broken, we update alpha
@@ -197,30 +203,62 @@ void ActiveSetData::ratiotest(){
     std::vector<double> newloc(this->lp_.num_col_);
     compute_new_loc(1., newloc);
     HighsInt newactive_idx = -1; // recall: numbering variables starts from nr of constraints
+    AsmBasisStatus newactive_status;
     // it may be more efficient to check bounds first (assume feasibility ofc), so we do that here
     for (HighsInt i {0}; i < this->lp_.num_col_; i++){ // loop through constraints
-        HighsInt index_here = i + this->lp_.num_row_;
-        if (this->lp_.col_lower_[i] > newloc[i]){
-            // compute new alpha
-            double alpha_here = ( newloc[i] - this->lp_.col_lower_[i] ) / this->step_[i];
-            compute_new_loc(alpha_here, newloc); // update alpha and temporary location
-            newactive_idx = index_here; // store new index
-        } else if (this->lp_.col_upper_[i] < newloc[i]) {
-            double alpha_here = ( this->lp_.col_upper_[i] - newloc[i] ) / this->step_[i];
-            compute_new_loc(alpha_here, newloc);
-            newactive_idx = index_here;
+        if (this->inactive_idxs_.count(i + this->lp_.num_row_)){// if bound is inactive
+            HighsInt index_here = i + this->lp_.num_row_;
+            if (this->lp_.col_lower_[i] > newloc[i]){
+                // compute new alpha
+                double alpha_here = ( this->lp_.col_lower_[i] - newloc[i] ) / this->step_[i];
+                compute_new_loc(alpha_here, newloc); // update alpha and temporary location
+                newactive_idx = index_here; // store new index
+                newactive_status = AsmBasisStatus::kLower;
+            } else if (this->lp_.col_upper_[i] < newloc[i]) {
+                double alpha_here = ( newloc[i] - this->lp_.col_upper_[i] ) / this->step_[i];
+                compute_new_loc(alpha_here, newloc);
+                newactive_idx = index_here;
+                newactive_status = AsmBasisStatus::kUpper;
+            }
         }
     }
     // loop through inactive (inequality) constraints
     std::vector<double> convals(this->lp_.num_col_); // vector for constraint values
-    this->lp_.a_matrix_.productTranspose(convals, this->solution_.col_value);
+    this->lp_.a_matrix_.productTranspose(convals, this->solution_.col_value); // a_i^T x_{k+1}
     std::vector<double> denoms(this->lp_.num_col_); // vectors for denominators of ratio test formula
-    this->lp_.a_matrix_.productTranspose(denoms, this->step_);
+    this->lp_.a_matrix_.productTranspose(denoms, this->step_); // a_i^T \s
     for (HighsInt i {0}; i < this->lp_.num_col_; i++){
-        if (this->lp_.row_lower_[i] > convals[i]){
-        } else if (this->lp_.row_upper_[i] < convals[i]) {}
+        if (this->inactive_idxs_.count(i)){// if constraint is inactive
+            if (this->lp_.row_lower_[i] > convals[i]){
+                double alpha_here = ( this->lp_.row_lower_[i] - convals[i] ) / denoms[i];
+                compute_new_loc(alpha_here, newloc); // update alpha and temporary location
+                newactive_idx = i; // store new index
+                newactive_status = AsmBasisStatus::kLower;
+            } else if (this->lp_.row_upper_[i] < convals[i]) {
+                double alpha_here = ( convals[i] - this->lp_.row_lower_[i] ) / denoms[i];
+                compute_new_loc(alpha_here, newloc); // update alpha and temporary location
+                newactive_idx = i; // store new index
+                newactive_status = AsmBasisStatus::kUpper;
+            }
+        }
     }
-    // check degeneracy? TODO
+    // check degeneracy? TODO constraint can't become active if nullspace is already full
+    HighsInt iRow {-1}; // for HFactor update
+    if (newactive_idx > -1){
+        assert(this->basis_status_.back() == AsmBasisStatus::kFreeInBasis); // check at least one available slot in basis
+        // find location of index in basis set
+        for (HighsInt i {0}; i < this->lp_.num_col_; i++){
+            if (this->basis_status_[i] == AsmBasisStatus::kFreeInBasis){
+                // at the first free-in basis vector, substitute it with new active
+                iRow = i; // return location of the substituted vector in the basis
+                this->basis_status_[i] = newactive_status;
+                this->basis_idxs_[i] = newactive_idx;
+                break;
+            }
+        }
+        this->inactive_idxs_.erase(newactive_idx);// remove index from old inactive set
+        this->redhes_.reduce(iRow);
+    }
 };
 
 bool ActiveSetData::isActiveInequality(const AsmBasisStatus& status){

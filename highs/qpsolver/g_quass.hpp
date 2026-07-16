@@ -12,6 +12,6 @@ HighsModelStatus gQP(const HighsLp& lp, HighsHessian hessian,
                     HighsBasis& basis_, HighsSolution& solution_,
                     HighsTimer& timer_);
 
-HighsStatus QpPhase1(const HighsLp& lp, HighsModelStatus& model_status_,
-                          HighsBasis& basis_, HighsSolution& solution_,
-                          HighsTimer& timer_);
+HighsStatus QpPhase1(const HighsLp& lp, HighsModelStatus& model_status,
+                          HighsBasis& basis, HighsSolution& solution,
+                          HighsTimer& timer, double& objectiveValue);

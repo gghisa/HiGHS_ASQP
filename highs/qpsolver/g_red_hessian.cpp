@@ -118,6 +118,20 @@ void ReducedHessian::solve(std::vector<double>& vec){
     }
 };
 
-void ReducedHessian::extend(){
-    // extend(std::vector<double>& y){
+void ReducedHessian::extend(HighsInt iRow){
+    // remove newactive_idx from inactive
+
+    // update basis matrix factorisation
+    HighsInt hint {99999}; // Micheal did the same
+    std::vector<double> aq_chosen;
+    HVector aq;
+    aq.array = aq_chosen;
+    aq.pack();
+    
+    HVector ep;
+    ep.size = this->Q_.dim_;
+    ep.count = 1;
+    ep.index.push_back( iRow );
+    ep.array.push_back( 1. );
+    this->B_.update(&aq, &ep, &iRow, &hint);
 };
