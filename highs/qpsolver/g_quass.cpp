@@ -31,7 +31,7 @@ HighsStatus QpPhase1(const HighsLp& lp, HighsModelStatus& model_status,
     return status_ph1;
 }
 
-HighsModelStatus gQP(const HighsLp& lp, HighsHessian hessian, // make hessian a copy so that rest of QP solver from Micheal still works.
+HighsModelStatus gQP_OLD(const HighsLp& lp, HighsHessian hessian, // make hessian a copy so that rest of QP solver from Micheal still works.
                     HighsModelStatus& model_status,
                     HighsBasis& basis, HighsSolution& solution,
                     HighsTimer& timer){

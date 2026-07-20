@@ -7,7 +7,7 @@
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 #include "Highs.h"
 
-HighsModelStatus gQP(const HighsLp& lp, HighsHessian hessian,
+HighsModelStatus gQP_OLD(const HighsLp& lp, HighsHessian hessian,
                     HighsModelStatus& model_status_,
                     HighsBasis& basis_, HighsSolution& solution_,
                     HighsTimer& timer_);

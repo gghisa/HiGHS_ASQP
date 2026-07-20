@@ -24,7 +24,6 @@ class ActiveSetData {
                                HighsSolution& solution,
                                HighsHessian& Q,
                                double& objectiveValue);
-
         HighsInt getSizeNullSpace();
         HighsInt getSizeRangeSpace();
         // void printActive(); TODO if needed

@@ -31,7 +31,7 @@
 #include "parallel/HighsParallel.h"
 #include "presolve/ICrashX.h"
 #include "qpsolver/a_quass.hpp"
-#include "qpsolver/g_quass.hpp"
+#include "qpsolver/g_solver.hpp"
 #include "qpsolver/runtime.hpp"
 #include "simplex/HSimplex.h"
 #include "simplex/HSimplexDebug.h"
@@ -4173,8 +4173,7 @@ HighsStatus Highs::callSolveQp() {
     if (this->profiling_) this->profiling_->start(kSubSolverQpAsm);
 
     // Insert your own ASM solver here
-    HighsModelStatus final_status = gQP(lp, hessian, model_status_, basis_, solution_, timer_);
-    
+    gQP(lp, basis_, solution_, model_status_, hessian, timer_);
     // save solution information in solution_
     // Return!
 
