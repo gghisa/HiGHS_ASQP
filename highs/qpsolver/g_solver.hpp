@@ -8,12 +8,12 @@
 #include "Highs.h"
 #include "qpsolver/g_red_hessian.hpp"
 
-void gQP(HighsLp& lp,
-         HighsBasis& basis,
-         HighsSolution& solution,
-         HighsModelStatus& model_status,
-         HighsHessian& hessian,
-         HighsTimer& timer);
+HighsStatus gQP(HighsLp& lp,
+                HighsBasis& basis,
+                HighsSolution& solution,
+                HighsModelStatus& model_status,
+                HighsHessian& hessian,
+                HighsTimer& timer);
 
 enum class AsmBasisStatus : HighsInt {
     kUpper = -1, // active at upper bound, sign flip for pricing
@@ -25,11 +25,13 @@ enum class AsmBasisStatus : HighsInt {
 
 class AsmBasis {
     public:
-    explicit AsmBasis(const HighsInt& num_var,
-                      const HighsInt& num_con);
-    private:
-        std::vector<HighsInt> basis_idxs_; // ordered set
-        std::vector<HighsInt> inactive_idxs_; // can be unordered TODO
+        explicit AsmBasis(const HighsInt& num_var,
+                        const HighsInt& num_con);
+        // properties
+        bool valid {false};
+        bool alien {false};
+        std::vector<HighsInt> basis_idxs_; // ordered set of indices in basis, active and inactive
+        std::vector<HighsInt> nonbasis_idxs_; // can be unordered TODO, of indices outside basis
         std::vector<AsmBasisStatus> var_status_;
         std::vector<AsmBasisStatus> con_status_;
 };
@@ -37,9 +39,19 @@ class AsmBasis {
 class ReducedHessian {
     public:
         explicit ReducedHessian(HighsHessian& Q);
+        HighsInt nullsp_dim_ {-1}; // uninitialised value
+        void HSetup(HighsSparseMatrix& constraint_mat, std::vector<HighsInt>& basis_idxs);
+        void HBuild();
+        void HBtran(std::vector<double>& vec);
+        void HFtran(std::vector<double>& vec);
+        void recomputeExplicit();
+        void refactorize();
+        inline HighsInt loc(const HighsInt& i, const HighsInt& j);
     private:
         HighsHessian& Q_;
-        HighsInt nullsp_dim_ {-1}; // uninitialised value
+        HFactor B_;
+        std::vector<std::vector<double>> ZT_; // explicit null space span
+        std::vector<double> chol_; // explicit hessian or its cholesky factor
 };
 
 class AsmSolver {
@@ -51,6 +63,17 @@ class AsmSolver {
                            HighsHessian& Q,
                            HighsTimer& timer);
         void feasibility();
+        void setupQpBasis();
+        HighsStatus getHighsStatus();
+        inline bool isActive(const AsmBasisStatus& status);
+        inline bool isActiveInequality(const AsmBasisStatus& status);
+        inline bool isInactive(const AsmBasisStatus& status);
+        inline bool isInBasis(const AsmBasisStatus& status); // for setup
+        inline bool isFreeInBasis(const AsmBasisStatus& status); // for setup
+        void addNullSpaceDim();
+        void setupBasisMat();
+        void setupReducedHessian();
+        void run();
     private:
         // problem data
         HighsLp& lp_;
@@ -62,7 +85,7 @@ class AsmSolver {
         double objective_; // objective function value
         HighsStatus status_;
         // ASM data
-        ReducedHessian M_;
+        ReducedHessian M_; // in reduced hessian is the HFactor matrix B_
         AsmBasis qp_basis_;
         // Real numbers vectors
         std::vector<double> loc_grad_; // current gradient g + Q x_k, where x_k = solution_.col_value
@@ -73,5 +96,9 @@ class AsmSolver {
         // Real numbers
         double alpha_; // step size for ratio test
         // Integers
-        HighsInt iter_count_;        
+        HighsInt iter_count_;     
+        // functions
+        AsmBasisStatus HighsStatusToAsm(const HighsBasisStatus& status, const HighsInt i, const bool variable);
+        void initAsmBasisLoop(const std::vector<HighsBasisStatus>& status, const bool isconstr);
+        void initAsmBasis(const HighsBasis& basis);
 };
