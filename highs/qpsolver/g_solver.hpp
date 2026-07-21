@@ -6,7 +6,6 @@
 /*                                                                       */
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 #include "Highs.h"
-#include "qpsolver/g_red_hessian.hpp"
 
 HighsStatus gQP(HighsLp& lp,
                 HighsBasis& basis,
@@ -39,7 +38,10 @@ class AsmBasis {
 class ReducedHessian {
     public:
         explicit ReducedHessian(HighsHessian& Q);
-        HighsInt nullsp_dim_ {-1}; // uninitialised value
+        //
+        HighsInt nullsp_dim_ {0};
+        std::vector<double> chol_; // explicit hessian or its cholesky factor
+        // functions
         void HSetup(HighsSparseMatrix& constraint_mat, std::vector<HighsInt>& basis_idxs);
         void HBuild();
         void HBtran(std::vector<double>& vec);
@@ -51,7 +53,6 @@ class ReducedHessian {
         HighsHessian& Q_;
         HFactor B_;
         std::vector<std::vector<double>> ZT_; // explicit null space span
-        std::vector<double> chol_; // explicit hessian or its cholesky factor
 };
 
 class AsmSolver {
@@ -71,6 +72,7 @@ class AsmSolver {
         inline bool isInBasis(const AsmBasisStatus& status); // for setup
         inline bool isFreeInBasis(const AsmBasisStatus& status); // for setup
         void addNullSpaceDim();
+        HighsInt getNullSpaceSize();
         void setupBasisMat();
         void setupReducedHessian();
         void run();
@@ -99,6 +101,4 @@ class AsmSolver {
         HighsInt iter_count_;     
         // functions
         AsmBasisStatus HighsStatusToAsm(const HighsBasisStatus& status, const HighsInt i, const bool variable);
-        void initAsmBasisLoop(const std::vector<HighsBasisStatus>& status, const bool isconstr);
-        void initAsmBasis(const HighsBasis& basis);
 };

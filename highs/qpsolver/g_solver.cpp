@@ -17,8 +17,9 @@ HighsStatus gQP(HighsLp& lp,
     // initialiser solver object
     AsmSolver solver(lp, basis, solution, model_status, hessian, timer);
     solver.feasibility();
-    if (solver.getHighsStatus() == HighsStatus::kError) return HighsStatus::kError;
+    if (solver.getHighsStatus() == HighsStatus::kError) return solver.getHighsStatus();
     solver.run();
+    return solver.getHighsStatus();
 };
 
 AsmBasis::AsmBasis(const HighsInt& num_var,
@@ -29,9 +30,16 @@ AsmBasis::AsmBasis(const HighsInt& num_var,
                    var_status_(num_var),
                    con_status_(num_con){};
 
+ReducedHessian::ReducedHessian(HighsHessian& Q)
+                            : Q_(Q) {};
+
 void ReducedHessian::HSetup(HighsSparseMatrix& constraint_mat, std::vector<HighsInt>& basis_idxs){
     this->B_.setup(constraint_mat, basis_idxs);
 };
+
+void ReducedHessian::HBuild(){
+    this->B_.build();
+}
 
 void ReducedHessian::HBtran(std::vector<double>& vec){
     this->B_.btranCall(vec);
@@ -118,6 +126,10 @@ void AsmSolver::addNullSpaceDim(){
     this->M_.nullsp_dim_++;
 }
 
+HighsInt AsmSolver::getNullSpaceSize(){
+    return this->M_.nullsp_dim_;
+}
+
 void AsmSolver::setupBasisMat(){
     // TODO do not create constraint mat copy
     HighsSparseMatrix constraint_mat = this->lp_.a_matrix_; // create a copy of the constraint matrix
@@ -131,13 +143,14 @@ void AsmSolver::setupBasisMat(){
 }
 
 void AsmSolver::setupReducedHessian(){
+    HighsInt chol_size = getNullSpaceSize() * (getNullSpaceSize() + 1) / 2;
+    this->M_.chol_.assign(chol_size, 0.);
     this->M_.refactorize();
 }
 
 void AsmSolver::setupQpBasis(){
     HighsInt count_basis {0};
     HighsInt count_nonbasis {0};
-    this->M_.nullsp_dim_ = 0; // initialise number of nullspace dimensions
     // loop through constraints
     for (HighsInt i {0}; i < this->lp_.num_row_; i++){
         this->qp_basis_.con_status_[i] = HighsStatusToAsm(this->lp_basis_.row_status[i], i, false);
@@ -154,7 +167,7 @@ void AsmSolver::setupQpBasis(){
     // loop through variables
     for (HighsInt i {0}; i < this->lp_.num_col_; i++){
         HighsInt idx = i + this->lp_.num_row_;
-        this->qp_basis_.var_status_[i] = HighsStatusToAsm(this->lp_basis_.row_status[i], i, true);
+        this->qp_basis_.var_status_[i] = HighsStatusToAsm(this->lp_basis_.col_status[i], i, true);
         // ignore HighsBasisStatus::kNonbasic
         if ( isInBasis(this->qp_basis_.var_status_[i]) ){
             this->qp_basis_.basis_idxs_[count_basis] = idx;

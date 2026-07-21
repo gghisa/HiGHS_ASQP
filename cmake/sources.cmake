@@ -418,9 +418,6 @@ set(highs_sources
     presolve/PresolveComponent.cpp
     qpsolver/a_asm.cpp
     qpsolver/a_quass.cpp
-    qpsolver/g_quass.cpp
-    qpsolver/g_active_set.cpp
-    qpsolver/g_red_hessian.cpp
     qpsolver/g_solver.cpp
     qpsolver/basis.cpp
     qpsolver/perturbation.cpp
@@ -567,9 +564,6 @@ set(highs_headers
     presolve/PresolveComponent.h
     qpsolver/a_asm.hpp
     qpsolver/a_quass.hpp
-    qpsolver/g_quass.hpp
-    qpsolver/g_active_set.hpp
-    qpsolver/g_red_hessian.hpp
     qpsolver/g_solver.hpp
     qpsolver/basis.hpp
     qpsolver/dantzigpricing.hpp
