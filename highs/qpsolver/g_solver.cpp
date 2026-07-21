@@ -143,7 +143,9 @@ void AsmSolver::setupBasisMat(){
 }
 
 void AsmSolver::setupReducedHessian(){
-    HighsInt chol_size = getNullSpaceSize() * (getNullSpaceSize() + 1) / 2;
+    // change hessian to square for future
+    if (this->Q_.format_ == HessianFormat::kTriangular) this->Q_ = this->Q_.toSquare();
+    HighsInt chol_size = getNullSpaceSize() * (getNullSpaceSize() + 1) / 2; // number of elements in lower triangular matrix
     this->M_.chol_.assign(chol_size, 0.);
     this->M_.refactorize();
 }
@@ -197,7 +199,7 @@ void AsmSolver::feasibility(){
     // use dual simplex if the objective value is all zeros, beacuse that means dual feasibility is guaranteed
     this->status_ = feasibility_lp.run();
     if (this->status_ != HighsStatus::kError){ // why not returning after extracting the model status too?
-        this->model_status_ = feasibility_lp.getModelStatus(); // note Optimal in Phase1 is Feasible for ASM
+        this->model_status_ = HighsModelStatus::kNotset; // note Optimal in Phase1 is Feasible for ASM
         this->lp_basis_ = feasibility_lp.getBasis();
         this->solution_ = feasibility_lp.getSolution();
         this->objective_ = feasibility_lp.getObjectiveValue();
@@ -222,7 +224,7 @@ AsmBasisStatus AsmSolver::HighsStatusToAsm(const HighsBasisStatus& status, const
 };
 
 bool AsmSolver::isInBasis(const AsmBasisStatus& status){
-    if (status == AsmBasisStatus::kInactive) return false;
+    if (status == AsmBasisStatus::kInactive) return false; // note false return here
     else return true;
 }
 
@@ -245,11 +247,81 @@ bool AsmSolver::isActiveInequality(const AsmBasisStatus& status){
 }
 
 bool AsmSolver::isInactive(const AsmBasisStatus& status){
-    if (status == AsmBasisStatus::kFreeInBasis ||
-        status == AsmBasisStatus::kInactive) return true;
+    if (status == AsmBasisStatus::kInactive ||
+        status == AsmBasisStatus::kFreeInBasis) return true;
     else return false;
 }
 
+void AsmSolver::computeLocGrad(){// g + Q x_k
+    this->Q_.product(this->solution_.col_value, this->loc_grad_); // stores result in loc_grad_
+    for (HighsInt i {0}; i < this->lp_.num_col_; i++){ // add g to Q x_k
+        this->loc_grad_[i] += this->lp_.col_cost_[i];
+    }
+}
+
+double AsmSolver::norm(const std::vector<double>& vec){
+    double sum {0.};
+    for (size_t i {0}; i < vec.size(); i++){
+        sum += vec[i] * vec[i];
+    }
+    return std::sqrt(sum);
+}
+
+double AsmSolver::computeRedGrad(){ // Z^T (g + Q x_k)
+    // returns the magnitude of the reduced gradient
+    if (getNullSpaceSize() == 0) return 0.;
+    else {
+        computeLocGrad();
+        std::vector<double> vec = this->loc_grad_;
+        this->M_.HFtran(vec); // compute B x = g_k
+        this->red_grad_.assign(vec.end() - getNullSpaceSize(), vec.end()); // extract last z elements of the result, i.e. Z^T (g + Q x_k)
+        return norm(this->red_grad_);
+    }
+}
+
+void AsmSolver::price(){
+    // compute pricing for each basis element: B \lambda = (g + Q x_k)
+    // local gradient is up to date because price() is called if computeRedGrad() is run
+    this->pricing_ = this->loc_grad_;
+    this->M_.HBtran(this->pricing_);
+}
+
+void AsmSolver::deactivate(){
+    price();
+    // loop through prices to find a constraint to deactivate
+    double bestprice = this->pricing_[0];
+    HighsInt bestidx = this->qp_basis_.basis_idxs_[0];
+    // TODO only loop through elements active in basis
+    for (HighsInt i {1}; i < this->lp_.num_col_; i++){ // num_col_ is number of elements in basis
+        HighsInt idx = this->qp_basis_.basis_idxs_[i];
+        if (idx < this->lp_.num_row_) { // it is a constraint
+            if ( isActiveInequality( this->qp_basis_.con_status_[idx]) && this->pricing_[i] < 0){
+                if (this->pricing_[i] < bestprice){
+                    bestprice = this->pricing_[i];
+                    bestidx = idx;
+                }
+            }
+        } else {
+            idx -= this->lp_.num_row_; // get variable index
+            if ( isActiveInequality( this->qp_basis_.var_status_[idx]) && this->pricing_[i] < 0){
+                if (this->pricing_[i] < bestprice){
+                    bestprice = this->pricing_[i];
+                    bestidx = idx + this->lp_.num_row_;
+                }
+            }
+        }
+    }
+    // TODO better maxloop initialisation to avoid this check
+    // check that bestprice is indeed negative, in case first price was best but positive
+    if ( bestprice < 0. ){
+        // deactivate
+    } else this->model_status_ = HighsModelStatus::kOptimal;
+}
+
 void AsmSolver::run(){
-    // run!
+    // TODO set iteration limit
+    for (HighsInt i {0}; i < 1; i++){
+        if (computeRedGrad() < this->tol_) deactivate();
+        if ( this->model_status_ == HighsModelStatus::kOptimal ) break;
+    }
 }

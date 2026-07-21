@@ -26,9 +26,7 @@ class AsmBasis {
     public:
         explicit AsmBasis(const HighsInt& num_var,
                         const HighsInt& num_con);
-        // properties
-        bool valid {false};
-        bool alien {false};
+        // properties ? TODO
         std::vector<HighsInt> basis_idxs_; // ordered set of indices in basis, active and inactive
         std::vector<HighsInt> nonbasis_idxs_; // can be unordered TODO, of indices outside basis
         std::vector<AsmBasisStatus> var_status_;
@@ -76,6 +74,12 @@ class AsmSolver {
         void setupBasisMat();
         void setupReducedHessian();
         void run();
+        void price();
+        void computeLocGrad();
+        double norm(const std::vector<double>& vec);
+        double computeRedGrad();
+        void price();
+        void deactivate();
     private:
         // problem data
         HighsLp& lp_;
@@ -97,6 +101,7 @@ class AsmSolver {
         std::vector<double> step_; // full step, result of Z \delta
         // Real numbers
         double alpha_; // step size for ratio test
+        double tol_ {1e-7}; // tolerance for zero checks
         // Integers
         HighsInt iter_count_;     
         // functions
