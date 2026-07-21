@@ -43,10 +43,18 @@ class ReducedHessian {
         void HSetup(HighsSparseMatrix& constraint_mat, std::vector<HighsInt>& basis_idxs);
         void HBuild();
         void HBtran(std::vector<double>& vec);
+        void HBtran(HVector& vec, const double expected_density);
         void HFtran(std::vector<double>& vec);
+        void HFtran(HVector& vec, const double expected_density);
+        void HUpdate(HighsInt idx_drop, HighsInt idx_new);
         void recomputeExplicit();
         void refactorize();
         inline HighsInt loc(const HighsInt& i, const HighsInt& j);
+        void extend(const HighsInt& loc_deactivated);
+        void fsolve(std::vector<double>& vec);
+        void bsolve(std::vector<double>& vec);
+        void solve(std::vector<double>& vec);
+        void getFullStep(const std::vector<double>& delta, std::vector<double> step);
     private:
         HighsHessian& Q_;
         HFactor B_;
@@ -74,12 +82,12 @@ class AsmSolver {
         void setupBasisMat();
         void setupReducedHessian();
         void run();
-        void price();
         void computeLocGrad();
         double norm(const std::vector<double>& vec);
         double computeRedGrad();
         void price();
         void deactivate();
+        void solveREP();
     private:
         // problem data
         HighsLp& lp_;

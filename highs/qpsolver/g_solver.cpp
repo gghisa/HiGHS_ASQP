@@ -45,8 +45,33 @@ void ReducedHessian::HBtran(std::vector<double>& vec){
     this->B_.btranCall(vec);
 };
 
+void ReducedHessian::HBtran(HVector& vec, const double expected_density){
+    this->B_.btranCall(vec, expected_density);
+};
+
 void ReducedHessian::HFtran(std::vector<double>& vec){
     this->B_.ftranCall(vec);
+};
+
+void ReducedHessian::HFtran(HVector& vec, const double expected_density){
+    this->B_.ftranCall(vec, expected_density);
+};
+
+void ReducedHessian::HUpdate(HighsInt idx_drop, HighsInt idx_new){ // TODO
+    HighsInt hint { 99999 }; // same number as Micheal in Basis::updatebasis
+    // build HVector to add to basis
+    HVector hvec_aq;
+    HFtran(hvec_aq, 1.0);
+    // build HVector to point to constraint exiting basis
+    HVector hvec_ep;
+    hvec_ep.clear();
+    hvec_ep.packFlag = true;
+    hvec_ep.index[0] = idx_drop;
+    hvec_ep.array[idx_drop] = 1.0;
+    hvec_ep.count = 1;
+    HBtran(hvec_ep, 1.0);
+    // update basis matrix
+    this->B_.update(&hvec_aq, &hvec_ep, &idx_drop, &hint);
 };
 
 HighsInt ReducedHessian::loc(const HighsInt& i, const HighsInt& j) {
@@ -107,6 +132,71 @@ void ReducedHessian::refactorize(){
     }
 }
 
+void ReducedHessian::fsolve(std::vector<double>& vec){
+    if ( (HighsInt)vec.size() != this->nullsp_dim_) throw std::logic_error("FSolve requires a vector the size of the nullspace!");
+    // solve Ly = b with forward substitution
+    for (HighsInt i {0}; i < this->nullsp_dim_; i++){
+        for (HighsInt j {0}; j < i; j++){
+            vec[i] -= this->chol_[ loc(i,j) ] * vec[j]; 
+        }
+        vec[i] /= this->chol_[ loc(i,i) ];
+    }
+}
+
+void ReducedHessian::bsolve(std::vector<double>& vec){
+    if ( (HighsInt)vec.size() != this->nullsp_dim_) throw std::logic_error("BSolve requires a vector the size of the nullspace!");
+    // solve L^T z = y with backward substitution
+    for (HighsInt i {this->nullsp_dim_ - 1}; i > -1; i--){
+        for (HighsInt j {i}; j < this->nullsp_dim_; j++){// perform operation in place
+            vec[i] -= this->chol_[ loc(i,j) ] * vec[j];
+        }
+        vec[i] /= this->chol_[ loc(i,i) ];
+    }
+}
+
+void ReducedHessian::solve(std::vector<double>& vec){
+    fsolve(vec);
+    bsolve(vec);
+}
+
+void ReducedHessian::extend(const HighsInt& loc_deactivated){
+    // TODO extend by paying attention to numerical instabilities
+    // get new nullspace column
+    std::vector<double> z_col(this->Q_.dim_);
+    z_col[loc_deactivated] = 1.;
+    HBtran(z_col);
+    this->ZT_.push_back(z_col);
+    // solve L l = Z^T ( Q z_col )
+    std::vector<double> vec(this->Q_.dim_);
+    this->Q_.product(z_col, vec);
+    std::vector<double> sol(this->nullsp_dim_);
+    for (HighsInt i {0}; i < this->nullsp_dim_; i++){
+        for (HighsInt j {0}; i < this->Q_.dim_; j++){
+            sol[i] += this->ZT_[i][j] * vec[j];
+        }
+    }
+    fsolve(sol);
+    this->chol_.insert(this->chol_.end(),
+                       sol.begin(),
+                       sol.end());
+    // compute new diagonal element for cholesky factor
+    double lambda {0.};
+    lambda += this->Q_.objectiveValue(sol);
+    for (HighsInt i {0}; i < this->nullsp_dim_; i++){
+        lambda -= sol[i] * sol[i];
+    }
+    this->chol_.push_back( std::sqrt(lambda) );
+}
+
+void ReducedHessian::getFullStep(const std::vector<double>& delta, std::vector<double> step){
+    std::fill(step.begin(), step.end(), 0.);
+    for (HighsInt i {0}; i < this->Q_.dim_; i++){
+        for (HighsInt j {0}; j < this->nullsp_dim_; j++){
+            step[i] += this->ZT_[j][i] * delta[j];
+        }
+    }
+}
+
 AsmSolver::AsmSolver(HighsLp& lp,
                      HighsBasis& basis,
                      HighsSolution& solution,
@@ -120,7 +210,12 @@ AsmSolver::AsmSolver(HighsLp& lp,
                      Q_(Q),
                      timer_(timer),
                      M_(Q),
-                     qp_basis_(lp.num_col_, lp.num_row_){};
+                     qp_basis_(lp.num_col_, lp.num_row_),
+                     loc_grad_(Q.dim_),
+                     pricing_(Q.dim_),
+                     step_(Q.dim_) {
+    if (this->Q_.dim_ != this->lp_.num_col_) throw std::logic_error("Dimension of hessian should match number of columns!");
+};
 
 void AsmSolver::addNullSpaceDim(){
     this->M_.nullsp_dim_++;
@@ -275,7 +370,8 @@ double AsmSolver::computeRedGrad(){ // Z^T (g + Q x_k)
         std::vector<double> vec = this->loc_grad_;
         this->M_.HFtran(vec); // compute B x = g_k
         this->red_grad_.assign(vec.end() - getNullSpaceSize(), vec.end()); // extract last z elements of the result, i.e. Z^T (g + Q x_k)
-        return norm(this->red_grad_);
+        double loc_grad_norm = norm(this->red_grad_);
+        return loc_grad_norm;
     }
 }
 
@@ -284,6 +380,7 @@ void AsmSolver::price(){
     // local gradient is up to date because price() is called if computeRedGrad() is run
     this->pricing_ = this->loc_grad_;
     this->M_.HBtran(this->pricing_);
+    // TODO flip signs of upper bounds
 }
 
 void AsmSolver::deactivate(){
@@ -291,6 +388,7 @@ void AsmSolver::deactivate(){
     // loop through prices to find a constraint to deactivate
     double bestprice = this->pricing_[0];
     HighsInt bestidx = this->qp_basis_.basis_idxs_[0];
+    HighsInt bestloc = 0;
     // TODO only loop through elements active in basis
     for (HighsInt i {1}; i < this->lp_.num_col_; i++){ // num_col_ is number of elements in basis
         HighsInt idx = this->qp_basis_.basis_idxs_[i];
@@ -299,6 +397,7 @@ void AsmSolver::deactivate(){
                 if (this->pricing_[i] < bestprice){
                     bestprice = this->pricing_[i];
                     bestidx = idx;
+                    bestloc = i;
                 }
             }
         } else {
@@ -307,6 +406,7 @@ void AsmSolver::deactivate(){
                 if (this->pricing_[i] < bestprice){
                     bestprice = this->pricing_[i];
                     bestidx = idx + this->lp_.num_row_;
+                    bestloc = i;
                 }
             }
         }
@@ -314,14 +414,35 @@ void AsmSolver::deactivate(){
     // TODO better maxloop initialisation to avoid this check
     // check that bestprice is indeed negative, in case first price was best but positive
     if ( bestprice < 0. ){
-        // deactivate
+        // deactivation requires updating the basis indices and extending the nullspace
+        // from claude.ai, send deactivated index to the end of basis indices
+        std::rotate(this->qp_basis_.basis_idxs_.begin() + bestloc,
+                    this->qp_basis_.basis_idxs_.begin() + bestloc + 1, 
+                    this->qp_basis_.basis_idxs_.end());
+        addNullSpaceDim();
+        // no need to change HFactor. Do you need to remember that the order of the basis has changed? TODO
+        // perform corresponding update on HFactor and extend the reduced hessian
+        this->M_.extend(bestloc);
     } else this->model_status_ = HighsModelStatus::kOptimal;
+}
+
+void AsmSolver::solveREP(){
+    // solve reduced equality problem
+    // reduced gradient is assumed already up to date
+    this->delta_ = this->red_grad_; // TODO is this copying necessary?
+    this->M_.solve(this->delta_);
+    // then compute full space step
+    this->M_.getFullStep(this->delta_, this->step_); // what if step is null? degeneracy TODO
 }
 
 void AsmSolver::run(){
     // TODO set iteration limit
     for (HighsInt i {0}; i < 1; i++){
-        if (computeRedGrad() < this->tol_) deactivate();
-        if ( this->model_status_ == HighsModelStatus::kOptimal ) break;
+        if (computeRedGrad() < this->tol_){
+            deactivate();
+            if ( this->model_status_ == HighsModelStatus::kOptimal ) break;
+        } else {
+            solveREP();
+        }
     }
 }
