@@ -79,6 +79,7 @@ class AsmSolver {
         inline bool isInBasis(const AsmBasisStatus& status); // for setup
         inline bool isFreeInBasis(const AsmBasisStatus& status); // for setup
         void addNullSpaceDim();
+        void removeNullSpaceDim();
         HighsInt getNullSpaceSize();
         void setupBasisMat();
         void setupReducedHessian();
@@ -88,9 +89,10 @@ class AsmSolver {
         double computeReducedVecs();
         void deactivate();
         void solveREP();
-        void testidx(const HighsInt& idx); // TODO privatise?
-        void activate();
+        void compute_newloc(const double& alpha, std::vector<double>& loc); // TODO privatise?
+        void activate(const HighsInt& idx, const AsmBasisStatus& status);
         void ratiotest();
+        double updateObjective();
     private:
         // problem data
         HighsLp& lp_;

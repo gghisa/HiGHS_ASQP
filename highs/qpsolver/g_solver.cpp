@@ -218,6 +218,10 @@ void AsmSolver::addNullSpaceDim(){
     this->M_.nullsp_dim_++;
 }
 
+void AsmSolver::removeNullSpaceDim(){
+    this->M_.nullsp_dim_--;
+}
+
 HighsInt AsmSolver::getNullSpaceSize(){
     return this->M_.nullsp_dim_;
 }
@@ -421,28 +425,100 @@ void AsmSolver::deactivate(){ // TODO reduce loops to loop over active constrain
     } else this->model_status_ = HighsModelStatus::kOptimal;
 }
 
-void AsmSolver::testidx(const HighsInt& idx){
-    if (idx < this->lp_.num_row_){ // test constraints
-        
-    } else { // test bound
-
-    }
+void AsmSolver::compute_newloc(const double& alpha, std::vector<double>& loc){
+    for (HighsInt i {0}; i < this->lp_.num_col_; i++){
+        this->step_[i] *= alpha;
+        this->alpha_ *= alpha;
+        loc[i] = this->solution_.col_value[i] + this->step_[i];
+    } // compute x_{k+1}
 }
 
-void AsmSolver::activate(){
-    // TODO
+void AsmSolver::activate(const HighsInt& idx, const AsmBasisStatus& status){
+    removeNullSpaceDim();
+    // TODO make ordered set to improve from O(n) to O(log n) deletion
+    // from claude.ai
+    auto it = std::find(this->qp_basis_.free_idxs_.begin(),
+                        this->qp_basis_.free_idxs_.end(), idx);
+    if (it != this->qp_basis_.free_idxs_.end()) {
+        this->qp_basis_.free_idxs_.erase(it);
+        this->qp_basis_.active_idxs_.push_back(idx);
+        // TODO update HFactor and reduce red hessian
+    } else {
+        // if new index is not in free, it is in inactive
+        auto it = std::find(this->qp_basis_.inactive_idxs_.begin(),
+                            this->qp_basis_.inactive_idxs_.end(), idx);
+        if (it != this->qp_basis_.inactive_idxs_.end()) {
+        this->qp_basis_.inactive_idxs_.erase(it);
+        this->qp_basis_.active_idxs_.push_back(idx);
+        this->qp_basis_.free_idxs_.pop_back(); // remove last element
+        // TODO update HFactor and reduce red hessian
+        } else {
+            throw std::logic_error("New active index should either be formerly in free or inactive indices!");
+        }
+    }
 };
 
 void AsmSolver::ratiotest(){
-    // TODO is it more efficient to loop through all constraints and check the inactive ones
-    // or is it more efficient to check index by index? likely the former, so to perform a matrix-vector product with A_ only once.
-    for (size_t i {0}; i < this->qp_basis_.free_idxs_.size(); i ++){
-        testidx(this->qp_basis_.free_idxs_[i]);
+    // we keep a copy of location, whereas a temporary alpha will just be local to a broken constraint
+    // at each constraint, if it is broken, we update alpha
+    // with the final alpha being the product of all the alphas (so it is also update as we go)
+    std::vector<double> newloc(this->lp_.num_col_);
+    compute_newloc(1., newloc);
+    HighsInt newactive_idx = -1; // recall: numbering variables starts from nr of constraints
+    AsmBasisStatus newactive_status;
+    // it may be more efficient to check bounds first (assume feasibility ofc), so we do that here
+    for (HighsInt i {0}; i < this->lp_.num_col_; i++){ // loop through constraints
+        if ( !isActive( this->qp_basis_.var_status_[i] ) ){// if bound is inactive
+            HighsInt idx = i + this->lp_.num_row_;
+            if (this->lp_.col_lower_[i] > newloc[i]){
+                // compute new alpha
+                double alpha_here = ( this->lp_.col_lower_[i] - newloc[i] ) / this->step_[i];
+                compute_newloc(alpha_here, newloc); // update alpha and temporary location
+                newactive_idx = idx; // store new index
+                newactive_status = AsmBasisStatus::kLower;
+            } else if (this->lp_.col_upper_[i] < newloc[i]) {
+                double alpha_here = ( newloc[i] - this->lp_.col_upper_[i] ) / this->step_[i];
+                compute_newloc(alpha_here, newloc);
+                newactive_idx = idx;
+                newactive_status = AsmBasisStatus::kUpper;
+            }
+        }
     }
-    for (size_t i {0}; i < this->qp_basis_.inactive_idxs_.size(); i ++){
-        testidx(this->qp_basis_.inactive_idxs_[i]);
+    // loop through inactive (inequality) constraints
+    std::vector<double> convals(this->lp_.num_col_); // vector for constraint values
+    this->lp_.a_matrix_.productTranspose(convals, this->solution_.col_value); // a_i^T x_{k+1}
+    std::vector<double> denoms(this->lp_.num_col_); // vectors for denominators of ratio test formula
+    this->lp_.a_matrix_.productTranspose(denoms, this->step_); // a_i^T \s
+    for (HighsInt i {0}; i < this->lp_.num_row_; i++){
+        if ( !isActive( this->qp_basis_.con_status_[i] ) ){// if constraint is inactive
+            if (this->lp_.row_lower_[i] > convals[i]){
+                double alpha_here = ( this->lp_.row_lower_[i] - convals[i] ) / denoms[i];
+                compute_newloc(alpha_here, newloc); // update alpha and temporary location
+                newactive_idx = i; // store new index
+                newactive_status = AsmBasisStatus::kLower;
+            } else if (this->lp_.row_upper_[i] < convals[i]) {
+                double alpha_here = ( convals[i] - this->lp_.row_lower_[i] ) / denoms[i];
+                compute_newloc(alpha_here, newloc); // update alpha and temporary location
+                newactive_idx = i; // store new index
+                newactive_status = AsmBasisStatus::kUpper;
+            }
+        }
     }
-    activate();
+    if (newactive_idx != -1) activate(newactive_idx, newactive_status);
+    // other updates? TODO
+    this->solution_.col_value = newloc;
+    updateObjective();
+}
+
+double AsmSolver::updateObjective(){
+    // assumes that objective is outdated compared to location
+    double sum {0.};
+    sum += this->Q_.objectiveValue(this->solution_.col_value);
+    for (HighsInt i {0}; i < this->lp_.num_col_; i++){
+        sum += this->lp_.col_cost_[i] * this->solution_.col_value[i];
+    }
+    this->objective_ = sum;
+    return sum;
 }
 
 void AsmSolver::solveREP(){
