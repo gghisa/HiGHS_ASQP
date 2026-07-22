@@ -27,8 +27,9 @@ class AsmBasis {
         explicit AsmBasis(const HighsInt& num_var,
                         const HighsInt& num_con);
         // properties ? TODO
-        std::vector<HighsInt> basis_idxs_; // ordered set of indices in basis, active and inactive
-        std::vector<HighsInt> nonbasis_idxs_; // can be unordered TODO, of indices outside basis
+        std::vector<HighsInt> active_idxs_; // ordered active indices in basis
+        std::vector<HighsInt> free_idxs_; // ordered inactive indices in basis
+        std::vector<HighsInt> inactive_idxs_; // unordered (TODO) inactive indices outside basis
         std::vector<AsmBasisStatus> var_status_;
         std::vector<AsmBasisStatus> con_status_;
 };
@@ -54,7 +55,7 @@ class ReducedHessian {
         void fsolve(std::vector<double>& vec);
         void bsolve(std::vector<double>& vec);
         void solve(std::vector<double>& vec);
-        void getFullStep(const std::vector<double>& delta, std::vector<double> step);
+        void getFullStep(const std::vector<double>& delta, std::vector<double>& step);
     private:
         HighsHessian& Q_;
         HFactor B_;
@@ -84,10 +85,12 @@ class AsmSolver {
         void run();
         void computeLocGrad();
         double norm(const std::vector<double>& vec);
-        double computeRedGrad();
-        void price();
+        double computeReducedVecs();
         void deactivate();
         void solveREP();
+        void testidx(const HighsInt& idx); // TODO privatise?
+        void activate();
+        void ratiotest();
     private:
         // problem data
         HighsLp& lp_;

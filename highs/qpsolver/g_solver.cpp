@@ -25,9 +25,7 @@ HighsStatus gQP(HighsLp& lp,
 AsmBasis::AsmBasis(const HighsInt& num_var,
                    const HighsInt& num_con)
                    // initialise basis by allocating memory
-                   : basis_idxs_(num_var),
-                   nonbasis_idxs_(num_con),
-                   var_status_(num_var),
+                   : var_status_(num_var),
                    con_status_(num_con){};
 
 ReducedHessian::ReducedHessian(HighsHessian& Q)
@@ -188,7 +186,7 @@ void ReducedHessian::extend(const HighsInt& loc_deactivated){
     this->chol_.push_back( std::sqrt(lambda) );
 }
 
-void ReducedHessian::getFullStep(const std::vector<double>& delta, std::vector<double> step){
+void ReducedHessian::getFullStep(const std::vector<double>& delta, std::vector<double>& step){
     std::fill(step.begin(), step.end(), 0.);
     for (HighsInt i {0}; i < this->Q_.dim_; i++){
         for (HighsInt j {0}; j < this->nullsp_dim_; j++){
@@ -212,7 +210,6 @@ AsmSolver::AsmSolver(HighsLp& lp,
                      M_(Q),
                      qp_basis_(lp.num_col_, lp.num_row_),
                      loc_grad_(Q.dim_),
-                     pricing_(Q.dim_),
                      step_(Q.dim_) {
     if (this->Q_.dim_ != this->lp_.num_col_) throw std::logic_error("Dimension of hessian should match number of columns!");
 };
@@ -233,7 +230,10 @@ void AsmSolver::setupBasisMat(){
     HighsInt temp_old_num_row = constraint_mat.num_row_; // flip the number of rows and columns
     constraint_mat.num_row_ = constraint_mat.num_col_; // so that when the matrix is used by HFactor
     constraint_mat.num_col_ = temp_old_num_row; // it received the constraint matrix "column wise"
-    this->M_.HSetup(constraint_mat, this->qp_basis_.basis_idxs_); // where each column is a constraint. its inverse transpose will have as columns the nullspace basis
+    // merge active and free indices
+    std::vector<HighsInt> basis_idxs = this->qp_basis_.active_idxs_;
+    basis_idxs.insert(basis_idxs.end(), this->qp_basis_.free_idxs_.begin(), this->qp_basis_.free_idxs_.end());
+    this->M_.HSetup(constraint_mat, basis_idxs); // where each column is a constraint. its inverse transpose will have as columns the nullspace basis
     this->M_.HBuild(); // factorize method
 }
 
@@ -253,11 +253,11 @@ void AsmSolver::setupQpBasis(){
         this->qp_basis_.con_status_[i] = HighsStatusToAsm(this->lp_basis_.row_status[i], i, false);
         // ignore HighsBasisStatus::kNonbasic
         if ( isInBasis(this->qp_basis_.con_status_[i]) ){
-            this->qp_basis_.basis_idxs_[count_basis] = i;
+            this->qp_basis_.active_idxs_.push_back(i);
             count_basis++;
             // constraints shouldn't be free in basis, ignore HighsBasisStatus::kZero
         } else {
-            this->qp_basis_.nonbasis_idxs_[count_nonbasis] = i;
+            this->qp_basis_.inactive_idxs_.push_back(i);
             count_nonbasis++;
         }
     }
@@ -267,11 +267,14 @@ void AsmSolver::setupQpBasis(){
         this->qp_basis_.var_status_[i] = HighsStatusToAsm(this->lp_basis_.col_status[i], i, true);
         // ignore HighsBasisStatus::kNonbasic
         if ( isInBasis(this->qp_basis_.var_status_[i]) ){
-            this->qp_basis_.basis_idxs_[count_basis] = idx;
+            this->qp_basis_.active_idxs_.push_back(idx);
             count_basis++;
-            if ( isFreeInBasis(this->qp_basis_.var_status_[i]) ) addNullSpaceDim();
+            if ( isFreeInBasis(this->qp_basis_.var_status_[i]) ){
+                addNullSpaceDim();
+                this->qp_basis_.free_idxs_.push_back(idx);
+            }
         } else {
-            this->qp_basis_.nonbasis_idxs_[count_nonbasis] = idx;
+            this->qp_basis_.inactive_idxs_.push_back(idx);
             count_nonbasis++;
         }
     }
@@ -362,36 +365,29 @@ double AsmSolver::norm(const std::vector<double>& vec){
     return std::sqrt(sum);
 }
 
-double AsmSolver::computeRedGrad(){ // Z^T (g + Q x_k)
+double AsmSolver::computeReducedVecs(){
+    // solve B x = (g + Q x_k) to compute (Dantzig?) prices and reduced gradient
     // returns the magnitude of the reduced gradient
     if (getNullSpaceSize() == 0) return 0.;
     else {
         computeLocGrad();
-        std::vector<double> vec = this->loc_grad_;
+        std::vector<double> vec = this->loc_grad_; // TODO is loc_grad_ storing needed?
         this->M_.HFtran(vec); // compute B x = g_k
+        this->pricing_.assign(vec.begin(), vec.end() - getNullSpaceSize()); // TODO, other types of pricing
         this->red_grad_.assign(vec.end() - getNullSpaceSize(), vec.end()); // extract last z elements of the result, i.e. Z^T (g + Q x_k)
         double loc_grad_norm = norm(this->red_grad_);
         return loc_grad_norm;
     }
 }
 
-void AsmSolver::price(){
-    // compute pricing for each basis element: B \lambda = (g + Q x_k)
-    // local gradient is up to date because price() is called if computeRedGrad() is run
-    this->pricing_ = this->loc_grad_;
-    this->M_.HBtran(this->pricing_);
-    // TODO flip signs of upper bounds
-}
-
-void AsmSolver::deactivate(){
-    price();
+void AsmSolver::deactivate(){ // TODO reduce loops to loop over active constraints only
     // loop through prices to find a constraint to deactivate
     double bestprice = this->pricing_[0];
-    HighsInt bestidx = this->qp_basis_.basis_idxs_[0];
+    HighsInt bestidx = this->qp_basis_.active_idxs_[0];
     HighsInt bestloc = 0;
     // TODO only loop through elements active in basis
-    for (HighsInt i {1}; i < this->lp_.num_col_; i++){ // num_col_ is number of elements in basis
-        HighsInt idx = this->qp_basis_.basis_idxs_[i];
+    for (size_t i {1}; i < this->qp_basis_.active_idxs_.size(); i++){
+        HighsInt idx = this->qp_basis_.active_idxs_[i];
         if (idx < this->lp_.num_row_) { // it is a constraint
             if ( isActiveInequality( this->qp_basis_.con_status_[idx]) && this->pricing_[i] < 0){
                 if (this->pricing_[i] < bestprice){
@@ -411,14 +407,13 @@ void AsmSolver::deactivate(){
             }
         }
     }
+    // TODO what if the first active is an equality and then none is eligible for deactivation?
     // TODO better maxloop initialisation to avoid this check
     // check that bestprice is indeed negative, in case first price was best but positive
     if ( bestprice < 0. ){
         // deactivation requires updating the basis indices and extending the nullspace
-        // from claude.ai, send deactivated index to the end of basis indices
-        std::rotate(this->qp_basis_.basis_idxs_.begin() + bestloc,
-                    this->qp_basis_.basis_idxs_.begin() + bestloc + 1, 
-                    this->qp_basis_.basis_idxs_.end());
+        this->qp_basis_.active_idxs_.erase(this->qp_basis_.active_idxs_.begin() + bestloc);
+        this->qp_basis_.free_idxs_.push_back(bestidx);
         addNullSpaceDim();
         // no need to change HFactor. Do you need to remember that the order of the basis has changed? TODO
         // perform corresponding update on HFactor and extend the reduced hessian
@@ -426,10 +421,37 @@ void AsmSolver::deactivate(){
     } else this->model_status_ = HighsModelStatus::kOptimal;
 }
 
+void AsmSolver::testidx(const HighsInt& idx){
+    if (idx < this->lp_.num_row_){ // test constraints
+        
+    } else { // test bound
+
+    }
+}
+
+void AsmSolver::activate(){
+    // TODO
+};
+
+void AsmSolver::ratiotest(){
+    // TODO is it more efficient to loop through all constraints and check the inactive ones
+    // or is it more efficient to check index by index? likely the former, so to perform a matrix-vector product with A_ only once.
+    for (size_t i {0}; i < this->qp_basis_.free_idxs_.size(); i ++){
+        testidx(this->qp_basis_.free_idxs_[i]);
+    }
+    for (size_t i {0}; i < this->qp_basis_.inactive_idxs_.size(); i ++){
+        testidx(this->qp_basis_.inactive_idxs_[i]);
+    }
+    activate();
+}
+
 void AsmSolver::solveREP(){
     // solve reduced equality problem
     // reduced gradient is assumed already up to date
-    this->delta_ = this->red_grad_; // TODO is this copying necessary?
+    this->delta_ = this->red_grad_; // TODO is this efficient?
+    for (size_t i {0}; i < this->delta_.size(); i++){
+        this->delta_[i] *= -1.; // flip sign to solve reduced system
+    }
     this->M_.solve(this->delta_);
     // then compute full space step
     this->M_.getFullStep(this->delta_, this->step_); // what if step is null? degeneracy TODO
@@ -438,11 +460,12 @@ void AsmSolver::solveREP(){
 void AsmSolver::run(){
     // TODO set iteration limit
     for (HighsInt i {0}; i < 1; i++){
-        if (computeRedGrad() < this->tol_){
+        if (computeReducedVecs() < this->tol_){
             deactivate();
             if ( this->model_status_ == HighsModelStatus::kOptimal ) break;
         } else {
             solveREP();
+            ratiotest();
         }
     }
 }
