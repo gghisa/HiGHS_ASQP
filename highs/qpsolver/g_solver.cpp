@@ -379,8 +379,8 @@ double AsmSolver::computeReducedVecs(){
         this->M_.HFtran(vec); // compute B x = g_k
         this->pricing_.assign(vec.begin(), vec.end() - getNullSpaceSize()); // TODO, other types of pricing
         this->red_grad_.assign(vec.end() - getNullSpaceSize(), vec.end()); // extract last z elements of the result, i.e. Z^T (g + Q x_k)
-        double loc_grad_norm = norm(this->red_grad_);
-        return loc_grad_norm;
+        double red_grad_norm = norm(this->red_grad_);
+        return red_grad_norm;
     }
 }
 
