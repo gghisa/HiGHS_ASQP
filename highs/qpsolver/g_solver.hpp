@@ -11,7 +11,7 @@ HighsStatus gQP(HighsLp& lp,
                 HighsBasis& basis,
                 HighsSolution& solution,
                 HighsModelStatus& model_status,
-                HighsHessian& hessian,
+                HighsHessian hessian,
                 HighsTimer& timer);
 
 enum class AsmBasisStatus : HighsInt {
@@ -72,15 +72,15 @@ class AsmSolver {
                            HighsTimer& timer);
         void feasibility();
         void setupQpBasis();
-        HighsStatus getHighsStatus();
+        inline HighsStatus getHighsStatus();
         inline bool isActive(const AsmBasisStatus& status);
         inline bool isActiveInequality(const AsmBasisStatus& status);
         inline bool isInactive(const AsmBasisStatus& status);
         inline bool isInBasis(const AsmBasisStatus& status); // for setup
         inline bool isFreeInBasis(const AsmBasisStatus& status); // for setup
-        void addNullSpaceDim();
-        void removeNullSpaceDim();
-        HighsInt getNullSpaceSize();
+        inline void addNullSpaceDim();
+        inline void removeNullSpaceDim();
+        inline HighsInt getNullSpaceSize();
         void setupBasisMat();
         void setupReducedHessian();
         void run();

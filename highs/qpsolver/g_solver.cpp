@@ -12,7 +12,7 @@ HighsStatus gQP(HighsLp& lp,
                 HighsBasis& basis,
                 HighsSolution& solution,
                 HighsModelStatus& model_status,
-                HighsHessian& hessian,
+                HighsHessian hessian, // TODO make pass by reference when Micheal's code doesnt require it to be triangular anymore
                 HighsTimer& timer){
     // initialiser solver object
     AsmSolver solver(lp, basis, solution, model_status, hessian, timer);
@@ -98,8 +98,8 @@ void ReducedHessian::recomputeExplicit(){
     for (HighsInt i {0}; i < this->nullsp_dim_; i++){// loop over the rows of Z^T
         std::vector<double> row(this->Q_.dim_); // row of Z^T Q
         this->Q_.product(this->ZT_[i], row); // compute it
-        double sum {0.};
         for (HighsInt j {0}; j <= i; j++){ // loop through columns of Z, up to the current row of Z^T, to only compute lower triangle of red_hessian_
+            double sum {0.};
             for (HighsInt k {0}; k < this->Q_.dim_; k++){ // inner produce of row of Z^T Q with column of Z
                 sum += row[k] * this->ZT_[j][k];
             }
@@ -109,7 +109,6 @@ void ReducedHessian::recomputeExplicit(){
 }
 
 void ReducedHessian::refactorize(){
-    recomputeExplicit();
     // perform cholesky factorization in place
     for (HighsInt i {0}; i<this->nullsp_dim_; i++){
         for (HighsInt j {0}; j <= i; j++){
@@ -144,8 +143,9 @@ void ReducedHessian::fsolve(std::vector<double>& vec){
 void ReducedHessian::bsolve(std::vector<double>& vec){
     if ( (HighsInt)vec.size() != this->nullsp_dim_) throw std::logic_error("BSolve requires a vector the size of the nullspace!");
     // solve L^T z = y with backward substitution
-    for (HighsInt i {this->nullsp_dim_ - 1}; i > -1; i--){
-        for (HighsInt j {i}; j < this->nullsp_dim_; j++){// perform operation in place
+    HighsInt limit = this->nullsp_dim_ - 1;
+    for (HighsInt i {limit}; i > -1; i--){
+        for (HighsInt j {limit}; j > i; j--){// perform operation in place
             vec[i] -= this->chol_[ loc(i,j) ] * vec[j];
         }
         vec[i] /= this->chol_[ loc(i,i) ];
@@ -187,12 +187,9 @@ void ReducedHessian::extend(const HighsInt& loc_deactivated){
 }
 
 void ReducedHessian::getFullStep(const std::vector<double>& delta, std::vector<double>& step){
-    std::fill(step.begin(), step.end(), 0.);
-    for (HighsInt i {0}; i < this->Q_.dim_; i++){
-        for (HighsInt j {0}; j < this->nullsp_dim_; j++){
-            step[i] += this->ZT_[j][i] * delta[j];
-        }
-    }
+    step.assign(this->Q_.dim_ - this->nullsp_dim_, 0.);
+    step.insert(step.end(), delta.begin(), delta.end());
+    HBtran(step);
 }
 
 AsmSolver::AsmSolver(HighsLp& lp,
@@ -246,6 +243,7 @@ void AsmSolver::setupReducedHessian(){
     if (this->Q_.format_ == HessianFormat::kTriangular) this->Q_ = this->Q_.toSquare();
     HighsInt chol_size = getNullSpaceSize() * (getNullSpaceSize() + 1) / 2; // number of elements in lower triangular matrix
     this->M_.chol_.assign(chol_size, 0.);
+    this->M_.recomputeExplicit();
     this->M_.refactorize();
 }
 
@@ -271,11 +269,12 @@ void AsmSolver::setupQpBasis(){
         this->qp_basis_.var_status_[i] = HighsStatusToAsm(this->lp_basis_.col_status[i], i, true);
         // ignore HighsBasisStatus::kNonbasic
         if ( isInBasis(this->qp_basis_.var_status_[i]) ){
-            this->qp_basis_.active_idxs_.push_back(idx);
             count_basis++;
             if ( isFreeInBasis(this->qp_basis_.var_status_[i]) ){
                 addNullSpaceDim();
                 this->qp_basis_.free_idxs_.push_back(idx);
+            } else { // if not free then it is active in the basis
+                this->qp_basis_.active_idxs_.push_back(idx);
             }
         } else {
             this->qp_basis_.inactive_idxs_.push_back(idx);
@@ -512,13 +511,10 @@ void AsmSolver::ratiotest(){
 
 double AsmSolver::updateObjective(){
     // assumes that objective is outdated compared to location
-    double sum {0.};
-    sum += this->Q_.objectiveValue(this->solution_.col_value);
-    for (HighsInt i {0}; i < this->lp_.num_col_; i++){
-        sum += this->lp_.col_cost_[i] * this->solution_.col_value[i];
-    }
-    this->objective_ = sum;
-    return sum;
+    this->objective_  = 0.;
+    this->objective_ += this->Q_.objectiveValue(this->solution_.col_value);
+    this->objective_ += this->lp_.objectiveValue(this->solution_.col_value);
+    return this->objective_;
 }
 
 void AsmSolver::solveREP(){
