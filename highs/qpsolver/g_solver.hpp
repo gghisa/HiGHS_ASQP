@@ -40,8 +40,6 @@ class AsmSolver {
         inline bool isFreeInBasis(const AsmBasisStatus& status); // for setup
         inline void addNullSpaceDim();
         inline void removeNullSpaceDim();
-        inline HighsInt getNullSpaceSize();
-        inline HighsInt getRangSpaceSize();
         void setupBasisMat();
         void setupReducedHessian();
         void run();
@@ -55,7 +53,7 @@ class AsmSolver {
         void ratiotest();
         void updateObjective();
         // functions from former Reduced Hessian class
-        void HSetup(HighsSparseMatrix& constraint_mat, std::vector<HighsInt>& basis_idxs);
+        void HSetup(HighsSparseMatrix& constraint_mat);
         void HBuild();
         void HBtran(std::vector<double>& vec);
         void HBtran(HVector& vec, const double expected_density);
@@ -72,8 +70,6 @@ class AsmSolver {
         void getFullStep(const std::vector<double>& delta, std::vector<double>& step);
         //
         inline HighsInt bperm(const HighsInt& idx_loc);
-        void fwperm(const std::vector<double>& in, std::vector<double>& out);
-        void bwperm(const std::vector<double>& in, std::vector<double>& out);
     private:
         // problem data
         HighsLp& lp_;
@@ -102,10 +98,9 @@ class AsmSolver {
         double tol_ {1e-7}; // tolerance for zero checks
         // functions
         AsmBasisStatus HighsStatusToAsm(const HighsBasisStatus& status, const HighsInt i, const bool variable);
-        // active and free indices store two vectors:
-        // 1. the first is the list of indices
-        // 2. the second it the corresponding location of each index in the basis matrix
+        // permutation has to be used when FTRAN and BTRAN are called
         std::vector<HighsInt> basis_idxs_; // ordered active and free indices in basis
+        std::vector<HighsInt> basis_build_; // for HBuild only
         std::vector<HighsInt> basis_perm_; // ordered active and free indices permutation in basis
         std::vector<HighsInt> inactive_idxs_; // unordered (TODO) inactive indices outside basis
         std::vector<AsmBasisStatus> var_status_;

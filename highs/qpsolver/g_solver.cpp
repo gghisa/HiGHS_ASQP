@@ -14,7 +14,6 @@ HighsStatus gQP(HighsLp& lp,
                 HighsModelStatus& model_status,
                 HighsHessian hessian, // TODO make pass by reference when Micheal's code doesnt require it to be triangular anymore
                 HighsTimer& timer){
-    // initialiser solver object
     AsmSolver solver(lp, basis, solution, model_status, hessian, timer);
     solver.feasibility();
     if (solver.getHighsStatus() == HighsStatus::kError) return solver.getHighsStatus();
@@ -35,16 +34,14 @@ AsmSolver::AsmSolver(HighsLp& lp,
                      Q_(Q),
                      timer_(timer),
                      buffer_(lp.num_col_),
-                     basis_perm_(lp.num_col_),
-                     var_status_(lp.num_col_),
-                     con_status_(lp.num_row_),
                      loc_grad_(Q.dim_),
-                     step_(Q.dim_) {
-    if (this->Q_.dim_ != this->lp_.num_col_) throw std::logic_error("Dimension of hessian should match number of columns!");
-}
+                     step_(Q.dim_),
+                     var_status_(lp.num_col_),
+                     con_status_(lp.num_row_){}
 
-void AsmSolver::HSetup(HighsSparseMatrix& constraint_mat, std::vector<HighsInt>& basis_idxs){
-    this->B_.setup(constraint_mat, basis_idxs);
+void AsmSolver::HSetup(HighsSparseMatrix& constraint_mat){
+    this->basis_build_ = this->basis_idxs_; // because apparently HBuild changes the order of the vector
+    this->B_.setup(constraint_mat, this->basis_build_);
 }
 
 void AsmSolver::HBuild(){
@@ -52,20 +49,28 @@ void AsmSolver::HBuild(){
 }
 
 void AsmSolver::HBtran(std::vector<double>& vec){
-    fwperm(vec, this->buffer_);      // scratch_ = P b
-    this->B_.btranCall(this->buffer_);
-    bwperm(this->buffer_, vec);     // b = P^T (solver output)
+    this->buffer_ = vec;
+    this->B_.btranCall(this->buffer_); // B^{-T}
+    // then apply P^{-1}
+    for (HighsInt i {0}; i < this->Q_.dim_; i++){
+        vec[i] = this->buffer_[ this->basis_perm_[i] ];
+    }
 }
 
-void AsmSolver::HBtran(HVector& vec, const double expected_density){
+void AsmSolver::HBtran(HVector& vec, const double expected_density){ // TODO
     this->B_.btranCall(vec, expected_density);
 }
 
 void AsmSolver::HFtran(std::vector<double>& vec){
-    this->B_.ftranCall(vec);
+    // apply P
+    for (HighsInt i {0}; i < this->Q_.dim_; i++){
+        this->buffer_[ this->basis_perm_[i] ] = vec[i];
+    }
+    this->B_.ftranCall(this->buffer_); // B^{-1}
+    vec = this->buffer_;
 }
 
-void AsmSolver::HFtran(HVector& vec, const double expected_density){
+void AsmSolver::HFtran(HVector& vec, const double expected_density){ // TODO
     this->B_.ftranCall(vec, expected_density);
 }
 
@@ -105,7 +110,7 @@ void AsmSolver::recomputeExplicit(){
     // BUILD RED HESSIAN FIRST
     for (HighsInt i {0}; i < this->nullsp_dim_; i++){// get Z^T
         std::vector<double> z_col(this->Q_.dim_);
-        z_col[this->Q_.dim_ - this->nullsp_dim_ + i] = 1.;
+        z_col[this->rangsp_dim_ + i] = 1.;
         HBtran(z_col); // solves returning a column of Z, which we store as a row of Z^T
         this->ZT_.push_back(z_col);
     }
@@ -144,7 +149,7 @@ void AsmSolver::refactorize(){
 }
 
 void AsmSolver::Lsolve(std::vector<double>& vec){
-    if ( (HighsInt)vec.size() != this->nullsp_dim_) throw std::logic_error("FSolve requires a vector the size of the nullspace!");
+    if ( (HighsInt)vec.size() != this->nullsp_dim_) throw std::logic_error("Fw solve requires a vector the size of the nullspace!");
     // solve Ly = b with forward substitution
     for (HighsInt i {0}; i < this->nullsp_dim_; i++){
         for (HighsInt j {0}; j < i; j++){
@@ -155,7 +160,7 @@ void AsmSolver::Lsolve(std::vector<double>& vec){
 }
 
 void AsmSolver::LTsolve(std::vector<double>& vec){
-    if ( (HighsInt)vec.size() != this->nullsp_dim_) throw std::logic_error("BSolve requires a vector the size of the nullspace!");
+    if ( (HighsInt)vec.size() != this->nullsp_dim_) throw std::logic_error("Bw solve requires a vector the size of the nullspace!");
     // solve L^T z = y with backward substitution
     HighsInt limit = this->nullsp_dim_ - 1;
     for (HighsInt i {limit}; i > -1; i--){
@@ -179,48 +184,34 @@ void AsmSolver::extend(const HighsInt& loc_deactivated){
     z_col[loc_deactivated] = 1.;
     HBtran(z_col);
     this->ZT_.push_back(z_col);
-    // solve L l = Z^T ( Q z_col ) = Z^T vec
-    std::vector<double> vec(this->Q_.dim_);
-    this->Q_.product(z_col, vec);
-    std::vector<double> sol(this->nullsp_dim_);
-    for (HighsInt i {0}; i < this->nullsp_dim_; i++){
-        for (HighsInt j {0}; i < this->Q_.dim_; j++){
-            sol[i] += this->ZT_[i][j] * vec[j];
+    double lambda {0.}; // new diagonal element for cholesky factor
+    if (this->nullsp_dim_ > 0){
+        // solve L l = Z^T ( Q z_col ) = Z^T vec
+        std::vector<double> vec(this->Q_.dim_);
+        this->Q_.product(z_col, vec);
+        std::vector<double> sol(this->nullsp_dim_);
+        for (HighsInt i {0}; i < this->nullsp_dim_; i++){
+            for (HighsInt j {0}; j < this->Q_.dim_; j++){
+                sol[i] += this->ZT_[i][j] * vec[j];
+            }
+        }
+        Lsolve(sol);
+        this->chol_.insert(this->chol_.end(),
+                        sol.begin(),
+                        sol.end());
+        for (HighsInt i {0}; i < this->nullsp_dim_; i++){
+            lambda -= sol[i] * sol[i];
         }
     }
-    Lsolve(sol);
-    this->chol_.insert(this->chol_.end(),
-                       sol.begin(),
-                       sol.end());
-    // compute new diagonal element for cholesky factor
-    double lambda {0.};
-    lambda += this->Q_.objectiveValue(sol);
-    for (HighsInt i {0}; i < this->nullsp_dim_; i++){
-        lambda -= sol[i] * sol[i];
-    }
+    lambda += 2 * this->Q_.objectiveValue(z_col);
     if (lambda <= 0) throw std::domain_error("Reduced matrix is either semi- or indefinite!");
     this->chol_.push_back( std::sqrt(lambda) );
 }
 
 void AsmSolver::getFullStep(const std::vector<double>& delta, std::vector<double>& step){
-    step.assign(this->Q_.dim_ - this->nullsp_dim_, 0.);
+    step.assign(this->rangsp_dim_, 0.);
     step.insert(step.end(), delta.begin(), delta.end());
-    HBtran(step);
-}
-
-// from claude.ai
-void AsmSolver::fwperm(const std::vector<double>& in, std::vector<double>& out) {
-    // out[i] = in[perm_[i]]   (apply perm before feeding solver)
-    for (size_t i = 0; i < this->basis_perm_.size(); ++i) {
-        out[i] = in[ bperm(i) ];
-    }
-}
-// from claude.ai
-void AsmSolver::bwperm(const std::vector<double>& in, std::vector<double>& out) {
-    // undo permutation on solver output
-    for (size_t i = 0; i < this->basis_perm_.size(); ++i) {
-        out[ bperm(i) ] = in[i];
-    }
+    HBtran(step); // is this cheaper than holding the explicit Z^T and using that one?
 }
 
 void AsmSolver::addNullSpaceDim(){
@@ -231,14 +222,6 @@ void AsmSolver::addNullSpaceDim(){
 void AsmSolver::removeNullSpaceDim(){
     this->nullsp_dim_--;
     this->rangsp_dim_++;
-}
-
-HighsInt AsmSolver::getNullSpaceSize(){
-    return this->nullsp_dim_;
-}
-
-HighsInt AsmSolver::getRangSpaceSize(){
-    return this->rangsp_dim_;
 }
 
 HighsInt AsmSolver::bperm(const HighsInt& idx_loc){
@@ -254,14 +237,14 @@ void AsmSolver::setupBasisMat(){
     HighsInt temp_old_num_row = constraint_mat.num_row_; // flip the number of rows and columns
     constraint_mat.num_row_ = constraint_mat.num_col_; // so that when the matrix is used by HFactor
     constraint_mat.num_col_ = temp_old_num_row; // it received the constraint matrix "column wise"
-    this->HSetup(constraint_mat, this->basis_idxs_); // where each column is a constraint. its inverse transpose will have as columns the nullspace basis
-    this->HBuild(); // factorize method
+    this->HSetup(constraint_mat); // where each column is a constraint. its inverse transpose will have as columns the nullspace basis
+    this->HBuild(); // factorize method, TODO why does it change the order of the basis_idxs?
 }
 
 void AsmSolver::setupReducedHessian(){
     // change hessian to square for future
     if (this->Q_.format_ == HessianFormat::kTriangular) this->Q_ = this->Q_.toSquare();
-    HighsInt chol_size = getNullSpaceSize() * (getNullSpaceSize() + 1) / 2; // number of elements in lower triangular matrix
+    HighsInt chol_size = this->nullsp_dim_ * (this->nullsp_dim_ + 1) / 2; // number of elements in lower triangular matrix
     this->chol_.assign(chol_size, 0.);
     this->recomputeExplicit();
     this->refactorize();
@@ -290,7 +273,7 @@ void AsmSolver::setupQpBasis(){
         }
     }
     // loop through variables
-    for (HighsInt i {0}; i < this->lp_.num_col_; i++){
+    for (HighsInt i {0}; i < this->Q_.dim_; i++){
         HighsInt idx = i + this->lp_.num_row_;
         this->var_status_[i] = HighsStatusToAsm(this->lp_basis_.col_status[i], i, true);
         // ignore HighsBasisStatus::kNonbasic
@@ -330,7 +313,7 @@ void AsmSolver::feasibility(){
     // TODO hotstart if basis is provided
     // TODO minimize slacks in this first phase
     std::vector<double> col_cost_temp = this->lp_.col_cost_; // store linear costs
-    this->lp_.col_cost_.assign(this->lp_.num_col_, 0.); // zero out objective
+    this->lp_.col_cost_.assign(this->Q_.dim_, 0.); // zero out objective
     Highs feasibility_lp;
     feasibility_lp.passModel(this->lp_);
     feasibility_lp.setOptionValue("presolve", kHighsOnString); // presolving phase1 makes it faster, im guessing the postsolve is included
@@ -348,8 +331,8 @@ void AsmSolver::feasibility(){
     this->lp_.col_cost_ = col_cost_temp; // reset linear costs to original
 }
 
-HighsStatus AsmSolver::getHighsStatus(){
-    return this->status_;
+HighsStatus AsmSolver::getHighsStatus(){ // public function
+    return this->status_; // private attribute
 }
 // convert Highs Status to Asm Status
 AsmBasisStatus AsmSolver::HighsStatusToAsm(const HighsBasisStatus& status, const HighsInt i, const bool variable){
@@ -394,13 +377,13 @@ bool AsmSolver::isInactive(const AsmBasisStatus& status){
 
 void AsmSolver::computeLocGrad(){// g + Q x_k
     this->Q_.product(this->solution_.col_value, this->loc_grad_); // stores result in loc_grad_
-    for (HighsInt i {0}; i < this->lp_.num_col_; i++){ // add g to Q x_k
+    for (HighsInt i {0}; i < this->Q_.dim_; i++){ // add g to Q x_k
         this->loc_grad_[i] += this->lp_.col_cost_[i];
     }
 }
 
 double AsmSolver::norm(const std::vector<double>& vec){
-    double sum {0.};
+    double sum {0.}; // returns zero if size is null
     for (size_t i {0}; i < vec.size(); i++){
         sum += vec[i] * vec[i];
     }
@@ -409,61 +392,56 @@ double AsmSolver::norm(const std::vector<double>& vec){
 
 double AsmSolver::computeReducedVecs(){
     // solve B x = (g + Q x_k) to compute (Dantzig?) prices and reduced gradient
-    // returns the magnitude of the reduced gradient
-    if (getNullSpaceSize() == 0) return 0.;
-    else {
-        computeLocGrad();
-        std::vector<double> vec = this->loc_grad_; // TODO is loc_grad_ storing needed?
-        this->HFtran(vec); // compute B x = g_k
-        this->pricing_.assign(vec.begin(), vec.end() - getNullSpaceSize()); // TODO, other types of pricing
-        this->red_grad_.assign(vec.end() - getNullSpaceSize(), vec.end()); // extract last z elements of the result, i.e. Z^T (g + Q x_k)
-        double red_grad_norm = norm(this->red_grad_);
-        return red_grad_norm;
-    }
+    computeLocGrad();
+    std::vector<double> vec = this->loc_grad_; // TODO is loc_grad_ storing needed?
+    this->HFtran(vec); // compute B x = g_k
+    this->pricing_.assign(vec.begin(), vec.end() - this->nullsp_dim_); // TODO, other types of pricing
+    this->red_grad_.assign(vec.end() - this->nullsp_dim_, vec.end()); // extract last z elements of the result, i.e. Z^T (g + Q x_k)
+    // returns the magnitude of the reduced gradient (0 if of null dimension)
+    return norm(this->red_grad_);
 }
 
 void AsmSolver::deactivate(){ // TODO reduce loops to loop over active constraints only
     // loop through prices to find a constraint to deactivate
-    double bestprice = this->pricing_[ bperm(0) ];
+    double bestprice = this->pricing_[0] * static_cast<double>( this->con_status_[0] );
     HighsInt bestidx = this->basis_idxs_[0];
     HighsInt bestloc = 0;
-    for (size_t i {1}; i < getRangSpaceSize(); i++){ // loop through active constraints only
+    for (HighsInt i {1}; i < this->rangsp_dim_; i++){ // loop through active constraints only
         HighsInt idx = this->basis_idxs_[i];
         if (idx < this->lp_.num_row_) { // it is a constraint
-            if ( isActiveInequality( this->con_status_[idx]) && this->pricing_[ bperm(i) ] < 0){
-                if (this->pricing_[i] < bestprice){ // TODO indexing pricing has to follow blocs_ vectors
-                    bestprice = this->pricing_[ bperm(i) ];
-                    bestidx = idx;
-                    bestloc = i;
-                }
+            double price = this->pricing_[i] * static_cast<double>( this->con_status_[idx] );
+            if (isActiveInequality( this->con_status_[idx] ) && // TODO change order to improve speed
+                price < 0 && 
+                this->pricing_[i] < bestprice){
+                bestprice = this->pricing_[i];
+                bestidx = idx;
+                bestloc = i;
             }
-        } else {
+        } else { // it is a variable bound
             idx -= this->lp_.num_row_; // get variable index
-            if ( isActiveInequality( this->var_status_[idx]) && this->pricing_[ bperm(i) ] < 0){
-                if (this->pricing_[i] < bestprice){ // TODO indexing pricing has to follow blocs_ vectors
-                    bestprice = this->pricing_[ bperm(i) ];
-                    bestidx = idx + this->lp_.num_row_;
-                    bestloc = i;
-                }
+            double price = this->pricing_[i] * static_cast<double>( this->var_status_[idx] );
+            if (isActiveInequality( this->var_status_[idx]) && // TODO change order to improve speed
+                price < 0 && 
+                this->pricing_[i] < bestprice){
+                bestprice = this->pricing_[i];
+                bestidx = idx + this->lp_.num_row_;
+                bestloc = i;
             }
         }
     }
-    // TODO what if the first active is an equality and then none is eligible for deactivation?
-    // TODO better maxloop initialisation to avoid this check
-    // check that bestprice is indeed negative, in case first price was best but positive
+    // check that bestprice is indeed negative, in case first price is best but non-negative
     if ( bestprice < 0. ){
-        // deactivation requires updating the basis indices and extending the nullspace
-        this->active_idxs_.erase(this->active_idxs_.begin() + bestloc);
-        this->free_idxs_.push_back(bestidx);
+        // swap of deactivated constraint with the last active one
+        HighsInt newloc = this->rangsp_dim_ - 1;
+        std::swap( this->basis_idxs_[bestloc], this->basis_idxs_[newloc] );
+        std::swap( this->basis_perm_[bestloc], this->basis_perm_[newloc] );
+        this->extend(bestloc); // extend the reduced hessian, no need to change HFactor
         addNullSpaceDim();
-        // no need to change HFactor. Do you need to remember that the order of the basis has changed? TODO
-        // perform corresponding update on HFactor and extend the reduced hessian
-        this->extend(bestloc);
     } else this->model_status_ = HighsModelStatus::kOptimal;
 }
 
 void AsmSolver::compute_newloc(const double& alpha, std::vector<double>& loc){
-    for (HighsInt i {0}; i < this->lp_.num_col_; i++){
+    for (HighsInt i {0}; i < this->Q_.dim_; i++){
         this->step_[i] *= alpha;
         this->alpha_ *= alpha;
         loc[i] = this->solution_.col_value[i] + this->step_[i];
@@ -471,40 +449,20 @@ void AsmSolver::compute_newloc(const double& alpha, std::vector<double>& loc){
 }
 
 void AsmSolver::activate(const HighsInt& idx, const AsmBasisStatus& status){
-    removeNullSpaceDim();
-    // TODO make ordered set to improve from O(n) to O(log n) deletion
-    // from claude.ai
-    auto it = std::find(this->free_idxs_.begin(),
-                        this->free_idxs_.end(), idx);
-    if (it != this->free_idxs_.end()) {
-        this->free_idxs_.erase(it);
-        this->active_idxs_.push_back(idx);
-        // TODO update HFactor and reduce red hessian
-    } else {
-        // if new index is not in free, it is in inactive
-        auto it = std::find(this->inactive_idxs_.begin(),
-                            this->inactive_idxs_.end(), idx);
-        if (it != this->inactive_idxs_.end()) {
-        this->inactive_idxs_.erase(it);
-        this->active_idxs_.push_back(idx);
-        this->free_idxs_.pop_back(); // remove last element
-        // TODO update HFactor and reduce red hessian
-        } else {
-            throw std::logic_error("New active index should either be formerly in free or inactive indices!");
-        }
-    }
+    // TODO make inactive_idxs_ ordered set to improve from O(n) to O(log n) deletion
+    
 }
 
 void AsmSolver::ratiotest(){
     // we keep a copy of location, whereas a temporary alpha will just be local to a broken constraint
     // at each constraint, if it is broken, we update alpha
     // with the final alpha being the product of all the alphas (so it is also update as we go)
-    std::vector<double> newloc(this->lp_.num_col_);
+    std::vector<double> newloc(this->Q_.dim_);
     compute_newloc(1., newloc);
     HighsInt newactive_idx = -1; // recall: numbering variables starts from nr of constraints
     AsmBasisStatus newactive_status;
     // it may be more efficient to check bounds first (assume feasibility ofc), so we do that here
-    for (HighsInt i {0}; i < this->lp_.num_col_; i++){ // loop through constraints
+    for (HighsInt i {0}; i < this->Q_.dim_; i++){ // loop through variables
         if ( !isActive( this->var_status_[i] ) ){// if bound is inactive
             HighsInt idx = i + this->lp_.num_row_;
             if (this->lp_.col_lower_[i] > newloc[i]){
@@ -522,9 +480,9 @@ void AsmSolver::ratiotest(){
         }
     }
     // loop through inactive (inequality) constraints
-    std::vector<double> convals(this->lp_.num_col_); // vector for constraint values
+    std::vector<double> convals(this->lp_.num_row_); // vector for constraint values
     this->lp_.a_matrix_.productTranspose(convals, this->solution_.col_value); // a_i^T x_{k+1}
-    std::vector<double> denoms(this->lp_.num_col_); // vectors for denominators of ratio test formula
+    std::vector<double> denoms(this->lp_.num_row_); // vectors for denominators of ratio test formula
     this->lp_.a_matrix_.productTranspose(denoms, this->step_); // a_i^T \s
     for (HighsInt i {0}; i < this->lp_.num_row_; i++){
         if ( !isActive( this->con_status_[i] ) ){// if constraint is inactive
@@ -568,7 +526,7 @@ void AsmSolver::solveREP(){
 
 void AsmSolver::run(){
     // TODO set iteration limit
-    for (HighsInt i {0}; i < 1; i++){
+    for (HighsInt i {0}; i < 2; i++){
         if (computeReducedVecs() < this->tol_){
             deactivate();
             if ( this->model_status_ == HighsModelStatus::kOptimal ) break;
