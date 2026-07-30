@@ -49,12 +49,12 @@ void AsmSolver::HBuild(){
 }
 
 void AsmSolver::HBtran(std::vector<double>& vec){
-    this->buffer_ = vec;
-    this->B_.btranCall(this->buffer_); // B^{-T}
-    // then apply P^{-1}
+    // first apply P
     for (HighsInt i {0}; i < this->Q_.dim_; i++){
-        vec[i] = this->buffer_[ this->basis_perm_[i] ];
+        this->buffer_[ this->basis_perm_[i] ] = vec[i];
     }
+    this->B_.btranCall(this->buffer_); // B^{-T}
+    vec = this->buffer_;
 }
 
 void AsmSolver::HBtran(HVector& vec, const double expected_density){ // TODO
@@ -62,11 +62,11 @@ void AsmSolver::HBtran(HVector& vec, const double expected_density){ // TODO
 }
 
 void AsmSolver::HFtran(std::vector<double>& vec){
-    // apply P
+    this->B_.ftranCall(vec); // B^{-1}
+    // then apply P^T = P^{-1}
     for (HighsInt i {0}; i < this->Q_.dim_; i++){
-        this->buffer_[ this->basis_perm_[i] ] = vec[i];
+        this->buffer_[ i ] = vec[ this->basis_perm_[i] ];
     }
-    this->B_.ftranCall(this->buffer_); // B^{-1}
     vec = this->buffer_;
 }
 
@@ -181,7 +181,7 @@ void AsmSolver::extend(const HighsInt& loc_deactivated){
     // TODO is explicit ZT_ necessary?
     // get new nullspace column
     std::vector<double> z_col(this->Q_.dim_);
-    z_col[loc_deactivated] = 1.;
+    z_col[ this->basis_perm_[loc_deactivated] ] = 1.;
     HBtran(z_col);
     this->ZT_.push_back(z_col);
     double lambda {0.}; // new diagonal element for cholesky factor
@@ -235,8 +235,8 @@ void AsmSolver::setupBasisMat(){
     constraint_mat.ensureRowwise(); // flip the way in which it is stored
     constraint_mat.format_ = MatrixFormat::kColwise; // but "trick it" into thinking it is still stored columnwise
     HighsInt temp_old_num_row = constraint_mat.num_row_; // flip the number of rows and columns
-    constraint_mat.num_row_ = constraint_mat.num_col_; // so that when the matrix is used by HFactor
-    constraint_mat.num_col_ = temp_old_num_row; // it received the constraint matrix "column wise"
+    constraint_mat.num_row_ = constraint_mat.num_col_; // so that when HFactor uses the matrix
+    constraint_mat.num_col_ = temp_old_num_row; // it receives the constraint matrix stored "column wise"
     this->HSetup(constraint_mat); // where each column is a constraint. its inverse transpose will have as columns the nullspace basis
     this->HBuild(); // factorize method, TODO why does it change the order of the basis_idxs?
 }
@@ -325,10 +325,10 @@ void AsmSolver::feasibility(){
         this->model_status_ = HighsModelStatus::kNotset; // note Optimal in Phase1 is Feasible for ASM
         this->lp_basis_ = feasibility_lp.getBasis();
         this->solution_ = feasibility_lp.getSolution();
-        this->objective_ = feasibility_lp.getObjectiveValue();
         setupQpBasis();
     }
     this->lp_.col_cost_ = col_cost_temp; // reset linear costs to original
+    updateObjective();
 }
 
 HighsStatus AsmSolver::getHighsStatus(){ // public function
@@ -467,12 +467,12 @@ void AsmSolver::ratiotest(){
             HighsInt idx = i + this->lp_.num_row_;
             if (this->lp_.col_lower_[i] > newloc[i]){
                 // compute new alpha
-                double alpha_here = ( this->lp_.col_lower_[i] - newloc[i] ) / this->step_[i];
+                double alpha_here = ( this->lp_.col_lower_[i] - this->solution_.col_value[i] ) / this->step_[i];
                 compute_newloc(alpha_here, newloc); // update alpha and temporary location
                 newactive_idx = idx; // store new index
                 newactive_status = AsmBasisStatus::kLower;
             } else if (this->lp_.col_upper_[i] < newloc[i]) {
-                double alpha_here = ( newloc[i] - this->lp_.col_upper_[i] ) / this->step_[i];
+                double alpha_here = ( this->lp_.col_upper_[i] - this->solution_.col_value[i] ) / this->step_[i];
                 compute_newloc(alpha_here, newloc);
                 newactive_idx = idx;
                 newactive_status = AsmBasisStatus::kUpper;
@@ -481,9 +481,9 @@ void AsmSolver::ratiotest(){
     }
     // loop through inactive (inequality) constraints
     std::vector<double> convals(this->lp_.num_row_); // vector for constraint values
-    this->lp_.a_matrix_.productTranspose(convals, this->solution_.col_value); // a_i^T x_{k+1}
+    this->lp_.a_matrix_.product(convals, this->solution_.col_value); // a_i^T x_{k+1}
     std::vector<double> denoms(this->lp_.num_row_); // vectors for denominators of ratio test formula
-    this->lp_.a_matrix_.productTranspose(denoms, this->step_); // a_i^T \s
+    this->lp_.a_matrix_.product(denoms, this->step_); // a_i^T \s
     for (HighsInt i {0}; i < this->lp_.num_row_; i++){
         if ( !isActive( this->con_status_[i] ) ){// if constraint is inactive
             if (this->lp_.row_lower_[i] > convals[i]){
@@ -492,7 +492,7 @@ void AsmSolver::ratiotest(){
                 newactive_idx = i; // store new index
                 newactive_status = AsmBasisStatus::kLower;
             } else if (this->lp_.row_upper_[i] < convals[i]) {
-                double alpha_here = ( convals[i] - this->lp_.row_lower_[i] ) / denoms[i];
+                double alpha_here = ( this->lp_.row_lower_[i] - convals[i] ) / denoms[i];
                 compute_newloc(alpha_here, newloc); // update alpha and temporary location
                 newactive_idx = i; // store new index
                 newactive_status = AsmBasisStatus::kUpper;
