@@ -20,42 +20,56 @@ HighsStatus gQP(HighsLp& lp,
     if (solver.getHighsStatus() == HighsStatus::kError) return solver.getHighsStatus();
     solver.run();
     return solver.getHighsStatus();
-};
+}
 
-AsmBasis::AsmBasis(const HighsInt& num_var,
-                   const HighsInt& num_con)
-                   // initialise basis by allocating memory
-                   : var_status_(num_var),
-                   con_status_(num_con){};
+AsmSolver::AsmSolver(HighsLp& lp,
+                     HighsBasis& basis,
+                     HighsSolution& solution,
+                     HighsModelStatus& model_status,
+                     HighsHessian& Q,
+                     HighsTimer& timer)
+                     : lp_(lp),
+                     lp_basis_(basis),
+                     solution_(solution),
+                     model_status_(model_status),
+                     Q_(Q),
+                     timer_(timer),
+                     buffer_(lp.num_col_),
+                     basis_perm_(lp.num_col_),
+                     var_status_(lp.num_col_),
+                     con_status_(lp.num_row_),
+                     loc_grad_(Q.dim_),
+                     step_(Q.dim_) {
+    if (this->Q_.dim_ != this->lp_.num_col_) throw std::logic_error("Dimension of hessian should match number of columns!");
+}
 
-ReducedHessian::ReducedHessian(HighsHessian& Q)
-                            : Q_(Q) {};
-
-void ReducedHessian::HSetup(HighsSparseMatrix& constraint_mat, std::vector<HighsInt>& basis_idxs){
+void AsmSolver::HSetup(HighsSparseMatrix& constraint_mat, std::vector<HighsInt>& basis_idxs){
     this->B_.setup(constraint_mat, basis_idxs);
-};
+}
 
-void ReducedHessian::HBuild(){
+void AsmSolver::HBuild(){
     this->B_.build();
 }
 
-void ReducedHessian::HBtran(std::vector<double>& vec){
-    this->B_.btranCall(vec);
-};
+void AsmSolver::HBtran(std::vector<double>& vec){
+    fwperm(vec, this->buffer_);      // scratch_ = P b
+    this->B_.btranCall(this->buffer_);
+    bwperm(this->buffer_, vec);     // b = P^T (solver output)
+}
 
-void ReducedHessian::HBtran(HVector& vec, const double expected_density){
+void AsmSolver::HBtran(HVector& vec, const double expected_density){
     this->B_.btranCall(vec, expected_density);
-};
+}
 
-void ReducedHessian::HFtran(std::vector<double>& vec){
+void AsmSolver::HFtran(std::vector<double>& vec){
     this->B_.ftranCall(vec);
-};
+}
 
-void ReducedHessian::HFtran(HVector& vec, const double expected_density){
+void AsmSolver::HFtran(HVector& vec, const double expected_density){
     this->B_.ftranCall(vec, expected_density);
-};
+}
 
-void ReducedHessian::HUpdate(HighsInt idx_drop, HighsInt idx_new){ // TODO
+void AsmSolver::HUpdate(HighsInt idx_drop, HighsInt idx_new){ // TODO
     HighsInt hint { 99999 }; // same number as Micheal in Basis::updatebasis
     // build HVector to add to basis
     HVector hvec_aq;
@@ -70,14 +84,14 @@ void ReducedHessian::HUpdate(HighsInt idx_drop, HighsInt idx_new){ // TODO
     HBtran(hvec_ep, 1.0);
     // update basis matrix
     this->B_.update(&hvec_aq, &hvec_ep, &idx_drop, &hint);
-};
+}
 
-HighsInt ReducedHessian::loc(const HighsInt& i, const HighsInt& j) {
+HighsInt AsmSolver::loc(const HighsInt& i, const HighsInt& j) {
     // returns the index for the chol_ vector given the indices for the triangular matrix it represents, stored row-wise as lower triangular
     return i*(i+1)/2 + j;
 }
 
-void ReducedHessian::recomputeExplicit(){
+void AsmSolver::recomputeExplicit(){
     // assume:
     // 1. number of nullspace dimensions known
     // 2. B_ factorization completed
@@ -108,7 +122,7 @@ void ReducedHessian::recomputeExplicit(){
     }
 }
 
-void ReducedHessian::refactorize(){
+void AsmSolver::refactorize(){
     // perform cholesky factorization in place
     for (HighsInt i {0}; i<this->nullsp_dim_; i++){
         for (HighsInt j {0}; j <= i; j++){
@@ -129,7 +143,7 @@ void ReducedHessian::refactorize(){
     }
 }
 
-void ReducedHessian::fsolve(std::vector<double>& vec){
+void AsmSolver::Lsolve(std::vector<double>& vec){
     if ( (HighsInt)vec.size() != this->nullsp_dim_) throw std::logic_error("FSolve requires a vector the size of the nullspace!");
     // solve Ly = b with forward substitution
     for (HighsInt i {0}; i < this->nullsp_dim_; i++){
@@ -140,7 +154,7 @@ void ReducedHessian::fsolve(std::vector<double>& vec){
     }
 }
 
-void ReducedHessian::bsolve(std::vector<double>& vec){
+void AsmSolver::LTsolve(std::vector<double>& vec){
     if ( (HighsInt)vec.size() != this->nullsp_dim_) throw std::logic_error("BSolve requires a vector the size of the nullspace!");
     // solve L^T z = y with backward substitution
     HighsInt limit = this->nullsp_dim_ - 1;
@@ -152,19 +166,20 @@ void ReducedHessian::bsolve(std::vector<double>& vec){
     }
 }
 
-void ReducedHessian::solve(std::vector<double>& vec){
-    fsolve(vec);
-    bsolve(vec);
+void AsmSolver::LLTsolve(std::vector<double>& vec){
+    Lsolve(vec);
+    LTsolve(vec);
 }
 
-void ReducedHessian::extend(const HighsInt& loc_deactivated){
+void AsmSolver::extend(const HighsInt& loc_deactivated){
     // TODO extend by paying attention to numerical instabilities
+    // TODO is explicit ZT_ necessary?
     // get new nullspace column
     std::vector<double> z_col(this->Q_.dim_);
     z_col[loc_deactivated] = 1.;
     HBtran(z_col);
     this->ZT_.push_back(z_col);
-    // solve L l = Z^T ( Q z_col )
+    // solve L l = Z^T ( Q z_col ) = Z^T vec
     std::vector<double> vec(this->Q_.dim_);
     this->Q_.product(z_col, vec);
     std::vector<double> sol(this->nullsp_dim_);
@@ -173,7 +188,7 @@ void ReducedHessian::extend(const HighsInt& loc_deactivated){
             sol[i] += this->ZT_[i][j] * vec[j];
         }
     }
-    fsolve(sol);
+    Lsolve(sol);
     this->chol_.insert(this->chol_.end(),
                        sol.begin(),
                        sol.end());
@@ -183,44 +198,52 @@ void ReducedHessian::extend(const HighsInt& loc_deactivated){
     for (HighsInt i {0}; i < this->nullsp_dim_; i++){
         lambda -= sol[i] * sol[i];
     }
+    if (lambda <= 0) throw std::domain_error("Reduced matrix is either semi- or indefinite!");
     this->chol_.push_back( std::sqrt(lambda) );
 }
 
-void ReducedHessian::getFullStep(const std::vector<double>& delta, std::vector<double>& step){
+void AsmSolver::getFullStep(const std::vector<double>& delta, std::vector<double>& step){
     step.assign(this->Q_.dim_ - this->nullsp_dim_, 0.);
     step.insert(step.end(), delta.begin(), delta.end());
     HBtran(step);
 }
 
-AsmSolver::AsmSolver(HighsLp& lp,
-                     HighsBasis& basis,
-                     HighsSolution& solution,
-                     HighsModelStatus& model_status,
-                     HighsHessian& Q,
-                     HighsTimer& timer)
-                     : lp_(lp),
-                     lp_basis_(basis),
-                     solution_(solution),
-                     model_status_(model_status),
-                     Q_(Q),
-                     timer_(timer),
-                     M_(Q),
-                     qp_basis_(lp.num_col_, lp.num_row_),
-                     loc_grad_(Q.dim_),
-                     step_(Q.dim_) {
-    if (this->Q_.dim_ != this->lp_.num_col_) throw std::logic_error("Dimension of hessian should match number of columns!");
-};
+// from claude.ai
+void AsmSolver::fwperm(const std::vector<double>& in, std::vector<double>& out) {
+    // out[i] = in[perm_[i]]   (apply perm before feeding solver)
+    for (size_t i = 0; i < this->basis_perm_.size(); ++i) {
+        out[i] = in[ bperm(i) ];
+    }
+}
+// from claude.ai
+void AsmSolver::bwperm(const std::vector<double>& in, std::vector<double>& out) {
+    // undo permutation on solver output
+    for (size_t i = 0; i < this->basis_perm_.size(); ++i) {
+        out[ bperm(i) ] = in[i];
+    }
+}
 
 void AsmSolver::addNullSpaceDim(){
-    this->M_.nullsp_dim_++;
+    this->nullsp_dim_++;
+    this->rangsp_dim_--;
 }
 
 void AsmSolver::removeNullSpaceDim(){
-    this->M_.nullsp_dim_--;
+    this->nullsp_dim_--;
+    this->rangsp_dim_++;
 }
 
 HighsInt AsmSolver::getNullSpaceSize(){
-    return this->M_.nullsp_dim_;
+    return this->nullsp_dim_;
+}
+
+HighsInt AsmSolver::getRangSpaceSize(){
+    return this->rangsp_dim_;
+}
+
+HighsInt AsmSolver::bperm(const HighsInt& idx_loc){
+    // returns the permuted index given an index that matches the [ active | free ] basis matrix partitioning
+    return this->basis_perm_[idx_loc];
 }
 
 void AsmSolver::setupBasisMat(){
@@ -231,56 +254,72 @@ void AsmSolver::setupBasisMat(){
     HighsInt temp_old_num_row = constraint_mat.num_row_; // flip the number of rows and columns
     constraint_mat.num_row_ = constraint_mat.num_col_; // so that when the matrix is used by HFactor
     constraint_mat.num_col_ = temp_old_num_row; // it received the constraint matrix "column wise"
-    // merge active and free indices
-    std::vector<HighsInt> basis_idxs = this->qp_basis_.active_idxs_;
-    basis_idxs.insert(basis_idxs.end(), this->qp_basis_.free_idxs_.begin(), this->qp_basis_.free_idxs_.end());
-    this->M_.HSetup(constraint_mat, basis_idxs); // where each column is a constraint. its inverse transpose will have as columns the nullspace basis
-    this->M_.HBuild(); // factorize method
+    this->HSetup(constraint_mat, this->basis_idxs_); // where each column is a constraint. its inverse transpose will have as columns the nullspace basis
+    this->HBuild(); // factorize method
 }
 
 void AsmSolver::setupReducedHessian(){
     // change hessian to square for future
     if (this->Q_.format_ == HessianFormat::kTriangular) this->Q_ = this->Q_.toSquare();
     HighsInt chol_size = getNullSpaceSize() * (getNullSpaceSize() + 1) / 2; // number of elements in lower triangular matrix
-    this->M_.chol_.assign(chol_size, 0.);
-    this->M_.recomputeExplicit();
-    this->M_.refactorize();
+    this->chol_.assign(chol_size, 0.);
+    this->recomputeExplicit();
+    this->refactorize();
 }
 
 void AsmSolver::setupQpBasis(){
     HighsInt count_basis {0};
     HighsInt count_nonbasis {0};
+    // init active and free temporary index and permutation vectors
+    std::vector<HighsInt> active_idxs;
+    std::vector<HighsInt> active_blocs;
+    std::vector<HighsInt> free_idxs;
+    std::vector<HighsInt> free_blocs;
     // loop through constraints
     for (HighsInt i {0}; i < this->lp_.num_row_; i++){
-        this->qp_basis_.con_status_[i] = HighsStatusToAsm(this->lp_basis_.row_status[i], i, false);
+        this->con_status_[i] = HighsStatusToAsm(this->lp_basis_.row_status[i], i, false);
         // ignore HighsBasisStatus::kNonbasic
-        if ( isInBasis(this->qp_basis_.con_status_[i]) ){
-            this->qp_basis_.active_idxs_.push_back(i);
+        if ( isInBasis(this->con_status_[i]) ){
+            active_idxs.push_back(i); // add index to list of indices
+            active_blocs.push_back(count_basis); // add index location to list of indices locations
             count_basis++;
             // constraints shouldn't be free in basis, ignore HighsBasisStatus::kZero
         } else {
-            this->qp_basis_.inactive_idxs_.push_back(i);
+            this->inactive_idxs_.push_back(i);
             count_nonbasis++;
         }
     }
     // loop through variables
     for (HighsInt i {0}; i < this->lp_.num_col_; i++){
         HighsInt idx = i + this->lp_.num_row_;
-        this->qp_basis_.var_status_[i] = HighsStatusToAsm(this->lp_basis_.col_status[i], i, true);
+        this->var_status_[i] = HighsStatusToAsm(this->lp_basis_.col_status[i], i, true);
         // ignore HighsBasisStatus::kNonbasic
-        if ( isInBasis(this->qp_basis_.var_status_[i]) ){
-            count_basis++;
-            if ( isFreeInBasis(this->qp_basis_.var_status_[i]) ){
-                addNullSpaceDim();
-                this->qp_basis_.free_idxs_.push_back(idx);
+        if ( isInBasis(this->var_status_[i]) ){
+            if ( isFreeInBasis(this->var_status_[i]) ){ // count nullspace dimension at the end with size of array
+                free_idxs.push_back(idx); // add index to list of indices
+                free_blocs.push_back(count_basis); // add index location to list of indices locations
             } else { // if not free then it is active in the basis
-                this->qp_basis_.active_idxs_.push_back(idx);
+                active_idxs.push_back(idx); // add index to list of indices
+                active_blocs.push_back(count_basis); // add index location to list of indices locations
             }
+            count_basis++;
         } else {
-            this->qp_basis_.inactive_idxs_.push_back(idx);
+            this->inactive_idxs_.push_back(idx);
             count_nonbasis++;
         }
     }
+    // set nullspace and range dimensions
+    this->nullsp_dim_ = (HighsInt) free_idxs.size();
+    this->rangsp_dim_ = (HighsInt) active_idxs.size();
+    if (this->rangsp_dim_ + this->nullsp_dim_ != this->Q_.dim_) throw std::logic_error("Active and Free constraints should add up to number of columns!");
+    // merge indices
+    this->basis_idxs_ = active_idxs;
+    this->basis_idxs_.insert(this->basis_idxs_.end(),
+                             free_idxs.begin(), free_idxs.end());
+    // merge permutation indices
+    this->basis_perm_ = active_blocs;
+    this->basis_perm_.insert(this->basis_perm_.end(),
+                             free_blocs.begin(), free_blocs.end());
     // setup HFactor
     setupBasisMat();
     // build Reduced Hessian
@@ -307,7 +346,7 @@ void AsmSolver::feasibility(){
         setupQpBasis();
     }
     this->lp_.col_cost_ = col_cost_temp; // reset linear costs to original
-};
+}
 
 HighsStatus AsmSolver::getHighsStatus(){
     return this->status_;
@@ -322,7 +361,7 @@ AsmBasisStatus AsmSolver::HighsStatusToAsm(const HighsBasisStatus& status, const
     else if(status == HighsBasisStatus::kUpper) return AsmBasisStatus::kUpper;
     else if(status == HighsBasisStatus::kZero) return AsmBasisStatus::kFreeInBasis;
     else return AsmBasisStatus::kInactive;
-};
+}
 
 bool AsmSolver::isInBasis(const AsmBasisStatus& status){
     if (status == AsmBasisStatus::kInactive) return false; // note false return here
@@ -375,7 +414,7 @@ double AsmSolver::computeReducedVecs(){
     else {
         computeLocGrad();
         std::vector<double> vec = this->loc_grad_; // TODO is loc_grad_ storing needed?
-        this->M_.HFtran(vec); // compute B x = g_k
+        this->HFtran(vec); // compute B x = g_k
         this->pricing_.assign(vec.begin(), vec.end() - getNullSpaceSize()); // TODO, other types of pricing
         this->red_grad_.assign(vec.end() - getNullSpaceSize(), vec.end()); // extract last z elements of the result, i.e. Z^T (g + Q x_k)
         double red_grad_norm = norm(this->red_grad_);
@@ -385,25 +424,24 @@ double AsmSolver::computeReducedVecs(){
 
 void AsmSolver::deactivate(){ // TODO reduce loops to loop over active constraints only
     // loop through prices to find a constraint to deactivate
-    double bestprice = this->pricing_[0];
-    HighsInt bestidx = this->qp_basis_.active_idxs_[0];
+    double bestprice = this->pricing_[ bperm(0) ];
+    HighsInt bestidx = this->basis_idxs_[0];
     HighsInt bestloc = 0;
-    // TODO only loop through elements active in basis
-    for (size_t i {1}; i < this->qp_basis_.active_idxs_.size(); i++){
-        HighsInt idx = this->qp_basis_.active_idxs_[i];
+    for (size_t i {1}; i < getRangSpaceSize(); i++){ // loop through active constraints only
+        HighsInt idx = this->basis_idxs_[i];
         if (idx < this->lp_.num_row_) { // it is a constraint
-            if ( isActiveInequality( this->qp_basis_.con_status_[idx]) && this->pricing_[i] < 0){
-                if (this->pricing_[i] < bestprice){
-                    bestprice = this->pricing_[i];
+            if ( isActiveInequality( this->con_status_[idx]) && this->pricing_[ bperm(i) ] < 0){
+                if (this->pricing_[i] < bestprice){ // TODO indexing pricing has to follow blocs_ vectors
+                    bestprice = this->pricing_[ bperm(i) ];
                     bestidx = idx;
                     bestloc = i;
                 }
             }
         } else {
             idx -= this->lp_.num_row_; // get variable index
-            if ( isActiveInequality( this->qp_basis_.var_status_[idx]) && this->pricing_[i] < 0){
-                if (this->pricing_[i] < bestprice){
-                    bestprice = this->pricing_[i];
+            if ( isActiveInequality( this->var_status_[idx]) && this->pricing_[ bperm(i) ] < 0){
+                if (this->pricing_[i] < bestprice){ // TODO indexing pricing has to follow blocs_ vectors
+                    bestprice = this->pricing_[ bperm(i) ];
                     bestidx = idx + this->lp_.num_row_;
                     bestloc = i;
                 }
@@ -415,12 +453,12 @@ void AsmSolver::deactivate(){ // TODO reduce loops to loop over active constrain
     // check that bestprice is indeed negative, in case first price was best but positive
     if ( bestprice < 0. ){
         // deactivation requires updating the basis indices and extending the nullspace
-        this->qp_basis_.active_idxs_.erase(this->qp_basis_.active_idxs_.begin() + bestloc);
-        this->qp_basis_.free_idxs_.push_back(bestidx);
+        this->active_idxs_.erase(this->active_idxs_.begin() + bestloc);
+        this->free_idxs_.push_back(bestidx);
         addNullSpaceDim();
         // no need to change HFactor. Do you need to remember that the order of the basis has changed? TODO
         // perform corresponding update on HFactor and extend the reduced hessian
-        this->M_.extend(bestloc);
+        this->extend(bestloc);
     } else this->model_status_ = HighsModelStatus::kOptimal;
 }
 
@@ -436,26 +474,26 @@ void AsmSolver::activate(const HighsInt& idx, const AsmBasisStatus& status){
     removeNullSpaceDim();
     // TODO make ordered set to improve from O(n) to O(log n) deletion
     // from claude.ai
-    auto it = std::find(this->qp_basis_.free_idxs_.begin(),
-                        this->qp_basis_.free_idxs_.end(), idx);
-    if (it != this->qp_basis_.free_idxs_.end()) {
-        this->qp_basis_.free_idxs_.erase(it);
-        this->qp_basis_.active_idxs_.push_back(idx);
+    auto it = std::find(this->free_idxs_.begin(),
+                        this->free_idxs_.end(), idx);
+    if (it != this->free_idxs_.end()) {
+        this->free_idxs_.erase(it);
+        this->active_idxs_.push_back(idx);
         // TODO update HFactor and reduce red hessian
     } else {
         // if new index is not in free, it is in inactive
-        auto it = std::find(this->qp_basis_.inactive_idxs_.begin(),
-                            this->qp_basis_.inactive_idxs_.end(), idx);
-        if (it != this->qp_basis_.inactive_idxs_.end()) {
-        this->qp_basis_.inactive_idxs_.erase(it);
-        this->qp_basis_.active_idxs_.push_back(idx);
-        this->qp_basis_.free_idxs_.pop_back(); // remove last element
+        auto it = std::find(this->inactive_idxs_.begin(),
+                            this->inactive_idxs_.end(), idx);
+        if (it != this->inactive_idxs_.end()) {
+        this->inactive_idxs_.erase(it);
+        this->active_idxs_.push_back(idx);
+        this->free_idxs_.pop_back(); // remove last element
         // TODO update HFactor and reduce red hessian
         } else {
             throw std::logic_error("New active index should either be formerly in free or inactive indices!");
         }
     }
-};
+}
 
 void AsmSolver::ratiotest(){
     // we keep a copy of location, whereas a temporary alpha will just be local to a broken constraint
@@ -467,7 +505,7 @@ void AsmSolver::ratiotest(){
     AsmBasisStatus newactive_status;
     // it may be more efficient to check bounds first (assume feasibility ofc), so we do that here
     for (HighsInt i {0}; i < this->lp_.num_col_; i++){ // loop through constraints
-        if ( !isActive( this->qp_basis_.var_status_[i] ) ){// if bound is inactive
+        if ( !isActive( this->var_status_[i] ) ){// if bound is inactive
             HighsInt idx = i + this->lp_.num_row_;
             if (this->lp_.col_lower_[i] > newloc[i]){
                 // compute new alpha
@@ -489,7 +527,7 @@ void AsmSolver::ratiotest(){
     std::vector<double> denoms(this->lp_.num_col_); // vectors for denominators of ratio test formula
     this->lp_.a_matrix_.productTranspose(denoms, this->step_); // a_i^T \s
     for (HighsInt i {0}; i < this->lp_.num_row_; i++){
-        if ( !isActive( this->qp_basis_.con_status_[i] ) ){// if constraint is inactive
+        if ( !isActive( this->con_status_[i] ) ){// if constraint is inactive
             if (this->lp_.row_lower_[i] > convals[i]){
                 double alpha_here = ( this->lp_.row_lower_[i] - convals[i] ) / denoms[i];
                 compute_newloc(alpha_here, newloc); // update alpha and temporary location
@@ -509,12 +547,11 @@ void AsmSolver::ratiotest(){
     updateObjective();
 }
 
-double AsmSolver::updateObjective(){
+void AsmSolver::updateObjective(){
     // assumes that objective is outdated compared to location
     this->objective_  = 0.;
     this->objective_ += this->Q_.objectiveValue(this->solution_.col_value);
     this->objective_ += this->lp_.objectiveValue(this->solution_.col_value);
-    return this->objective_;
 }
 
 void AsmSolver::solveREP(){
@@ -524,9 +561,9 @@ void AsmSolver::solveREP(){
     for (size_t i {0}; i < this->delta_.size(); i++){
         this->delta_[i] *= -1.; // flip sign to solve reduced system
     }
-    this->M_.solve(this->delta_);
+    this->LLTsolve(this->delta_);
     // then compute full space step
-    this->M_.getFullStep(this->delta_, this->step_); // what if step is null? degeneracy TODO
+    this->getFullStep(this->delta_, this->step_); // what if step is null? degeneracy TODO
 }
 
 void AsmSolver::run(){
