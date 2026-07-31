@@ -30,6 +30,11 @@ class AsmSolver {
                            HighsModelStatus& model_status,
                            HighsHessian& Q,
                            HighsTimer& timer);
+        HVector stdvec2hvec(const std::vector<double>& vec);
+        std::vector<double> hvec2stdvec(const HVector& vec);
+        HVector unit_hvec(const HighsInt& p);
+        HVector build_aq(const HighsInt& idx);
+        //
         void feasibility();
         void setupQpBasis();
         inline HighsStatus getHighsStatus();

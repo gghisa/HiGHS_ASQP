@@ -74,21 +74,52 @@ void AsmSolver::HFtran(HVector& vec, const double expected_density){ // TODO
     this->B_.ftranCall(vec, expected_density);
 }
 
+HVector AsmSolver::stdvec2hvec(const std::vector<double>& vec){
+    HVector hvec;
+    HighsInt count_nz {0};
+    for (size_t i {0}; i < vec.size(); i++){
+        if (vec[i] != 0) hvec.index.push_back(i);
+    }
+    hvec.array = vec;
+    hvec.count = count_nz;
+    hvec.packFlag = true;
+    return hvec;
+}
+
+std::vector<double> AsmSolver::hvec2stdvec(const HVector& hvec){
+    return hvec.array; // is this really it? TODO is HVector.array dense?
+}
+
+HVector AsmSolver::unit_hvec(const HighsInt& p){
+    HVector hvec;
+    hvec.index.push_back(p);
+    hvec.array.push_back(1);
+    hvec.count = 1;
+    //hvec.packFlag = true; // TODO what is this?
+    return hvec;
+}
+
+HVector AsmSolver::build_aq(const HighsInt& idx){
+    // asume idx < this->lp_.num_row_
+    std::vector<double> vec(this->Q_.dim_);
+    std::vector<double> ep(this->Q_.dim_);
+    ep[idx] = 1.;
+    this->lp_.a_matrix_.product(vec, ep);
+    return stdvec2hvec(vec);
+}
+
 void AsmSolver::HUpdate(HighsInt idx_drop, HighsInt idx_new){ // TODO
     HighsInt hint { 99999 }; // same number as Micheal in Basis::updatebasis
     // build HVector to add to basis
     HVector hvec_aq;
-    HFtran(hvec_aq, 1.0);
+    if (idx_new < this->lp_.num_row_) hvec_aq = build_aq(idx_new);
+    else hvec_aq = unit_hvec(idx_new - this->lp_.num_row_); // for a new bound becoming active
+    HFtran(hvec_aq, 1.0); // compute B^{-1} a_q according to guidelines... why?
     // build HVector to point to constraint exiting basis
-    HVector hvec_ep;
-    hvec_ep.clear();
-    hvec_ep.packFlag = true;
-    hvec_ep.index[0] = idx_drop;
-    hvec_ep.array[idx_drop] = 1.0;
-    hvec_ep.count = 1;
-    HBtran(hvec_ep, 1.0);
+    HVector ep = unit_hvec(idx_drop);
+    HBtran(ep, 1.0);
     // update basis matrix
-    this->B_.update(&hvec_aq, &hvec_ep, &idx_drop, &hint);
+    this->B_.update(&hvec_aq, &ep, &idx_drop, &hint);
 }
 
 HighsInt AsmSolver::loc(const HighsInt& i, const HighsInt& j) {
@@ -450,6 +481,12 @@ void AsmSolver::compute_newloc(const double& alpha, std::vector<double>& loc){
 
 void AsmSolver::activate(const HighsInt& idx, const AsmBasisStatus& status){
     // TODO make inactive_idxs_ ordered set to improve from O(n) to O(log n) deletion
+    // TODO carefully select which constraint to drop
+    HUpdate(this->basis_idxs_[ this->basis_perm_[this->Q_.dim_] ], // drop the last column in V
+            idx);
+    HighsInt end = this->Q_.dim_ - 1;
+    this->basis_idxs_[end] = idx; // place new index at end of array, dropping the last column in V
+    std::swap( this->basis_idxs_[ this->rangsp_dim_ ], this->basis_idxs_[ end ] ); // move the index before the start of V
     
 }
 
