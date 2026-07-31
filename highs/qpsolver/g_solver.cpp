@@ -57,10 +57,6 @@ void AsmSolver::HBtran(std::vector<double>& vec){
     vec = this->buffer_;
 }
 
-void AsmSolver::HBtran(HVector& vec, const double expected_density){ // TODO
-    this->B_.btranCall(vec, expected_density);
-}
-
 void AsmSolver::HFtran(std::vector<double>& vec){
     this->B_.ftranCall(vec); // B^{-1}
     // then apply P^T = P^{-1}
@@ -70,8 +66,12 @@ void AsmSolver::HFtran(std::vector<double>& vec){
     vec = this->buffer_;
 }
 
-void AsmSolver::HFtran(HVector& vec, const double expected_density){ // TODO
-    this->B_.ftranCall(vec, expected_density);
+void AsmSolver::HBtran(HVector& vec, const double expected_density){
+    this->B_.btranCall(vec, expected_density); // no permutations here, assumed to be taken care of when forming inputs
+}
+
+void AsmSolver::HFtran(HVector& vec, const double expected_density){
+    this->B_.ftranCall(vec, expected_density); // no permutations here, assumed to be taken care of when forming inputs
 }
 
 HVector AsmSolver::stdvec2hvec(const std::vector<double>& vec){
@@ -92,10 +92,11 @@ std::vector<double> AsmSolver::hvec2stdvec(const HVector& hvec){
 
 HVector AsmSolver::unit_hvec(const HighsInt& p){
     HVector hvec;
-    hvec.index.push_back(p);
-    hvec.array.push_back(1);
+    hvec.setup(this->Q_.dim_);
+    hvec.packFlag = true; // what is this?
+    hvec.index[0] = p;
+    hvec.array[p] = 1.;
     hvec.count = 1;
-    //hvec.packFlag = true; // TODO what is this?
     return hvec;
 }
 
@@ -111,15 +112,15 @@ HVector AsmSolver::build_aq(const HighsInt& idx){
 void AsmSolver::HUpdate(HighsInt idx_drop, HighsInt idx_new){ // TODO
     HighsInt hint { 99999 }; // same number as Micheal in Basis::updatebasis
     // build HVector to add to basis
-    HVector hvec_aq;
-    if (idx_new < this->lp_.num_row_) hvec_aq = build_aq(idx_new);
-    else hvec_aq = unit_hvec(idx_new - this->lp_.num_row_); // for a new bound becoming active
-    HFtran(hvec_aq, 1.0); // compute B^{-1} a_q according to guidelines... why?
+    HVector newcol;
+    newcol.setup(this->Q_.dim_);
+    if (idx_new < this->lp_.num_row_) newcol = build_aq(idx_new);
+    else newcol = unit_hvec(idx_new - this->lp_.num_row_); // for a new bound becoming active
     // build HVector to point to constraint exiting basis
     HVector ep = unit_hvec(idx_drop);
     HBtran(ep, 1.0);
     // update basis matrix
-    this->B_.update(&hvec_aq, &ep, &idx_drop, &hint);
+    this->B_.update(&newcol, &ep, &idx_drop, &hint);
 }
 
 HighsInt AsmSolver::loc(const HighsInt& i, const HighsInt& j) {
@@ -481,13 +482,27 @@ void AsmSolver::compute_newloc(const double& alpha, std::vector<double>& loc){
 
 void AsmSolver::activate(const HighsInt& idx, const AsmBasisStatus& status){
     // TODO make inactive_idxs_ ordered set to improve from O(n) to O(log n) deletion
-    // TODO carefully select which constraint to drop
-    HUpdate(this->basis_idxs_[ this->basis_perm_[this->Q_.dim_] ], // drop the last column in V
-            idx);
-    HighsInt end = this->Q_.dim_ - 1;
-    this->basis_idxs_[end] = idx; // place new index at end of array, dropping the last column in V
-    std::swap( this->basis_idxs_[ this->rangsp_dim_ ], this->basis_idxs_[ end ] ); // move the index before the start of V
-    
+    for (size_t i {0}; i < this->inactive_idxs_.size(); i++){
+        if (this->inactive_idxs_[i] == idx){
+            this->inactive_idxs_.erase( this->inactive_idxs_.begin() + i);
+            break;
+        }
+    }
+    // handle status update
+    if (idx < this->lp_.num_row_) this->con_status_[idx] = status;
+    else {
+        HighsInt var_idx = idx -  this->lp_.num_row_;
+        this->var_status_[var_idx] = status;
+    }
+    // TODO find good rationale to select which constraint to drop
+    // drop the last column in V
+    HUpdate(this->basis_perm_.back(), idx); // TODO 
+    // and accordingly fix our index books
+    this->basis_idxs_.back() = idx; // place new index at end of array, dropping the last column in V
+    // which changes nothing in the permutation since we place the new column where the last column of V was
+    std::swap( this->basis_idxs_[ this->rangsp_dim_ ], this->basis_idxs_.back() ); // move the index before the start of V
+    std::swap( this->basis_perm_[ this->rangsp_dim_ ], this->basis_perm_.back() ); // so we need to do the same with perm, to match the location in basis_idxs_   
+    removeNullSpaceDim();
 }
 
 void AsmSolver::ratiotest(){
@@ -536,10 +551,10 @@ void AsmSolver::ratiotest(){
             }
         }
     }
-    if (newactive_idx != -1) activate(newactive_idx, newactive_status);
-    // other updates? TODO
     this->solution_.col_value = newloc;
     updateObjective();
+    // other updates? TODO
+    if (newactive_idx != -1) activate(newactive_idx, newactive_status);
 }
 
 void AsmSolver::updateObjective(){
@@ -563,7 +578,7 @@ void AsmSolver::solveREP(){
 
 void AsmSolver::run(){
     // TODO set iteration limit
-    for (HighsInt i {0}; i < 2; i++){
+    for (HighsInt i {0}; i < 4; i++){
         if (computeReducedVecs() < this->tol_){
             deactivate();
             if ( this->model_status_ == HighsModelStatus::kOptimal ) break;
