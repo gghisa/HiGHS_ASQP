@@ -116,9 +116,10 @@ void AsmSolver::HUpdate(HighsInt idx_drop, HighsInt idx_new){ // TODO
     newcol.setup(this->Q_.dim_);
     if (idx_new < this->lp_.num_row_) newcol = build_aq(idx_new);
     else newcol = unit_hvec(idx_new - this->lp_.num_row_); // for a new bound becoming active
+    HFtran(newcol, 1.);
     // build HVector to point to constraint exiting basis
     HVector ep = unit_hvec(idx_drop);
-    HBtran(ep, 1.0);
+    HBtran(ep, 1.);
     // update basis matrix
     this->B_.update(&newcol, &ep, &idx_drop, &hint);
 }
@@ -140,6 +141,8 @@ void AsmSolver::recomputeExplicit(){
     // while Q is dense, we can't guarantee Z is too, so M is treated as dense, and likewise its factors
     // if we order M by the largest of its diagonal entries we need to first compute it all
     // BUILD RED HESSIAN FIRST
+    this->ZT_.clear();
+    this->chol_.clear();
     for (HighsInt i {0}; i < this->nullsp_dim_; i++){// get Z^T
         std::vector<double> z_col(this->Q_.dim_);
         z_col[this->rangsp_dim_ + i] = 1.;
@@ -444,8 +447,8 @@ void AsmSolver::deactivate(){ // TODO reduce loops to loop over active constrain
             double price = this->pricing_[i] * static_cast<double>( this->con_status_[idx] );
             if (isActiveInequality( this->con_status_[idx] ) && // TODO change order to improve speed
                 price < 0 && 
-                this->pricing_[i] < bestprice){
-                bestprice = this->pricing_[i];
+                price < bestprice){
+                bestprice = price;
                 bestidx = idx;
                 bestloc = i;
             }
@@ -454,8 +457,8 @@ void AsmSolver::deactivate(){ // TODO reduce loops to loop over active constrain
             double price = this->pricing_[i] * static_cast<double>( this->var_status_[idx] );
             if (isActiveInequality( this->var_status_[idx]) && // TODO change order to improve speed
                 price < 0 && 
-                this->pricing_[i] < bestprice){
-                bestprice = this->pricing_[i];
+                price < bestprice){
+                bestprice = price;
                 bestidx = idx + this->lp_.num_row_;
                 bestloc = i;
             }
@@ -467,6 +470,9 @@ void AsmSolver::deactivate(){ // TODO reduce loops to loop over active constrain
         HighsInt newloc = this->rangsp_dim_ - 1;
         std::swap( this->basis_idxs_[bestloc], this->basis_idxs_[newloc] );
         std::swap( this->basis_perm_[bestloc], this->basis_perm_[newloc] );
+        // update status
+        if (bestidx < this->lp_.num_row_) this->con_status_[bestidx] = AsmBasisStatus::kFreeInBasis;
+        else this->var_status_[bestidx - this->lp_.num_row_] = AsmBasisStatus::kFreeInBasis;
         this->extend(bestloc); // extend the reduced hessian, no need to change HFactor
         addNullSpaceDim();
     } else this->model_status_ = HighsModelStatus::kOptimal;
@@ -495,14 +501,18 @@ void AsmSolver::activate(const HighsInt& idx, const AsmBasisStatus& status){
         this->var_status_[var_idx] = status;
     }
     // TODO find good rationale to select which constraint to drop
-    // drop the last column in V
-    HUpdate(this->basis_perm_.back(), idx); // TODO 
+    HUpdate(this->basis_perm_.back(), idx); // drop the last column in V
     // and accordingly fix our index books
+    if (this->basis_idxs_.back() < this->lp_.num_row_) this->con_status_[this->basis_idxs_.back()] = AsmBasisStatus::kInactive;
+    else this->var_status_[this->basis_idxs_.back() - this->lp_.num_row_] = AsmBasisStatus::kInactive;
     this->basis_idxs_.back() = idx; // place new index at end of array, dropping the last column in V
     // which changes nothing in the permutation since we place the new column where the last column of V was
     std::swap( this->basis_idxs_[ this->rangsp_dim_ ], this->basis_idxs_.back() ); // move the index before the start of V
     std::swap( this->basis_perm_[ this->rangsp_dim_ ], this->basis_perm_.back() ); // so we need to do the same with perm, to match the location in basis_idxs_   
     removeNullSpaceDim();
+    // TODO update reduced Hessian instead of recomputing it
+    recomputeExplicit();
+    refactorize();
 }
 
 void AsmSolver::ratiotest(){
@@ -578,7 +588,7 @@ void AsmSolver::solveREP(){
 
 void AsmSolver::run(){
     // TODO set iteration limit
-    for (HighsInt i {0}; i < 4; i++){
+    for (HighsInt i {0}; i < 15; i++){
         if (computeReducedVecs() < this->tol_){
             deactivate();
             if ( this->model_status_ == HighsModelStatus::kOptimal ) break;
@@ -587,4 +597,5 @@ void AsmSolver::run(){
             ratiotest();
         }
     }
+    std::cout<<this->objective_<<"\n";
 }
