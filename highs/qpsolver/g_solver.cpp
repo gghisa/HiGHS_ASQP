@@ -216,7 +216,7 @@ void AsmSolver::extend(const HighsInt& loc_deactivated){
     // TODO is explicit ZT_ necessary?
     // get new nullspace column
     std::vector<double> z_col(this->Q_.dim_);
-    z_col[ this->basis_perm_[loc_deactivated] ] = 1.;
+    z_col[ loc_deactivated ] = 1.; // permutation taken care of by HBtran
     HBtran(z_col);
     this->ZT_.push_back(z_col);
     double lambda {0.}; // new diagonal element for cholesky factor
@@ -459,7 +459,7 @@ void AsmSolver::deactivate(){ // TODO reduce loops to loop over active constrain
                 price < 0 && 
                 price < bestprice){
                 bestprice = price;
-                bestidx = idx + this->lp_.num_row_;
+                bestidx = this->basis_idxs_[i];
                 bestloc = i;
             }
         }
@@ -481,7 +481,6 @@ void AsmSolver::deactivate(){ // TODO reduce loops to loop over active constrain
 void AsmSolver::compute_newloc(const double& alpha, std::vector<double>& loc){
     for (HighsInt i {0}; i < this->Q_.dim_; i++){
         this->step_[i] *= alpha;
-        this->alpha_ *= alpha;
         loc[i] = this->solution_.col_value[i] + this->step_[i];
     } // compute x_{k+1}
 }
@@ -519,8 +518,9 @@ void AsmSolver::ratiotest(){
     // we keep a copy of location, whereas a temporary alpha will just be local to a broken constraint
     // at each constraint, if it is broken, we update alpha
     // with the final alpha being the product of all the alphas (so it is also update as we go)
+    this->alpha_ = 1.;
     std::vector<double> newloc(this->Q_.dim_);
-    compute_newloc(1., newloc);
+    compute_newloc(1., newloc); // compute potential x_{k+1}
     HighsInt newactive_idx = -1; // recall: numbering variables starts from nr of constraints
     AsmBasisStatus newactive_status;
     // it may be more efficient to check bounds first (assume feasibility ofc), so we do that here
@@ -530,41 +530,51 @@ void AsmSolver::ratiotest(){
             if (this->lp_.col_lower_[i] > newloc[i]){
                 // compute new alpha
                 double alpha_here = ( this->lp_.col_lower_[i] - this->solution_.col_value[i] ) / this->step_[i];
-                compute_newloc(alpha_here, newloc); // update alpha and temporary location
-                newactive_idx = idx; // store new index
-                newactive_status = AsmBasisStatus::kLower;
+                if (alpha_here < this->alpha_){
+                    newactive_idx = idx; // store new index
+                    newactive_status = AsmBasisStatus::kLower;
+                    this->alpha_ = alpha_here;
+                }
             } else if (this->lp_.col_upper_[i] < newloc[i]) {
                 double alpha_here = ( this->lp_.col_upper_[i] - this->solution_.col_value[i] ) / this->step_[i];
-                compute_newloc(alpha_here, newloc);
-                newactive_idx = idx;
-                newactive_status = AsmBasisStatus::kUpper;
+                if (alpha_here < this->alpha_){
+                    newactive_idx = idx;
+                    newactive_status = AsmBasisStatus::kUpper;
+                    this->alpha_ = alpha_here;
+                }
             }
         }
     }
     // loop through inactive (inequality) constraints
     std::vector<double> convals(this->lp_.num_row_); // vector for constraint values
-    this->lp_.a_matrix_.product(convals, this->solution_.col_value); // a_i^T x_{k+1}
+    this->lp_.a_matrix_.product(convals, this->solution_.col_value); // a_i^T x_{k}
     std::vector<double> denoms(this->lp_.num_row_); // vectors for denominators of ratio test formula
     this->lp_.a_matrix_.product(denoms, this->step_); // a_i^T \s
     for (HighsInt i {0}; i < this->lp_.num_row_; i++){
         if ( !isActive( this->con_status_[i] ) ){// if constraint is inactive
             if (this->lp_.row_lower_[i] > convals[i]){
                 double alpha_here = ( this->lp_.row_lower_[i] - convals[i] ) / denoms[i];
-                compute_newloc(alpha_here, newloc); // update alpha and temporary location
-                newactive_idx = i; // store new index
-                newactive_status = AsmBasisStatus::kLower;
+                if (alpha_here < this->alpha_){
+                    newactive_idx = i; // store new index
+                    newactive_status = AsmBasisStatus::kLower;
+                    this->alpha_ = alpha_here;
+                }
             } else if (this->lp_.row_upper_[i] < convals[i]) {
                 double alpha_here = ( this->lp_.row_lower_[i] - convals[i] ) / denoms[i];
-                compute_newloc(alpha_here, newloc); // update alpha and temporary location
-                newactive_idx = i; // store new index
-                newactive_status = AsmBasisStatus::kUpper;
+                if (alpha_here < this->alpha_){
+                    newactive_idx = i;
+                    newactive_status = AsmBasisStatus::kUpper;
+                    this->alpha_ = alpha_here;
+                }
             }
         }
     }
-    this->solution_.col_value = newloc;
+    compute_newloc(this->alpha_, this->solution_.col_value);
     updateObjective();
     // other updates? TODO
-    if (newactive_idx != -1) activate(newactive_idx, newactive_status);
+    if (newactive_idx != -1){
+        activate(newactive_idx, newactive_status);
+    }
 }
 
 void AsmSolver::updateObjective(){

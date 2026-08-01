@@ -99,7 +99,7 @@ class AsmSolver {
         std::vector<double> delta_; // reduced step, solution of M \delta = Z^T (g + Q x_k)
         std::vector<double> step_; // full step, result of Z \delta
         // Real numbers
-        double alpha_; // step size for ratio test
+        double alpha_ {1.}; // step size for ratio test (TODO unused for now)
         double tol_ {1e-7}; // tolerance for zero checks
         // functions
         AsmBasisStatus HighsStatusToAsm(const HighsBasisStatus& status, const HighsInt i, const bool variable);
