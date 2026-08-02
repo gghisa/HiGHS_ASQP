@@ -64,7 +64,7 @@ class AsmSolver {
         void HBtran(HVector& vec, const double expected_density);
         void HFtran(std::vector<double>& vec);
         void HFtran(HVector& vec, const double expected_density);
-        void HUpdate(HighsInt idx_drop, HighsInt idx_new);
+        void HUpdate(HighsInt loc_idxdrop, HighsInt idx_new);
         void recomputeExplicit();
         void refactorize();
         inline HighsInt loc(const HighsInt& i, const HighsInt& j);

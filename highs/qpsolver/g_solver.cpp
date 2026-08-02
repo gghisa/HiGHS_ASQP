@@ -76,9 +76,13 @@ void AsmSolver::HFtran(HVector& vec, const double expected_density){
 
 HVector AsmSolver::stdvec2hvec(const std::vector<double>& vec){
     HVector hvec;
+    hvec.setup(vec.size());
     HighsInt count_nz {0};
     for (size_t i {0}; i < vec.size(); i++){
-        if (vec[i] != 0) hvec.index.push_back(i);
+        if (vec[i] != 0){
+            hvec.index[count_nz] = i;
+            count_nz += 1;
+        }
     }
     hvec.array = vec;
     hvec.count = count_nz;
@@ -100,28 +104,29 @@ HVector AsmSolver::unit_hvec(const HighsInt& p){
     return hvec;
 }
 
-HVector AsmSolver::build_aq(const HighsInt& idx){
+HVector AsmSolver::build_aq(const HighsInt& idx_con){
     // asume idx < this->lp_.num_row_
     std::vector<double> vec(this->Q_.dim_);
-    std::vector<double> ep(this->Q_.dim_);
-    ep[idx] = 1.;
-    this->lp_.a_matrix_.product(vec, ep);
+    std::vector<double> ep(this->lp_.num_row_);
+    ep[idx_con] = 1.;
+    this->lp_.a_matrix_.productTranspose(vec, ep);
     return stdvec2hvec(vec);
 }
 
-void AsmSolver::HUpdate(HighsInt idx_drop, HighsInt idx_new){ // TODO
+void AsmSolver::HUpdate(HighsInt loc_idxdrop, HighsInt idx_new){
     HighsInt hint { 99999 }; // same number as Micheal in Basis::updatebasis
     // build HVector to add to basis
     HVector newcol;
-    newcol.setup(this->Q_.dim_);
-    if (idx_new < this->lp_.num_row_) newcol = build_aq(idx_new);
+    if (idx_new < this->lp_.num_row_){
+        newcol = build_aq(idx_new);
+    }
     else newcol = unit_hvec(idx_new - this->lp_.num_row_); // for a new bound becoming active
     HFtran(newcol, 1.);
     // build HVector to point to constraint exiting basis
-    HVector ep = unit_hvec(idx_drop);
+    HVector ep = unit_hvec(loc_idxdrop);
     HBtran(ep, 1.);
     // update basis matrix
-    this->B_.update(&newcol, &ep, &idx_drop, &hint);
+    this->B_.update(&newcol, &ep, &loc_idxdrop, &hint);
 }
 
 HighsInt AsmSolver::loc(const HighsInt& i, const HighsInt& j) {
@@ -438,27 +443,28 @@ double AsmSolver::computeReducedVecs(){
 
 void AsmSolver::deactivate(){ // TODO reduce loops to loop over active constraints only
     // loop through prices to find a constraint to deactivate
-    double bestprice = this->pricing_[0] * static_cast<double>( this->con_status_[0] );
-    HighsInt bestidx = this->basis_idxs_[0];
-    HighsInt bestloc = 0;
+    HighsInt bestloc {0};
+    this->pricing_[bestloc] *= static_cast<double>( this->con_status_[bestloc] );
+    double bestprice = this->pricing_[bestloc];
+    HighsInt bestidx = this->basis_idxs_[bestloc];
     for (HighsInt i {1}; i < this->rangsp_dim_; i++){ // loop through active constraints only
         HighsInt idx = this->basis_idxs_[i];
         if (idx < this->lp_.num_row_) { // it is a constraint
-            double price = this->pricing_[i] * static_cast<double>( this->con_status_[idx] );
+            this->pricing_[i] *= static_cast<double>( this->con_status_[idx] );
             if (isActiveInequality( this->con_status_[idx] ) && // TODO change order to improve speed
-                price < 0 && 
-                price < bestprice){
-                bestprice = price;
+                this->pricing_[i] < 0 && 
+                this->pricing_[i] < bestprice){
+                bestprice = this->pricing_[i];
                 bestidx = idx;
                 bestloc = i;
             }
         } else { // it is a variable bound
             idx -= this->lp_.num_row_; // get variable index
-            double price = this->pricing_[i] * static_cast<double>( this->var_status_[idx] );
+            this->pricing_[i] *= static_cast<double>( this->var_status_[idx] );
             if (isActiveInequality( this->var_status_[idx]) && // TODO change order to improve speed
-                price < 0 && 
-                price < bestprice){
-                bestprice = price;
+                this->pricing_[i] < 0 && 
+                this->pricing_[i] < bestprice){
+                bestprice = this->pricing_[i];
                 bestidx = this->basis_idxs_[i];
                 bestloc = i;
             }
@@ -487,7 +493,7 @@ void AsmSolver::compute_newloc(const double& alpha, std::vector<double>& loc){
 
 void AsmSolver::activate(const HighsInt& idx, const AsmBasisStatus& status){
     // TODO make inactive_idxs_ ordered set to improve from O(n) to O(log n) deletion
-    for (size_t i {0}; i < this->inactive_idxs_.size(); i++){
+    for (size_t i {0}; i < this->inactive_idxs_.size(); i++){ // TODO remove inactive_idxs_ useful for what?
         if (this->inactive_idxs_[i] == idx){
             this->inactive_idxs_.erase( this->inactive_idxs_.begin() + i);
             break;
@@ -496,7 +502,7 @@ void AsmSolver::activate(const HighsInt& idx, const AsmBasisStatus& status){
     // handle status update
     if (idx < this->lp_.num_row_) this->con_status_[idx] = status;
     else {
-        HighsInt var_idx = idx -  this->lp_.num_row_;
+        HighsInt var_idx = idx - this->lp_.num_row_;
         this->var_status_[var_idx] = status;
     }
     // TODO find good rationale to select which constraint to drop
@@ -525,20 +531,18 @@ void AsmSolver::ratiotest(){
     AsmBasisStatus newactive_status;
     // it may be more efficient to check bounds first (assume feasibility ofc), so we do that here
     for (HighsInt i {0}; i < this->Q_.dim_; i++){ // loop through variables
-        if ( !isActive( this->var_status_[i] ) ){// if bound is inactive
-            HighsInt idx = i + this->lp_.num_row_;
+        if (this->step_[i] != 0){ // if change is orthogonal to dimension, no chance of breaking its bounds
             if (this->lp_.col_lower_[i] > newloc[i]){
-                // compute new alpha
                 double alpha_here = ( this->lp_.col_lower_[i] - this->solution_.col_value[i] ) / this->step_[i];
                 if (alpha_here < this->alpha_){
-                    newactive_idx = idx; // store new index
+                    newactive_idx = i + this->lp_.num_row_; // store new index
                     newactive_status = AsmBasisStatus::kLower;
                     this->alpha_ = alpha_here;
                 }
             } else if (this->lp_.col_upper_[i] < newloc[i]) {
                 double alpha_here = ( this->lp_.col_upper_[i] - this->solution_.col_value[i] ) / this->step_[i];
                 if (alpha_here < this->alpha_){
-                    newactive_idx = idx;
+                    newactive_idx = i + this->lp_.num_row_;
                     newactive_status = AsmBasisStatus::kUpper;
                     this->alpha_ = alpha_here;
                 }
@@ -546,21 +550,24 @@ void AsmSolver::ratiotest(){
         }
     }
     // loop through inactive (inequality) constraints
-    std::vector<double> convals(this->lp_.num_row_); // vector for constraint values
-    this->lp_.a_matrix_.product(convals, this->solution_.col_value); // a_i^T x_{k}
+    // TODO is it more efficient to each time compute the products?
+    std::vector<double> convals(this->lp_.num_row_); // vector for old constraint values
+    std::vector<double> newconvals(this->lp_.num_row_); // vector for new constraint values
     std::vector<double> denoms(this->lp_.num_row_); // vectors for denominators of ratio test formula
+    this->lp_.a_matrix_.product(convals, this->solution_.col_value); // a_i^T x_{k}
+    this->lp_.a_matrix_.product(newconvals, newloc); // a_i^T x_{k+1}
     this->lp_.a_matrix_.product(denoms, this->step_); // a_i^T \s
     for (HighsInt i {0}; i < this->lp_.num_row_; i++){
-        if ( !isActive( this->con_status_[i] ) ){// if constraint is inactive
-            if (this->lp_.row_lower_[i] > convals[i]){
+        if (denoms[i] != 0){ // if change is orthogonal to constraint, no chance of breaking its bounds
+            if (this->lp_.row_lower_[i] > newconvals[i]){
                 double alpha_here = ( this->lp_.row_lower_[i] - convals[i] ) / denoms[i];
                 if (alpha_here < this->alpha_){
                     newactive_idx = i; // store new index
                     newactive_status = AsmBasisStatus::kLower;
                     this->alpha_ = alpha_here;
                 }
-            } else if (this->lp_.row_upper_[i] < convals[i]) {
-                double alpha_here = ( this->lp_.row_lower_[i] - convals[i] ) / denoms[i];
+            } else if (this->lp_.row_upper_[i] < newconvals[i]) {
+                double alpha_here = ( this->lp_.row_upper_[i] - convals[i] ) / denoms[i];
                 if (alpha_here < this->alpha_){
                     newactive_idx = i;
                     newactive_status = AsmBasisStatus::kUpper;
