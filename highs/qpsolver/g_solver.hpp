@@ -55,6 +55,7 @@ class AsmSolver {
         void activate(const HighsInt& idx, const AsmBasisStatus& status);
         void ratiotest();
         void updateObjective();
+        void signPrices();
         // functions from former Reduced Hessian class
         void HSetup(HighsSparseMatrix& constraint_mat);
         void HBuild();

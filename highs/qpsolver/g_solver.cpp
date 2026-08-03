@@ -79,7 +79,7 @@ HVector AsmSolver::stdvec2hvec(const std::vector<double>& vec){
     hvec.setup(vec.size());
     HighsInt count_nz {0};
     for (size_t i {0}; i < vec.size(); i++){
-        if (vec[i] != 0){
+        if (std::abs(vec[i]) < this->tol_){
             hvec.index[count_nz] = i;
             count_nz += 1;
         }
@@ -138,7 +138,8 @@ void AsmSolver::recomputeExplicit(){
     // if we order M by the largest of its diagonal entries we need to first compute it all
     // BUILD RED HESSIAN FIRST
     this->ZT_.clear();
-    this->chol_.clear();
+    HighsInt chol_size = this->nullsp_dim_ * (this->nullsp_dim_ + 1) / 2;
+    this->chol_.assign(chol_size, 0.);
     for (HighsInt i {0}; i < this->nullsp_dim_; i++){// get Z^T
         std::vector<double> z_col(this->Q_.dim_);
         z_col[this->rangsp_dim_ + i] = 1.;
@@ -421,16 +422,26 @@ double AsmSolver::computeReducedVecs(){
     return norm(this->red_grad_);
 }
 
+void AsmSolver::signPrices(){
+    for (HighsInt i {0}; i < this->rangsp_dim_; i++){
+        HighsInt idx { this->basis_idxs_[i] };
+        if (idx < this->lp_.num_row_) this->pricing_[i] *= static_cast<double>( this->con_status_[idx] );
+        else{
+            idx -= this->lp_.num_row_;
+            this->pricing_[i] *= static_cast<double>( this->var_status_[idx] );
+        }
+    }
+}
+
 void AsmSolver::deactivate(){ // TODO reduce loops to loop over active constraints only
     // loop through prices to find a constraint to deactivate
+    signPrices();
     HighsInt bestloc {0};
-    this->pricing_[bestloc] *= static_cast<double>( this->con_status_[bestloc] );
     double bestprice = this->pricing_[bestloc];
     HighsInt bestidx = this->basis_idxs_[bestloc];
     for (HighsInt i {1}; i < this->rangsp_dim_; i++){ // loop through active constraints only
         HighsInt idx = this->basis_idxs_[i];
         if (idx < this->lp_.num_row_) { // it is a constraint
-            this->pricing_[i] *= static_cast<double>( this->con_status_[idx] );
             if (isActiveInequality( this->con_status_[idx] ) && // TODO change order to improve speed
                 this->pricing_[i] < 0 && 
                 this->pricing_[i] < bestprice){
@@ -440,7 +451,6 @@ void AsmSolver::deactivate(){ // TODO reduce loops to loop over active constrain
             }
         } else { // it is a variable bound
             idx -= this->lp_.num_row_; // get variable index
-            this->pricing_[i] *= static_cast<double>( this->var_status_[idx] );
             if (isActiveInequality( this->var_status_[idx]) && // TODO change order to improve speed
                 this->pricing_[i] < 0 && 
                 this->pricing_[i] < bestprice){
@@ -452,14 +462,14 @@ void AsmSolver::deactivate(){ // TODO reduce loops to loop over active constrain
     }
     // check that bestprice is indeed negative, in case first price is best but non-negative
     if ( bestprice < 0. ){
-        // swap of deactivated constraint with the last active one
-        HighsInt newloc = this->rangsp_dim_ - 1;
-        std::swap( this->basis_idxs_[bestloc], this->basis_idxs_[newloc] );
-        std::swap( this->basis_perm_[bestloc], this->basis_perm_[newloc] );
         // update status
         if (bestidx < this->lp_.num_row_) this->con_status_[bestidx] = AsmBasisStatus::kFreeInBasis;
         else this->var_status_[bestidx - this->lp_.num_row_] = AsmBasisStatus::kFreeInBasis;
         this->extend(bestloc); // extend the reduced hessian, no need to change HFactor
+        // swap of deactivated constraint with the last active one
+        HighsInt newloc = this->rangsp_dim_ - 1;
+        std::swap( this->basis_idxs_[bestloc], this->basis_idxs_[newloc] );
+        std::swap( this->basis_perm_[bestloc], this->basis_perm_[newloc] );
         addNullSpaceDim();
     } else this->model_status_ = HighsModelStatus::kOptimal;
 }
@@ -504,7 +514,7 @@ void AsmSolver::ratiotest(){
     AsmBasisStatus newactive_status;
     // it may be more efficient to check bounds first (assume feasibility ofc), so we do that here
     for (HighsInt i {0}; i < this->Q_.dim_; i++){ // loop through variables
-        if (this->step_[i] != 0){ // if change is orthogonal to dimension, no chance of breaking its bounds
+        if ( std::abs( this->step_[i] ) > this->tol_ ){ // if change is orthogonal to dimension, no chance of breaking its bounds
             if (this->lp_.col_lower_[i] > newloc[i]){
                 double alpha_here = ( this->lp_.col_lower_[i] - this->solution_.col_value[i] ) / this->step_[i];
                 if (alpha_here < this->alpha_){
@@ -531,7 +541,7 @@ void AsmSolver::ratiotest(){
     this->lp_.a_matrix_.product(newconvals, newloc); // a_i^T x_{k+1}
     this->lp_.a_matrix_.product(denoms, this->step_); // a_i^T \s
     for (HighsInt i {0}; i < this->lp_.num_row_; i++){
-        if (denoms[i] != 0){ // if change is orthogonal to constraint, no chance of breaking its bounds
+        if ( std::abs(denoms[i]) > this->tol_ ){ // if change is orthogonal to constraint, no chance of breaking its bounds
             if (this->lp_.row_lower_[i] > newconvals[i]){
                 double alpha_here = ( this->lp_.row_lower_[i] - convals[i] ) / denoms[i];
                 if (alpha_here < this->alpha_){
