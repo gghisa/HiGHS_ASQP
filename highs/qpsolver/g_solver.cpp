@@ -209,24 +209,21 @@ void AsmSolver::LLTsolve(std::vector<double>& vec){
 }
 
 void AsmSolver::extend(const HighsInt& loc_deactivated){
-    // TODO extend by paying attention to numerical instabilities
     // TODO is explicit ZT_ necessary?
     // get new nullspace column
     std::vector<double> z_col(this->Q_.dim_);
     z_col[ loc_deactivated ] = 1.; // permutation taken care of by HBtran
     HBtran(z_col);
-    this->ZT_.push_back(z_col);
+    this->ZT_.push_back(z_col); // TODO remove when removing explicit ZT_
+    // TODO extend by paying attention to numerical instabilities
     double lambda {0.}; // new diagonal element for cholesky factor
-    if (this->nullsp_dim_ > 0){
-        // solve L l = Z^T ( Q z_col ) = Z^T vec
-        std::vector<double> vec(this->Q_.dim_);
-        this->Q_.product(z_col, vec);
-        std::vector<double> sol(this->nullsp_dim_);
-        for (HighsInt i {0}; i < this->nullsp_dim_; i++){
-            for (HighsInt j {0}; j < this->Q_.dim_; j++){
-                sol[i] += this->ZT_[i][j] * vec[j];
-            }
-        }
+    if (this->nullsp_dim_ > 0){ // nullspace dimension updated just before calling extend()
+        // solve L l = Z^T ( Q z_col ) = Z^T sol
+        std::vector<double> sol(this->Q_.dim_);
+        this->Q_.product(z_col, sol);
+        HFtran(sol); // B^{-1} ( sol )
+        // select Z^T ( sol ), which is the bottom part of the solution vector above
+        sol.erase(sol.begin(), sol.end() - this->nullsp_dim_);
         Lsolve(sol);
         this->chol_.insert(this->chol_.end(),
                         sol.begin(),
@@ -235,7 +232,7 @@ void AsmSolver::extend(const HighsInt& loc_deactivated){
             lambda -= sol[i] * sol[i];
         }
     }
-    lambda += 2 * this->Q_.objectiveValue(z_col);
+    lambda += 2 * this->Q_.objectiveValue(this->ZT_.back());
     if (lambda <= 0) throw std::domain_error("Reduced matrix is either semi- or indefinite!");
     this->chol_.push_back( std::sqrt(lambda) );
 }
@@ -465,11 +462,13 @@ void AsmSolver::deactivate(){ // TODO reduce loops to loop over active constrain
         // update status
         if (bestidx < this->lp_.num_row_) this->con_status_[bestidx] = AsmBasisStatus::kFreeInBasis;
         else this->var_status_[bestidx - this->lp_.num_row_] = AsmBasisStatus::kFreeInBasis;
-        this->extend(bestloc); // extend the reduced hessian, no need to change HFactor
-        // swap of deactivated constraint with the last active one
-        HighsInt newloc = this->rangsp_dim_ - 1;
-        std::swap( this->basis_idxs_[bestloc], this->basis_idxs_[newloc] );
-        std::swap( this->basis_perm_[bestloc], this->basis_perm_[newloc] );
+        // extend the reduced hessian, no need to change HFactor
+        extend(bestloc); // then extend the basis factorization
+        // send deactivated constraint to the end
+        std::vector<HighsInt>::iterator it = this->basis_idxs_.begin() + bestloc;
+        std::rotate(it, it + 1, this->basis_idxs_.end());
+        it = this->basis_perm_.begin() + bestloc;
+        std::rotate(it, it + 1, this->basis_perm_.end());
         addNullSpaceDim();
     } else this->model_status_ = HighsModelStatus::kOptimal;
 }
@@ -534,23 +533,21 @@ void AsmSolver::ratiotest(){
     }
     // loop through inactive (inequality) constraints
     // TODO is it more efficient to each time compute the products?
-    std::vector<double> convals(this->lp_.num_row_); // vector for old constraint values
     std::vector<double> newconvals(this->lp_.num_row_); // vector for new constraint values
     std::vector<double> denoms(this->lp_.num_row_); // vectors for denominators of ratio test formula
-    this->lp_.a_matrix_.product(convals, this->solution_.col_value); // a_i^T x_{k}
     this->lp_.a_matrix_.product(newconvals, newloc); // a_i^T x_{k+1}
     this->lp_.a_matrix_.product(denoms, this->step_); // a_i^T \s
     for (HighsInt i {0}; i < this->lp_.num_row_; i++){
         if ( std::abs(denoms[i]) > this->tol_ ){ // if change is orthogonal to constraint, no chance of breaking its bounds
             if (this->lp_.row_lower_[i] > newconvals[i]){
-                double alpha_here = ( this->lp_.row_lower_[i] - convals[i] ) / denoms[i];
+                double alpha_here = ( this->lp_.row_lower_[i] - this->solution_.row_value[i] ) / denoms[i];
                 if (alpha_here < this->alpha_){
                     newactive_idx = i; // store new index
                     newactive_status = AsmBasisStatus::kLower;
                     this->alpha_ = alpha_here;
                 }
             } else if (this->lp_.row_upper_[i] < newconvals[i]) {
-                double alpha_here = ( this->lp_.row_upper_[i] - convals[i] ) / denoms[i];
+                double alpha_here = ( this->lp_.row_upper_[i] - this->solution_.row_value[i] ) / denoms[i];
                 if (alpha_here < this->alpha_){
                     newactive_idx = i;
                     newactive_status = AsmBasisStatus::kUpper;
@@ -560,6 +557,7 @@ void AsmSolver::ratiotest(){
         }
     }
     compute_newloc(this->alpha_, this->solution_.col_value);
+    this->lp_.a_matrix_.product(this->solution_.row_value, this->solution_.col_value); // a_i^T x_{k+1}
     updateObjective();
     // other updates? TODO
     if (newactive_idx != -1){
@@ -569,15 +567,23 @@ void AsmSolver::ratiotest(){
 
 void AsmSolver::updateObjective(){
     // assumes that objective is outdated compared to location
-    this->objective_  = 0.;
-    this->objective_ += this->Q_.objectiveValue(this->solution_.col_value);
-    this->objective_ += this->lp_.objectiveValue(this->solution_.col_value);
+    std::vector<double> vec(this->Q_.dim_);
+    this->objective_ = this->lp_.objectiveValue(this->solution_.col_value);
+    // TODO cannot use Q_.objectiveValue because it assumes triangular Hessian
+    for (HighsInt iCol = 0; iCol < this->Q_.dim_; iCol++) { // from claude.ai
+        for (HighsInt iEl = this->Q_.start_[iCol]; iEl < this->Q_.start_[iCol + 1]; iEl++) {
+            this->objective_ += 0.5 *
+                                this->solution_.col_value[iCol] *
+                                this->Q_.value_[iEl] *
+                                this->solution_.col_value[this->Q_.index_[iEl]];
+    }
+  }
 }
 
 void AsmSolver::solveREP(){
     // solve reduced equality problem
     // reduced gradient is assumed already up to date
-    this->delta_ = this->red_grad_; // TODO is this efficient?
+    this->delta_ = this->red_grad_; // TODO remove and flip the sign when computing new location with this->step_
     for (size_t i {0}; i < this->delta_.size(); i++){
         this->delta_[i] *= -1.; // flip sign to solve reduced system
     }
