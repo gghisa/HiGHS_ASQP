@@ -482,20 +482,37 @@ void AsmSolver::compute_newloc(const double& alpha, std::vector<double>& loc){
 
 void AsmSolver::activate(const HighsInt& idx, const AsmBasisStatus& status){
     // handle status update
-    if (idx < this->lp_.num_row_) this->con_status_[idx] = status;
+    bool alreadyinbasis {false};
+    if (idx < this->lp_.num_row_){
+        if ( isFreeInBasis(this->con_status_[idx]) ) alreadyinbasis = true;
+        this->con_status_[idx] = status;
+    }
     else {
         HighsInt var_idx = idx - this->lp_.num_row_;
+        if ( isFreeInBasis(this->var_status_[var_idx]) ) alreadyinbasis = true;
         this->var_status_[var_idx] = status;
     }
     // TODO find good rationale to select which constraint to drop
-    HUpdate(this->basis_perm_.back(), idx); // drop the last column in V
-    // and accordingly fix our index books
-    if (this->basis_idxs_.back() < this->lp_.num_row_) this->con_status_[this->basis_idxs_.back()] = AsmBasisStatus::kInactive;
-    else this->var_status_[this->basis_idxs_.back() - this->lp_.num_row_] = AsmBasisStatus::kInactive;
-    this->basis_idxs_.back() = idx; // place new index at end of array, dropping the last column in V
-    // which changes nothing in the permutation since we place the new column where the last column of V was
-    std::swap( this->basis_idxs_[ this->rangsp_dim_ ], this->basis_idxs_.back() ); // move the index before the start of V
-    std::swap( this->basis_perm_[ this->rangsp_dim_ ], this->basis_perm_.back() ); // so we need to do the same with perm, to match the location in basis_idxs_   
+    if (alreadyinbasis){
+        // find location of index and swap it with the first one after the active set
+        for (HighsInt i {this->rangsp_dim_}; i < this->Q_.dim_; i++){
+            if (this->basis_idxs_[i] == idx){       
+                std::swap( this->basis_idxs_[ this->rangsp_dim_ ], this->basis_idxs_[i] );
+                std::swap( this->basis_perm_[ this->rangsp_dim_ ], this->basis_perm_[i] );
+                break;
+            }
+        }
+    } else { // update HFactor if constraint not already in basis
+        // drop the last column in V and substitute it with new index,
+        // which then moves to the end of the current active set
+        HUpdate(this->basis_perm_.back(), idx);
+        // change dropped constraint to inactive
+        if (this->basis_idxs_.back() < this->lp_.num_row_) this->con_status_[this->basis_idxs_.back()] = AsmBasisStatus::kInactive;
+        else this->var_status_[this->basis_idxs_.back() - this->lp_.num_row_] = AsmBasisStatus::kInactive;
+        this->basis_idxs_.back() = idx; // place new index at end of array, dropping the last column in V
+        std::swap( this->basis_idxs_[ this->rangsp_dim_ ], this->basis_idxs_.back() ); // move the index before the start of V
+        std::swap( this->basis_perm_[ this->rangsp_dim_ ], this->basis_perm_.back() ); // so we need to do the same with perm, to match the location in basis_idxs_   
+    }
     removeNullSpaceDim();
     // TODO update reduced Hessian instead of recomputing it
     recomputeExplicit();
