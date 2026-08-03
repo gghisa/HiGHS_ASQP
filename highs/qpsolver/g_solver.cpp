@@ -40,12 +40,12 @@ AsmSolver::AsmSolver(HighsLp& lp,
                      con_status_(lp.num_row_){}
 
 void AsmSolver::HSetup(HighsSparseMatrix& constraint_mat){
-    this->basis_build_ = this->basis_idxs_; // because apparently HBuild changes the order of the vector
-    this->B_.setup(constraint_mat, this->basis_build_);
+    // basis indices are shuffled around. it is no problem for us that that happens
+    this->B_.setup(constraint_mat, this->basis_idxs_);
 }
 
 void AsmSolver::HBuild(){
-    this->B_.build();
+    this->B_.build(); // also for refactorization
 }
 
 void AsmSolver::HBtran(std::vector<double>& vec){
@@ -90,10 +90,6 @@ HVector AsmSolver::stdvec2hvec(const std::vector<double>& vec){
     return hvec;
 }
 
-std::vector<double> AsmSolver::hvec2stdvec(const HVector& hvec){
-    return hvec.array; // is this really it? TODO is HVector.array dense?
-}
-
 HVector AsmSolver::unit_hvec(const HighsInt& p){
     HVector hvec;
     hvec.setup(this->Q_.dim_);
@@ -104,21 +100,16 @@ HVector AsmSolver::unit_hvec(const HighsInt& p){
     return hvec;
 }
 
-HVector AsmSolver::build_aq(const HighsInt& idx_con){
-    // asume idx < this->lp_.num_row_
-    std::vector<double> vec(this->Q_.dim_);
-    std::vector<double> ep(this->lp_.num_row_);
-    ep[idx_con] = 1.;
-    this->lp_.a_matrix_.productTranspose(vec, ep);
-    return stdvec2hvec(vec);
-}
-
 void AsmSolver::HUpdate(HighsInt loc_idxdrop, HighsInt idx_new){
     HighsInt hint { 99999 }; // same number as Micheal in Basis::updatebasis
     // build HVector to add to basis
     HVector newcol;
-    if (idx_new < this->lp_.num_row_){
-        newcol = build_aq(idx_new);
+    if (idx_new < this->lp_.num_row_){ // extract constraint and build HVec
+        std::vector<double> vec(this->Q_.dim_);
+        std::vector<double> ep(this->lp_.num_row_);
+        ep[idx_new] = 1.;
+        this->lp_.a_matrix_.productTranspose(vec, ep);
+        newcol = stdvec2hvec(vec);
     }
     else newcol = unit_hvec(idx_new - this->lp_.num_row_); // for a new bound becoming active
     HFtran(newcol, 1.);
@@ -264,11 +255,6 @@ void AsmSolver::removeNullSpaceDim(){
     this->rangsp_dim_++;
 }
 
-HighsInt AsmSolver::bperm(const HighsInt& idx_loc){
-    // returns the permuted index given an index that matches the [ active | free ] basis matrix partitioning
-    return this->basis_perm_[idx_loc];
-}
-
 void AsmSolver::setupBasisMat(){
     // TODO do not create constraint mat copy
     HighsSparseMatrix constraint_mat = this->lp_.a_matrix_; // create a copy of the constraint matrix
@@ -278,7 +264,7 @@ void AsmSolver::setupBasisMat(){
     constraint_mat.num_row_ = constraint_mat.num_col_; // so that when HFactor uses the matrix
     constraint_mat.num_col_ = temp_old_num_row; // it receives the constraint matrix stored "column wise"
     this->HSetup(constraint_mat); // where each column is a constraint. its inverse transpose will have as columns the nullspace basis
-    this->HBuild(); // factorize method, TODO why does it change the order of the basis_idxs?
+    this->HBuild();
 }
 
 void AsmSolver::setupReducedHessian(){
@@ -307,10 +293,7 @@ void AsmSolver::setupQpBasis(){
             active_blocs.push_back(count_basis); // add index location to list of indices locations
             count_basis++;
             // constraints shouldn't be free in basis, ignore HighsBasisStatus::kZero
-        } else {
-            this->inactive_idxs_.push_back(i);
-            count_nonbasis++;
-        }
+        } else count_nonbasis++;
     }
     // loop through variables
     for (HighsInt i {0}; i < this->Q_.dim_; i++){
@@ -326,10 +309,7 @@ void AsmSolver::setupQpBasis(){
                 active_blocs.push_back(count_basis); // add index location to list of indices locations
             }
             count_basis++;
-        } else {
-            this->inactive_idxs_.push_back(idx);
-            count_nonbasis++;
-        }
+        } else count_nonbasis++;
     }
     // set nullspace and range dimensions
     this->nullsp_dim_ = (HighsInt) free_idxs.size();
@@ -396,7 +376,7 @@ bool AsmSolver::isFreeInBasis(const AsmBasisStatus& status){
     else return false;
 }
 
-bool AsmSolver::isActive(const AsmBasisStatus& status){
+bool AsmSolver::isActive(const AsmBasisStatus& status){ // TODO unused, remove
     if (status == AsmBasisStatus::kLower ||
         status == AsmBasisStatus::kUpper ||
         status == AsmBasisStatus::kEquality) return true;
@@ -492,13 +472,6 @@ void AsmSolver::compute_newloc(const double& alpha, std::vector<double>& loc){
 }
 
 void AsmSolver::activate(const HighsInt& idx, const AsmBasisStatus& status){
-    // TODO make inactive_idxs_ ordered set to improve from O(n) to O(log n) deletion
-    for (size_t i {0}; i < this->inactive_idxs_.size(); i++){ // TODO remove inactive_idxs_ useful for what?
-        if (this->inactive_idxs_[i] == idx){
-            this->inactive_idxs_.erase( this->inactive_idxs_.begin() + i);
-            break;
-        }
-    }
     // handle status update
     if (idx < this->lp_.num_row_) this->con_status_[idx] = status;
     else {
@@ -605,7 +578,7 @@ void AsmSolver::solveREP(){
 
 void AsmSolver::run(){
     // TODO set iteration limit
-    for (HighsInt i {0}; i < 15; i++){
+    for (HighsInt i {0}; i < 1000; i++){
         if (computeReducedVecs() < this->tol_){
             deactivate();
             if ( this->model_status_ == HighsModelStatus::kOptimal ) break;

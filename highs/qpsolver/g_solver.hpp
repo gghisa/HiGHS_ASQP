@@ -31,9 +31,7 @@ class AsmSolver {
                            HighsHessian& Q,
                            HighsTimer& timer);
         HVector stdvec2hvec(const std::vector<double>& vec);
-        std::vector<double> hvec2stdvec(const HVector& vec);
         HVector unit_hvec(const HighsInt& p);
-        HVector build_aq(const HighsInt& idx);
         //
         void feasibility();
         void setupQpBasis();
@@ -73,8 +71,9 @@ class AsmSolver {
         void LTsolve(std::vector<double>& vec);
         void LLTsolve(std::vector<double>& vec);
         void getFullStep(const std::vector<double>& delta, std::vector<double>& step);
-        //
-        inline HighsInt bperm(const HighsInt& idx_loc);
+        // TESTS
+        bool testOrtho();
+        bool testYTAid();
     private:
         // problem data
         HighsLp& lp_;
@@ -104,10 +103,8 @@ class AsmSolver {
         // functions
         AsmBasisStatus HighsStatusToAsm(const HighsBasisStatus& status, const HighsInt i, const bool variable);
         // permutation has to be used when FTRAN and BTRAN are called
-        std::vector<HighsInt> basis_idxs_; // ordered active and free indices in basis
-        std::vector<HighsInt> basis_build_; // for HBuild only
+        std::vector<HighsInt> basis_idxs_; // ordered active and free indices in basiss
         std::vector<HighsInt> basis_perm_; // ordered active and free indices permutation in basis
-        std::vector<HighsInt> inactive_idxs_; // unordered (TODO) inactive indices outside basis
         std::vector<AsmBasisStatus> var_status_;
         std::vector<AsmBasisStatus> con_status_;
 };
