@@ -91,6 +91,7 @@ class AsmSolver {
         double computeReducedVecs();
         void compute_newloc(const double& alpha, std::vector<double>& loc);
         void computeFullStep(const std::vector<double>& delta, std::vector<double>& step);
+        double computeQuadObjective(const std::vector<double>& vec);
         void updateObjective();
         void signPrices();
         // Helper functions

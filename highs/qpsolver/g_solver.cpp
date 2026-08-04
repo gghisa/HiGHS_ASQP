@@ -221,7 +221,7 @@ void AsmSolver::extend(const HighsInt& loc_deactivated){
         this->Q_.product(z_col, sol);
         HFtran(sol); // B^{-1} ( sol )
         // select Z^T ( sol ), which is the bottom part of the solution vector above
-        sol.erase(sol.begin(), sol.end() - this->nullsp_dim_);
+        sol.erase(sol.begin(), sol.end() - this->nullsp_dim_); // TODO is the other part useful?
         Lsolve(sol);
         this->chol_.insert(this->chol_.end(),
                         sol.begin(),
@@ -230,7 +230,7 @@ void AsmSolver::extend(const HighsInt& loc_deactivated){
             lambda -= sol[i] * sol[i];
         }
     }
-    lambda += 2 * this->Q_.objectiveValue(this->ZT_.back());
+    lambda += 2 * computeQuadObjective(this->ZT_.back());
     if (lambda <= 0) throw std::domain_error("Reduced matrix is either semi- or indefinite!");
     this->chol_.push_back( std::sqrt(lambda) );
 }
@@ -537,19 +537,21 @@ void AsmSolver::computeFullStep(const std::vector<double>& delta, std::vector<do
     HBtran(step); // is this cheaper than holding the explicit Z^T and using that one?
 }
 
-void AsmSolver::updateObjective(){
-    // assumes that objective is outdated compared to location
-    std::vector<double> vec(this->Q_.dim_);
-    this->objective_ = this->lp_.objectiveValue(this->solution_.col_value);
+double AsmSolver::computeQuadObjective(const std::vector<double>& vec){
+    double sum {0.};
     // TODO take advantage of symmetry
     for (HighsInt iCol = 0; iCol < this->Q_.dim_; iCol++) { // from claude.ai
         for (HighsInt iEl = this->Q_.start_[iCol]; iEl < this->Q_.start_[iCol + 1]; iEl++) {
-            this->objective_ += 0.5 *
-                                this->solution_.col_value[iCol] *
-                                this->Q_.value_[iEl] *
-                                this->solution_.col_value[this->Q_.index_[iEl]];
+            sum += 0.5 * vec[iCol] * this->Q_.value_[iEl] * vec[this->Q_.index_[iEl]];
+        }
     }
-  }
+    return sum;
+}
+
+void AsmSolver::updateObjective(){
+    // assumes that objective is outdated compared to location
+    this->objective_ = this->lp_.objectiveValue(this->solution_.col_value);
+    this->objective_ += computeQuadObjective(this->solution_.col_value);
 }
 
 void AsmSolver::signPrices(){
