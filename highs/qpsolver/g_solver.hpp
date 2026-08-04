@@ -67,7 +67,7 @@ class AsmSolver {
         HVector stdvec2hvec(const std::vector<double>& vec);
         HVector unit_hvec(const HighsInt& p);
         // Reduced Hessian operations
-        inline HighsInt loc(const HighsInt& i, const HighsInt& j);
+        inline HighsInt locL(const HighsInt& i, const HighsInt& j);
         void recomputeExplicit();
         void refactorize();
         void Lsolve(std::vector<double>& vec);

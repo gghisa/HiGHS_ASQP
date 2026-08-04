@@ -40,10 +40,12 @@ HighsStatus AsmSolver::run(){
 void AsmSolver::HSetup(const HighsSparseMatrix& constraint_mat){
     // basis indices are shuffled around. it is no problem for us that that happens
     this->B_.setup(constraint_mat, this->basis_idxs_);
+    return;
 }
 
 void AsmSolver::HBuild(){
     this->B_.build(); // also for refactorization
+    return;
 }
 
 void AsmSolver::HBtran(std::vector<double>& vec){
@@ -53,6 +55,7 @@ void AsmSolver::HBtran(std::vector<double>& vec){
     }
     this->B_.btranCall(this->buffer_); // B^{-T}
     vec = this->buffer_;
+    return;
 }
 
 void AsmSolver::HFtran(std::vector<double>& vec){
@@ -62,14 +65,17 @@ void AsmSolver::HFtran(std::vector<double>& vec){
         this->buffer_[ i ] = vec[ this->basis_perm_[i] ];
     }
     vec = this->buffer_;
+    return;
 }
 
 void AsmSolver::HBtran(HVector& vec, const double expected_density){
     this->B_.btranCall(vec, expected_density); // no permutations here, assumed to be taken care of when forming inputs
+    return;
 }
 
 void AsmSolver::HFtran(HVector& vec, const double expected_density){
     this->B_.ftranCall(vec, expected_density); // no permutations here, assumed to be taken care of when forming inputs
+    return;
 }
 
 void AsmSolver::HUpdate(HighsInt loc_idxdrop, HighsInt idx_new){
@@ -90,6 +96,7 @@ void AsmSolver::HUpdate(HighsInt loc_idxdrop, HighsInt idx_new){
     HBtran(ep, 1.);
     // update basis matrix
     this->B_.update(&newcol, &ep, &loc_idxdrop, &hint);
+    return;
 }
 
 HVector AsmSolver::stdvec2hvec(const std::vector<double>& vec){
@@ -118,8 +125,9 @@ HVector AsmSolver::unit_hvec(const HighsInt& p){
     return hvec;
 }
 
-HighsInt AsmSolver::loc(const HighsInt& i, const HighsInt& j) {
+HighsInt AsmSolver::locL(const HighsInt& i, const HighsInt& j) {
     // returns the index for the chol_ vector given the indices for the triangular matrix it represents, stored row-wise as lower triangular
+    // assumes indices are given for lower triangular matrix
     return i*(i+1)/2 + j;
 }
 
@@ -152,9 +160,10 @@ void AsmSolver::recomputeExplicit(){
             for (HighsInt k {0}; k < this->Q_.dim_; k++){ // inner produce of row of Z^T Q with column of Z
                 sum += row[k] * this->ZT_[j][k];
             }
-            this->chol_[ loc(i,j)] = sum; // should be ordered such that chol_ is row-wise of M
+            this->chol_[ locL(i,j)] = sum; // should be ordered such that chol_ is row-wise of M
         }
     }
+    return;
 }
 
 void AsmSolver::refactorize(){
@@ -163,19 +172,20 @@ void AsmSolver::refactorize(){
         for (HighsInt j {0}; j <= i; j++){
             if (i == j){ // diagonal element
                 for (HighsInt k {0}; k < j; k++){
-                    double row_el = this->chol_[ loc(i,k)];
-                    this->chol_[ loc(i,i)] -= row_el * row_el;
+                    double row_el = this->chol_[ locL(i,k)];
+                    this->chol_[ locL(i,i)] -= row_el * row_el;
                 }
-                this->chol_[ loc(i,i)] = std::sqrt(this->chol_[ loc(i,i)]);
+                this->chol_[ locL(i,i)] = std::sqrt(this->chol_[ locL(i,i)]);
             }
             else { // off diagonal element
                 for (HighsInt k {0}; k < j; k++){
-                    this->chol_[ loc(i,j)] -= this->chol_[ loc(i,k)] * this->chol_[ loc(j,k)];
+                    this->chol_[ locL(i,j)] -= this->chol_[ locL(i,k)] * this->chol_[ locL(j,k)];
                 }
-                this->chol_[ loc(i,j)] /= this->chol_[ loc(j,j)];
+                this->chol_[ locL(i,j)] /= this->chol_[ locL(j,j)];
             }
         }
     }
+    return;
 }
 
 void AsmSolver::Lsolve(std::vector<double>& vec){
@@ -183,10 +193,11 @@ void AsmSolver::Lsolve(std::vector<double>& vec){
     // solve Ly = b with forward substitution
     for (HighsInt i {0}; i < this->nullsp_dim_; i++){
         for (HighsInt j {0}; j < i; j++){
-            vec[i] -= this->chol_[ loc(i,j) ] * vec[j]; 
+            vec[i] -= this->chol_[ locL(i,j) ] * vec[j]; 
         }
-        vec[i] /= this->chol_[ loc(i,i) ];
+        vec[i] /= this->chol_[ locL(i,i) ];
     }
+    return;
 }
 
 void AsmSolver::LTsolve(std::vector<double>& vec){
@@ -195,15 +206,17 @@ void AsmSolver::LTsolve(std::vector<double>& vec){
     HighsInt limit = this->nullsp_dim_ - 1;
     for (HighsInt i {limit}; i > -1; i--){
         for (HighsInt j {limit}; j > i; j--){// perform operation in place
-            vec[i] -= this->chol_[ loc(i,j) ] * vec[j];
+            vec[i] -= this->chol_[ locL(j,i) ] * vec[j]; // note indices are swapped since we are accessing the upper triangular image of L
         }
-        vec[i] /= this->chol_[ loc(i,i) ];
+        vec[i] /= this->chol_[ locL(i,i) ];
     }
+    return;
 }
 
 void AsmSolver::LLTsolve(std::vector<double>& vec){
     Lsolve(vec);
     LTsolve(vec);
+    return;
 }
 
 void AsmSolver::extend(const HighsInt& loc_deactivated){
@@ -233,12 +246,14 @@ void AsmSolver::extend(const HighsInt& loc_deactivated){
     lambda += 2 * computeQuadObjective(this->ZT_.back());
     if (lambda <= 0) throw std::domain_error("Reduced matrix is either semi- or indefinite!");
     this->chol_.push_back( std::sqrt(lambda) );
+    return;
 }
 
 void AsmSolver::reduce(){
     // TODO update reduced Hessian instead of recomputing it
     recomputeExplicit();
     refactorize();
+    return;
 }
 
 void AsmSolver::feasibility(){
@@ -261,6 +276,7 @@ void AsmSolver::feasibility(){
     }
     this->lp_.col_cost_ = col_cost_temp; // reset linear costs to original
     updateObjective();
+    return;
 }
 
 void AsmSolver::setupQpBasis(){
@@ -328,6 +344,7 @@ void AsmSolver::setupQpBasis(){
                              free_idxs.begin(), free_idxs.end());
     // build Reduced Hessian
     setupReducedHessian();
+    return;
 }
 
 void AsmSolver::setupBasisMat(){
@@ -340,6 +357,7 @@ void AsmSolver::setupBasisMat(){
     constraint_mat.num_col_ = temp_old_num_row; // it receives the constraint matrix stored "column wise"
     this->HSetup(constraint_mat); // where each column is a constraint. its inverse transpose will have as columns the nullspace basis
     this->HBuild();
+    return;
 }
 
 void AsmSolver::setupReducedHessian(){
@@ -349,6 +367,7 @@ void AsmSolver::setupReducedHessian(){
     this->chol_.assign(chol_size, 0.);
     this->recomputeExplicit();
     this->refactorize();
+    return;
 }
 
 void AsmSolver::solve(){
@@ -363,9 +382,14 @@ void AsmSolver::solve(){
         }
     }
     std::cout<<this->objective_<<"\n";
+    return;
 }
 
 void AsmSolver::deactivate(){ // TODO reduce loops to loop over active constraints only
+    if (this->nullsp_dim_ == this->Q_.dim_){
+        this->model_status_ = HighsModelStatus::kOptimal;
+        return;
+    }
     // loop through prices to find a constraint to deactivate
     signPrices();
     HighsInt bestloc {0};
@@ -405,7 +429,11 @@ void AsmSolver::deactivate(){ // TODO reduce loops to loop over active constrain
         it = this->basis_perm_.begin() + bestloc;
         std::rotate(it, it + 1, this->basis_perm_.end());
         addNullSpaceDim();
-    } else this->model_status_ = HighsModelStatus::kOptimal;
+        return;
+    } else {
+        this->model_status_ = HighsModelStatus::kOptimal;
+        return;
+    }
 }
 
 void AsmSolver::solveREP(){
@@ -418,6 +446,7 @@ void AsmSolver::solveREP(){
     this->LLTsolve(this->delta_);
     // then compute full space step
     this->computeFullStep(this->delta_, this->step_); // what if step is null? degeneracy TODO
+    return;
 }
 
 void AsmSolver::ratiotest(){
@@ -481,6 +510,7 @@ void AsmSolver::ratiotest(){
     if (newactive_idx != -1){
         activate(newactive_idx, newactive_status);
     }
+    return;
 }
 
 void AsmSolver::activate(const HighsInt& idx, const AsmBasisStatus& status){
@@ -518,6 +548,7 @@ void AsmSolver::activate(const HighsInt& idx, const AsmBasisStatus& status){
     }
     removeNullSpaceDim(); // TODO may need to be moved to after reduction
     reduce();
+    return;
 }
 
 void AsmSolver::computeLocGrad(){// g + Q x_k
@@ -525,6 +556,7 @@ void AsmSolver::computeLocGrad(){// g + Q x_k
     for (HighsInt i {0}; i < this->Q_.dim_; i++){ // add g to Q x_k
         this->loc_grad_[i] += this->lp_.col_cost_[i];
     }
+    return;
 }
 
 double AsmSolver::computeReducedVecs(){
@@ -543,12 +575,14 @@ void AsmSolver::compute_newloc(const double& alpha, std::vector<double>& loc){
         this->step_[i] *= alpha;
         loc[i] = this->solution_.col_value[i] + this->step_[i];
     } // compute x_{k+1}
+    return;
 }
 
 void AsmSolver::computeFullStep(const std::vector<double>& delta, std::vector<double>& step){
     step.assign(this->rangsp_dim_, 0.);
     step.insert(step.end(), delta.begin(), delta.end());
     HBtran(step); // is this cheaper than holding the explicit Z^T and using that one?
+    return;
 }
 
 double AsmSolver::computeQuadObjective(const std::vector<double>& vec){
@@ -566,6 +600,7 @@ void AsmSolver::updateObjective(){
     // assumes that objective is outdated compared to location
     this->objective_ = this->lp_.objectiveValue(this->solution_.col_value);
     this->objective_ += computeQuadObjective(this->solution_.col_value);
+    return;
 }
 
 void AsmSolver::signPrices(){
@@ -577,16 +612,19 @@ void AsmSolver::signPrices(){
             this->pricing_[i] *= static_cast<double>( this->var_status_[idx] );
         }
     }
+    return;
 }
 
 void AsmSolver::addNullSpaceDim(){
     this->nullsp_dim_++;
     this->rangsp_dim_--;
+    return;
 }
 
 void AsmSolver::removeNullSpaceDim(){
     this->nullsp_dim_--;
     this->rangsp_dim_++;
+    return;
 }
 
 // convert Highs Status to Asm Status
