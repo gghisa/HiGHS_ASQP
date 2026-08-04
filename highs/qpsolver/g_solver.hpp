@@ -60,29 +60,32 @@ class AsmSolver {
         void HSetup(const HighsSparseMatrix& constraint_mat);
         void HBuild();
         void HBtran(std::vector<double>& vec);
-        void HBtran(HVector& vec, const double expected_density);
         void HFtran(std::vector<double>& vec);
+        void HBtran(HVector& vec, const double expected_density);
         void HFtran(HVector& vec, const double expected_density);
         void HUpdate(HighsInt loc_idxdrop, HighsInt idx_new);
+        HVector stdvec2hvec(const std::vector<double>& vec);
+        HVector unit_hvec(const HighsInt& p);
         // Reduced Hessian operations
+        inline HighsInt loc(const HighsInt& i, const HighsInt& j);
         void recomputeExplicit();
         void refactorize();
-        inline HighsInt loc(const HighsInt& i, const HighsInt& j);
-        void reduce();
-        void extend(const HighsInt& loc_deactivated);
         void Lsolve(std::vector<double>& vec);
         void LTsolve(std::vector<double>& vec);
         void LLTsolve(std::vector<double>& vec);
+        void extend(const HighsInt& loc_deactivated);
+        void reduce();
         // Feasibility phase functions
-        void solve();
         void feasibility();
         void setupQpBasis();
         void setupBasisMat();
         void setupReducedHessian();
         // Main loop functions
+        void solve();
         void deactivate();
         void solveREP();
         void ratiotest();
+        void activate(const HighsInt& idx, const AsmBasisStatus& status);
         // Object computations
         void computeLocGrad();
         double computeReducedVecs();
@@ -90,17 +93,14 @@ class AsmSolver {
         void computeFullStep(const std::vector<double>& delta, std::vector<double>& step);
         void updateObjective();
         void signPrices();
-        void activate(const HighsInt& idx, const AsmBasisStatus& status);
         // Helper functions
         inline void addNullSpaceDim();
         inline void removeNullSpaceDim();
         AsmBasisStatus HighsStatusToAsm(const HighsBasisStatus& status, const HighsInt i, const bool variable);
+        inline bool isInBasis(const AsmBasisStatus& status);
+        inline bool isFreeInBasis(const AsmBasisStatus& status);
         inline bool isActive(const AsmBasisStatus& status);
         inline bool isActiveInequality(const AsmBasisStatus& status);
         inline bool isInactive(const AsmBasisStatus& status);
-        inline bool isInBasis(const AsmBasisStatus& status); // for setup
-        inline bool isFreeInBasis(const AsmBasisStatus& status); // for setup
-        HVector stdvec2hvec(const std::vector<double>& vec);
-        HVector unit_hvec(const HighsInt& p);
         double norm(const std::vector<double>& vec);
 };

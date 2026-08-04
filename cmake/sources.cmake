@@ -419,7 +419,6 @@ set(highs_sources
     qpsolver/a_asm.cpp
     qpsolver/a_quass.cpp
     qpsolver/g_solver.cpp
-    qpsolver/g_tests.cpp
     qpsolver/basis.cpp
     qpsolver/perturbation.cpp
     qpsolver/quass.cpp
@@ -566,7 +565,6 @@ set(highs_headers
     qpsolver/a_asm.hpp
     qpsolver/a_quass.hpp
     qpsolver/g_solver.hpp
-    qpsolver/g_tests.hpp
     qpsolver/basis.hpp
     qpsolver/dantzigpricing.hpp
     qpsolver/devexpricing.hpp

@@ -8,13 +8,6 @@
 #include "Highs.h"
 #include "qpsolver/g_solver.hpp"
 
-HighsStatus AsmSolver::run(){
-    feasibility();
-    if (getHighsStatus() == HighsStatus::kError) return getHighsStatus();
-    solve();
-    return getHighsStatus();
-}
-
 AsmSolver::AsmSolver(HighsLp& lp,
                      HighsBasis& basis,
                      HighsSolution& solution,
@@ -32,6 +25,17 @@ AsmSolver::AsmSolver(HighsLp& lp,
                      step_(Q.dim_),
                      var_status_(lp.num_col_),
                      con_status_(lp.num_row_){}
+
+HighsStatus AsmSolver::getHighsStatus(){ // public function
+    return this->status_; // private attribute
+}
+
+HighsStatus AsmSolver::run(){
+    feasibility();
+    if (getHighsStatus() == HighsStatus::kError) return getHighsStatus();
+    solve();
+    return getHighsStatus();
+}
 
 void AsmSolver::HSetup(const HighsSparseMatrix& constraint_mat){
     // basis indices are shuffled around. it is no problem for us that that happens
@@ -68,6 +72,26 @@ void AsmSolver::HFtran(HVector& vec, const double expected_density){
     this->B_.ftranCall(vec, expected_density); // no permutations here, assumed to be taken care of when forming inputs
 }
 
+void AsmSolver::HUpdate(HighsInt loc_idxdrop, HighsInt idx_new){
+    HighsInt hint { 99999 }; // same number as Micheal in Basis::updatebasis
+    // build HVector to add to basis
+    HVector newcol;
+    if (idx_new < this->lp_.num_row_){ // extract constraint and build HVec
+        std::vector<double> vec(this->Q_.dim_);
+        std::vector<double> ep(this->lp_.num_row_);
+        ep[idx_new] = 1.;
+        this->lp_.a_matrix_.productTranspose(vec, ep);
+        newcol = stdvec2hvec(vec);
+    }
+    else newcol = unit_hvec(idx_new - this->lp_.num_row_); // for a new bound becoming active
+    HFtran(newcol, 1.);
+    // build HVector to point to constraint exiting basis
+    HVector ep = unit_hvec(loc_idxdrop);
+    HBtran(ep, 1.);
+    // update basis matrix
+    this->B_.update(&newcol, &ep, &loc_idxdrop, &hint);
+}
+
 HVector AsmSolver::stdvec2hvec(const std::vector<double>& vec){
     HVector hvec;
     hvec.setup(vec.size());
@@ -92,26 +116,6 @@ HVector AsmSolver::unit_hvec(const HighsInt& p){
     hvec.array[p] = 1.;
     hvec.count = 1;
     return hvec;
-}
-
-void AsmSolver::HUpdate(HighsInt loc_idxdrop, HighsInt idx_new){
-    HighsInt hint { 99999 }; // same number as Micheal in Basis::updatebasis
-    // build HVector to add to basis
-    HVector newcol;
-    if (idx_new < this->lp_.num_row_){ // extract constraint and build HVec
-        std::vector<double> vec(this->Q_.dim_);
-        std::vector<double> ep(this->lp_.num_row_);
-        ep[idx_new] = 1.;
-        this->lp_.a_matrix_.productTranspose(vec, ep);
-        newcol = stdvec2hvec(vec);
-    }
-    else newcol = unit_hvec(idx_new - this->lp_.num_row_); // for a new bound becoming active
-    HFtran(newcol, 1.);
-    // build HVector to point to constraint exiting basis
-    HVector ep = unit_hvec(loc_idxdrop);
-    HBtran(ep, 1.);
-    // update basis matrix
-    this->B_.update(&newcol, &ep, &loc_idxdrop, &hint);
 }
 
 HighsInt AsmSolver::loc(const HighsInt& i, const HighsInt& j) {
@@ -231,41 +235,32 @@ void AsmSolver::extend(const HighsInt& loc_deactivated){
     this->chol_.push_back( std::sqrt(lambda) );
 }
 
-void AsmSolver::computeFullStep(const std::vector<double>& delta, std::vector<double>& step){
-    step.assign(this->rangsp_dim_, 0.);
-    step.insert(step.end(), delta.begin(), delta.end());
-    HBtran(step); // is this cheaper than holding the explicit Z^T and using that one?
+void AsmSolver::reduce(){
+    // TODO update reduced Hessian instead of recomputing it
+    recomputeExplicit();
+    refactorize();
 }
 
-void AsmSolver::addNullSpaceDim(){
-    this->nullsp_dim_++;
-    this->rangsp_dim_--;
-}
-
-void AsmSolver::removeNullSpaceDim(){
-    this->nullsp_dim_--;
-    this->rangsp_dim_++;
-}
-
-void AsmSolver::setupBasisMat(){
-    // TODO do not create constraint mat copy
-    HighsSparseMatrix constraint_mat = this->lp_.a_matrix_; // create a copy of the constraint matrix
-    constraint_mat.ensureRowwise(); // flip the way in which it is stored
-    constraint_mat.format_ = MatrixFormat::kColwise; // but "trick it" into thinking it is still stored columnwise
-    HighsInt temp_old_num_row = constraint_mat.num_row_; // flip the number of rows and columns
-    constraint_mat.num_row_ = constraint_mat.num_col_; // so that when HFactor uses the matrix
-    constraint_mat.num_col_ = temp_old_num_row; // it receives the constraint matrix stored "column wise"
-    this->HSetup(constraint_mat); // where each column is a constraint. its inverse transpose will have as columns the nullspace basis
-    this->HBuild();
-}
-
-void AsmSolver::setupReducedHessian(){
-    // change hessian to square for future
-    if (this->Q_.format_ == HessianFormat::kTriangular) this->Q_ = this->Q_.toSquare();
-    HighsInt chol_size = this->nullsp_dim_ * (this->nullsp_dim_ + 1) / 2; // number of elements in lower triangular matrix
-    this->chol_.assign(chol_size, 0.);
-    this->recomputeExplicit();
-    this->refactorize();
+void AsmSolver::feasibility(){
+    // TODO hotstart if basis is provided
+    // TODO minimize slacks in this first phase
+    std::vector<double> col_cost_temp = this->lp_.col_cost_; // store linear costs
+    this->lp_.col_cost_.assign(this->Q_.dim_, 0.); // zero out objective
+    Highs feasibility_lp;
+    feasibility_lp.passModel(this->lp_);
+    feasibility_lp.setOptionValue("presolve", kHighsOnString); // presolving phase1 makes it faster, im guessing the postsolve is included
+    feasibility_lp.setOptionValue("output_flag", false); // don't print anything
+    feasibility_lp.setOptionValue("simplex_strategy", kSimplexStrategyDual); // specifying what solver to use in case a basis is set that is known to be either primal or dual feasible
+    // use dual simplex if the objective value is all zeros, beacuse that means dual feasibility is guaranteed
+    this->status_ = feasibility_lp.run();
+    if (this->status_ != HighsStatus::kError){ // why not returning after extracting the model status too?
+        this->model_status_ = HighsModelStatus::kNotset; // note Optimal in Phase1 is Feasible for ASM
+        this->lp_basis_ = feasibility_lp.getBasis();
+        this->solution_ = feasibility_lp.getSolution();
+        setupQpBasis();
+    }
+    this->lp_.col_cost_ = col_cost_temp; // reset linear costs to original
+    updateObjective();
 }
 
 void AsmSolver::setupQpBasis(){
@@ -321,107 +316,39 @@ void AsmSolver::setupQpBasis(){
     setupReducedHessian();
 }
 
-void AsmSolver::feasibility(){
-    // TODO hotstart if basis is provided
-    // TODO minimize slacks in this first phase
-    std::vector<double> col_cost_temp = this->lp_.col_cost_; // store linear costs
-    this->lp_.col_cost_.assign(this->Q_.dim_, 0.); // zero out objective
-    Highs feasibility_lp;
-    feasibility_lp.passModel(this->lp_);
-    feasibility_lp.setOptionValue("presolve", kHighsOnString); // presolving phase1 makes it faster, im guessing the postsolve is included
-    feasibility_lp.setOptionValue("output_flag", false); // don't print anything
-    feasibility_lp.setOptionValue("simplex_strategy", kSimplexStrategyDual); // specifying what solver to use in case a basis is set that is known to be either primal or dual feasible
-    // use dual simplex if the objective value is all zeros, beacuse that means dual feasibility is guaranteed
-    this->status_ = feasibility_lp.run();
-    if (this->status_ != HighsStatus::kError){ // why not returning after extracting the model status too?
-        this->model_status_ = HighsModelStatus::kNotset; // note Optimal in Phase1 is Feasible for ASM
-        this->lp_basis_ = feasibility_lp.getBasis();
-        this->solution_ = feasibility_lp.getSolution();
-        setupQpBasis();
-    }
-    this->lp_.col_cost_ = col_cost_temp; // reset linear costs to original
-    updateObjective();
+void AsmSolver::setupBasisMat(){
+    // TODO do not create constraint mat copy
+    HighsSparseMatrix constraint_mat = this->lp_.a_matrix_; // create a copy of the constraint matrix
+    constraint_mat.ensureRowwise(); // flip the way in which it is stored
+    constraint_mat.format_ = MatrixFormat::kColwise; // but "trick it" into thinking it is still stored columnwise
+    HighsInt temp_old_num_row = constraint_mat.num_row_; // flip the number of rows and columns
+    constraint_mat.num_row_ = constraint_mat.num_col_; // so that when HFactor uses the matrix
+    constraint_mat.num_col_ = temp_old_num_row; // it receives the constraint matrix stored "column wise"
+    this->HSetup(constraint_mat); // where each column is a constraint. its inverse transpose will have as columns the nullspace basis
+    this->HBuild();
 }
 
-HighsStatus AsmSolver::getHighsStatus(){ // public function
-    return this->status_; // private attribute
-}
-// convert Highs Status to Asm Status
-AsmBasisStatus AsmSolver::HighsStatusToAsm(const HighsBasisStatus& status, const HighsInt i, const bool variable){
-    if (variable){ // it is a variable this should be a fixed variable and needs presolve
-        if (this->lp_.col_lower_[i] == this->lp_.col_upper_[i]) return AsmBasisStatus::kEquality;
-    } else if (this->lp_.row_lower_[i] == this->lp_.row_upper_[i]) return AsmBasisStatus::kEquality;
-    // if no equality is found:
-    if(status == HighsBasisStatus::kLower) return AsmBasisStatus::kLower;
-    else if(status == HighsBasisStatus::kUpper) return AsmBasisStatus::kUpper;
-    else if(status == HighsBasisStatus::kZero) return AsmBasisStatus::kFreeInBasis;
-    else return AsmBasisStatus::kInactive;
+void AsmSolver::setupReducedHessian(){
+    // change hessian to square for future
+    if (this->Q_.format_ == HessianFormat::kTriangular) this->Q_ = this->Q_.toSquare();
+    HighsInt chol_size = this->nullsp_dim_ * (this->nullsp_dim_ + 1) / 2; // number of elements in lower triangular matrix
+    this->chol_.assign(chol_size, 0.);
+    this->recomputeExplicit();
+    this->refactorize();
 }
 
-bool AsmSolver::isInBasis(const AsmBasisStatus& status){
-    if (status == AsmBasisStatus::kInactive) return false; // note false return here
-    else return true;
-}
-
-bool AsmSolver::isFreeInBasis(const AsmBasisStatus& status){
-    if (status == AsmBasisStatus::kFreeInBasis) return true;
-    else return false;
-}
-
-bool AsmSolver::isActive(const AsmBasisStatus& status){ // TODO unused, remove
-    if (status == AsmBasisStatus::kLower ||
-        status == AsmBasisStatus::kUpper ||
-        status == AsmBasisStatus::kEquality) return true;
-    else return false;
-}
-
-bool AsmSolver::isActiveInequality(const AsmBasisStatus& status){
-    if (status == AsmBasisStatus::kLower ||
-        status == AsmBasisStatus::kUpper) return true;
-    else return false;
-}
-
-bool AsmSolver::isInactive(const AsmBasisStatus& status){
-    if (status == AsmBasisStatus::kInactive ||
-        status == AsmBasisStatus::kFreeInBasis) return true;
-    else return false;
-}
-
-void AsmSolver::computeLocGrad(){// g + Q x_k
-    this->Q_.product(this->solution_.col_value, this->loc_grad_); // stores result in loc_grad_
-    for (HighsInt i {0}; i < this->Q_.dim_; i++){ // add g to Q x_k
-        this->loc_grad_[i] += this->lp_.col_cost_[i];
-    }
-}
-
-double AsmSolver::norm(const std::vector<double>& vec){
-    double sum {0.}; // returns zero if size is null
-    for (size_t i {0}; i < vec.size(); i++){
-        sum += vec[i] * vec[i];
-    }
-    return std::sqrt(sum);
-}
-
-double AsmSolver::computeReducedVecs(){
-    // solve B x = (g + Q x_k) to compute (Dantzig?) prices and reduced gradient
-    computeLocGrad();
-    std::vector<double> vec = this->loc_grad_; // TODO is loc_grad_ storing needed?
-    this->HFtran(vec); // compute B x = g_k
-    this->pricing_.assign(vec.begin(), vec.end() - this->nullsp_dim_); // TODO, other types of pricing
-    this->red_grad_.assign(vec.end() - this->nullsp_dim_, vec.end()); // extract last z elements of the result, i.e. Z^T (g + Q x_k)
-    // returns the magnitude of the reduced gradient (0 if of null dimension)
-    return norm(this->red_grad_);
-}
-
-void AsmSolver::signPrices(){
-    for (HighsInt i {0}; i < this->rangsp_dim_; i++){
-        HighsInt idx { this->basis_idxs_[i] };
-        if (idx < this->lp_.num_row_) this->pricing_[i] *= static_cast<double>( this->con_status_[idx] );
-        else{
-            idx -= this->lp_.num_row_;
-            this->pricing_[i] *= static_cast<double>( this->var_status_[idx] );
+void AsmSolver::solve(){
+    // TODO set iteration limit
+    for (HighsInt i {0}; i < 1000; i++){
+        if (computeReducedVecs() < this->tol_){
+            deactivate();
+            if ( this->model_status_ == HighsModelStatus::kOptimal ) break;
+        } else {
+            solveREP();
+            ratiotest();
         }
     }
+    std::cout<<this->objective_<<"\n";
 }
 
 void AsmSolver::deactivate(){ // TODO reduce loops to loop over active constraints only
@@ -467,54 +394,16 @@ void AsmSolver::deactivate(){ // TODO reduce loops to loop over active constrain
     } else this->model_status_ = HighsModelStatus::kOptimal;
 }
 
-void AsmSolver::compute_newloc(const double& alpha, std::vector<double>& loc){
-    for (HighsInt i {0}; i < this->Q_.dim_; i++){
-        this->step_[i] *= alpha;
-        loc[i] = this->solution_.col_value[i] + this->step_[i];
-    } // compute x_{k+1}
-}
-
-void AsmSolver::activate(const HighsInt& idx, const AsmBasisStatus& status){
-    // handle status update
-    bool alreadyinbasis {false};
-    if (idx < this->lp_.num_row_){
-        if ( isFreeInBasis(this->con_status_[idx]) ) alreadyinbasis = true;
-        this->con_status_[idx] = status;
+void AsmSolver::solveREP(){
+    // solve reduced equality problem
+    // reduced gradient is assumed already up to date
+    this->delta_ = this->red_grad_; // TODO remove and flip the sign when computing new location with this->step_
+    for (size_t i {0}; i < this->delta_.size(); i++){
+        this->delta_[i] *= -1.; // flip sign to solve reduced system
     }
-    else {
-        HighsInt var_idx = idx - this->lp_.num_row_;
-        if ( isFreeInBasis(this->var_status_[var_idx]) ) alreadyinbasis = true;
-        this->var_status_[var_idx] = status;
-    }
-    // TODO find good rationale to select which constraint to drop
-    if (alreadyinbasis){
-        // find location of index and swap it with the first one after the active set
-        for (HighsInt i {this->rangsp_dim_}; i < this->Q_.dim_; i++){
-            if (this->basis_idxs_[i] == idx){       
-                std::swap( this->basis_idxs_[ this->rangsp_dim_ ], this->basis_idxs_[i] );
-                std::swap( this->basis_perm_[ this->rangsp_dim_ ], this->basis_perm_[i] );
-                break;
-            }
-        }
-    } else { // update HFactor if constraint not already in basis
-        // drop the last column in V and substitute it with new index,
-        // which then moves to the end of the current active set
-        HUpdate(this->basis_perm_.back(), idx);
-        // change dropped constraint to inactive
-        if (this->basis_idxs_.back() < this->lp_.num_row_) this->con_status_[this->basis_idxs_.back()] = AsmBasisStatus::kInactive;
-        else this->var_status_[this->basis_idxs_.back() - this->lp_.num_row_] = AsmBasisStatus::kInactive;
-        this->basis_idxs_.back() = idx; // place new index at end of array, dropping the last column in V
-        std::swap( this->basis_idxs_[ this->rangsp_dim_ ], this->basis_idxs_.back() ); // move the index before the start of V
-        std::swap( this->basis_perm_[ this->rangsp_dim_ ], this->basis_perm_.back() ); // so we need to do the same with perm, to match the location in basis_idxs_   
-    }
-    removeNullSpaceDim(); // TODO may need to be moved to after reduction
-    reduce();
-}
-
-void AsmSolver::reduce(){
-    // TODO update reduced Hessian instead of recomputing it
-    recomputeExplicit();
-    refactorize();
+    this->LLTsolve(this->delta_);
+    // then compute full space step
+    this->computeFullStep(this->delta_, this->step_); // what if step is null? degeneracy TODO
 }
 
 void AsmSolver::ratiotest(){
@@ -580,6 +469,74 @@ void AsmSolver::ratiotest(){
     }
 }
 
+void AsmSolver::activate(const HighsInt& idx, const AsmBasisStatus& status){
+    // handle status update
+    bool alreadyinbasis {false};
+    if (idx < this->lp_.num_row_){
+        if ( isFreeInBasis(this->con_status_[idx]) ) alreadyinbasis = true;
+        this->con_status_[idx] = status;
+    }
+    else {
+        HighsInt var_idx = idx - this->lp_.num_row_;
+        if ( isFreeInBasis(this->var_status_[var_idx]) ) alreadyinbasis = true;
+        this->var_status_[var_idx] = status;
+    }
+    // TODO find good rationale to select which constraint to drop
+    if (alreadyinbasis){
+        // find location of index and swap it with the first one after the active set
+        for (HighsInt i {this->rangsp_dim_}; i < this->Q_.dim_; i++){
+            if (this->basis_idxs_[i] == idx){       
+                std::swap( this->basis_idxs_[ this->rangsp_dim_ ], this->basis_idxs_[i] );
+                std::swap( this->basis_perm_[ this->rangsp_dim_ ], this->basis_perm_[i] );
+                break;
+            }
+        }
+    } else { // update HFactor if constraint not already in basis
+        // drop the last column in V and substitute it with new index,
+        // which then moves to the end of the current active set
+        HUpdate(this->basis_perm_.back(), idx);
+        // change dropped constraint to inactive
+        if (this->basis_idxs_.back() < this->lp_.num_row_) this->con_status_[this->basis_idxs_.back()] = AsmBasisStatus::kInactive;
+        else this->var_status_[this->basis_idxs_.back() - this->lp_.num_row_] = AsmBasisStatus::kInactive;
+        this->basis_idxs_.back() = idx; // place new index at end of array, dropping the last column in V
+        std::swap( this->basis_idxs_[ this->rangsp_dim_ ], this->basis_idxs_.back() ); // move the index before the start of V
+        std::swap( this->basis_perm_[ this->rangsp_dim_ ], this->basis_perm_.back() ); // so we need to do the same with perm, to match the location in basis_idxs_   
+    }
+    removeNullSpaceDim(); // TODO may need to be moved to after reduction
+    reduce();
+}
+
+void AsmSolver::computeLocGrad(){// g + Q x_k
+    this->Q_.product(this->solution_.col_value, this->loc_grad_); // stores result in loc_grad_
+    for (HighsInt i {0}; i < this->Q_.dim_; i++){ // add g to Q x_k
+        this->loc_grad_[i] += this->lp_.col_cost_[i];
+    }
+}
+
+double AsmSolver::computeReducedVecs(){
+    // solve B x = (g + Q x_k) to compute (Dantzig?) prices and reduced gradient
+    computeLocGrad();
+    std::vector<double> vec = this->loc_grad_; // TODO is loc_grad_ storing needed?
+    this->HFtran(vec); // compute B x = g_k
+    this->pricing_.assign(vec.begin(), vec.end() - this->nullsp_dim_); // TODO, other types of pricing
+    this->red_grad_.assign(vec.end() - this->nullsp_dim_, vec.end()); // extract last z elements of the result, i.e. Z^T (g + Q x_k)
+    // returns the magnitude of the reduced gradient (0 if of null dimension)
+    return norm(this->red_grad_);
+}
+
+void AsmSolver::compute_newloc(const double& alpha, std::vector<double>& loc){
+    for (HighsInt i {0}; i < this->Q_.dim_; i++){
+        this->step_[i] *= alpha;
+        loc[i] = this->solution_.col_value[i] + this->step_[i];
+    } // compute x_{k+1}
+}
+
+void AsmSolver::computeFullStep(const std::vector<double>& delta, std::vector<double>& step){
+    step.assign(this->rangsp_dim_, 0.);
+    step.insert(step.end(), delta.begin(), delta.end());
+    HBtran(step); // is this cheaper than holding the explicit Z^T and using that one?
+}
+
 void AsmSolver::updateObjective(){
     // assumes that objective is outdated compared to location
     std::vector<double> vec(this->Q_.dim_);
@@ -595,28 +552,72 @@ void AsmSolver::updateObjective(){
   }
 }
 
-void AsmSolver::solveREP(){
-    // solve reduced equality problem
-    // reduced gradient is assumed already up to date
-    this->delta_ = this->red_grad_; // TODO remove and flip the sign when computing new location with this->step_
-    for (size_t i {0}; i < this->delta_.size(); i++){
-        this->delta_[i] *= -1.; // flip sign to solve reduced system
-    }
-    this->LLTsolve(this->delta_);
-    // then compute full space step
-    this->computeFullStep(this->delta_, this->step_); // what if step is null? degeneracy TODO
-}
-
-void AsmSolver::solve(){
-    // TODO set iteration limit
-    for (HighsInt i {0}; i < 1000; i++){
-        if (computeReducedVecs() < this->tol_){
-            deactivate();
-            if ( this->model_status_ == HighsModelStatus::kOptimal ) break;
-        } else {
-            solveREP();
-            ratiotest();
+void AsmSolver::signPrices(){
+    for (HighsInt i {0}; i < this->rangsp_dim_; i++){
+        HighsInt idx { this->basis_idxs_[i] };
+        if (idx < this->lp_.num_row_) this->pricing_[i] *= static_cast<double>( this->con_status_[idx] );
+        else{
+            idx -= this->lp_.num_row_;
+            this->pricing_[i] *= static_cast<double>( this->var_status_[idx] );
         }
     }
-    std::cout<<this->objective_<<"\n";
+}
+
+void AsmSolver::addNullSpaceDim(){
+    this->nullsp_dim_++;
+    this->rangsp_dim_--;
+}
+
+void AsmSolver::removeNullSpaceDim(){
+    this->nullsp_dim_--;
+    this->rangsp_dim_++;
+}
+
+// convert Highs Status to Asm Status
+AsmBasisStatus AsmSolver::HighsStatusToAsm(const HighsBasisStatus& status, const HighsInt i, const bool variable){
+    if (variable){ // it is a variable this should be a fixed variable and needs presolve
+        if (this->lp_.col_lower_[i] == this->lp_.col_upper_[i]) return AsmBasisStatus::kEquality;
+    } else if (this->lp_.row_lower_[i] == this->lp_.row_upper_[i]) return AsmBasisStatus::kEquality;
+    // if no equality is found:
+    if(status == HighsBasisStatus::kLower) return AsmBasisStatus::kLower;
+    else if(status == HighsBasisStatus::kUpper) return AsmBasisStatus::kUpper;
+    else if(status == HighsBasisStatus::kZero) return AsmBasisStatus::kFreeInBasis;
+    else return AsmBasisStatus::kInactive;
+}
+
+bool AsmSolver::isInBasis(const AsmBasisStatus& status){
+    if (status == AsmBasisStatus::kInactive) return false; // note false return here
+    else return true;
+}
+
+bool AsmSolver::isFreeInBasis(const AsmBasisStatus& status){
+    if (status == AsmBasisStatus::kFreeInBasis) return true;
+    else return false;
+}
+
+bool AsmSolver::isActive(const AsmBasisStatus& status){ // TODO unused, remove
+    if (status == AsmBasisStatus::kLower ||
+        status == AsmBasisStatus::kUpper ||
+        status == AsmBasisStatus::kEquality) return true;
+    else return false;
+}
+
+bool AsmSolver::isActiveInequality(const AsmBasisStatus& status){
+    if (status == AsmBasisStatus::kLower ||
+        status == AsmBasisStatus::kUpper) return true;
+    else return false;
+}
+
+bool AsmSolver::isInactive(const AsmBasisStatus& status){ // TODO unused, remove
+    if (status == AsmBasisStatus::kInactive ||
+        status == AsmBasisStatus::kFreeInBasis) return true;
+    else return false;
+}
+
+double AsmSolver::norm(const std::vector<double>& vec){
+    double sum {0.}; // returns zero if size is null
+    for (size_t i {0}; i < vec.size(); i++){
+        sum += vec[i] * vec[i];
+    }
+    return std::sqrt(sum);
 }
