@@ -7,13 +7,6 @@
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 #include "Highs.h"
 
-HighsStatus gQP(HighsLp& lp,
-                HighsBasis& basis,
-                HighsSolution& solution,
-                HighsModelStatus& model_status,
-                HighsHessian hessian,
-                HighsTimer& timer);
-
 enum class AsmBasisStatus : HighsInt {
     kUpper = -1, // active at upper bound, sign flip for pricing
     kEquality = 0, // always active
@@ -28,60 +21,17 @@ class AsmSolver {
                            HighsBasis& basis,
                            HighsSolution& solution,
                            HighsModelStatus& model_status,
-                           HighsHessian& Q,
+                           HighsHessian Q,
                            HighsTimer& timer);
-        HVector stdvec2hvec(const std::vector<double>& vec);
-        HVector unit_hvec(const HighsInt& p);
-        //
-        void feasibility();
-        void setupQpBasis();
         inline HighsStatus getHighsStatus();
-        inline bool isActive(const AsmBasisStatus& status);
-        inline bool isActiveInequality(const AsmBasisStatus& status);
-        inline bool isInactive(const AsmBasisStatus& status);
-        inline bool isInBasis(const AsmBasisStatus& status); // for setup
-        inline bool isFreeInBasis(const AsmBasisStatus& status); // for setup
-        inline void addNullSpaceDim();
-        inline void removeNullSpaceDim();
-        void setupBasisMat();
-        void setupReducedHessian();
-        void run();
-        void computeLocGrad();
-        double norm(const std::vector<double>& vec);
-        double computeReducedVecs();
-        void deactivate();
-        void solveREP();
-        void compute_newloc(const double& alpha, std::vector<double>& loc); // TODO privatise?
-        void activate(const HighsInt& idx, const AsmBasisStatus& status);
-        void ratiotest();
-        void updateObjective();
-        void signPrices();
-        // functions from former Reduced Hessian class
-        void HSetup(HighsSparseMatrix& constraint_mat);
-        void HBuild();
-        void HBtran(std::vector<double>& vec);
-        void HBtran(HVector& vec, const double expected_density);
-        void HFtran(std::vector<double>& vec);
-        void HFtran(HVector& vec, const double expected_density);
-        void HUpdate(HighsInt loc_idxdrop, HighsInt idx_new);
-        void recomputeExplicit();
-        void refactorize();
-        inline HighsInt loc(const HighsInt& i, const HighsInt& j);
-        void extend(const HighsInt& loc_deactivated);
-        void Lsolve(std::vector<double>& vec);
-        void LTsolve(std::vector<double>& vec);
-        void LLTsolve(std::vector<double>& vec);
-        void getFullStep(const std::vector<double>& delta, std::vector<double>& step);
-        // TESTS
-        bool testOrtho();
-        bool testYTAid();
+        HighsStatus run();
     private:
         // problem data
         HighsLp& lp_;
         HighsBasis& lp_basis_; // basis with HighsBasisStatus vectors
         HighsSolution& solution_;
         HighsModelStatus& model_status_;
-        HighsHessian& Q_;
+        HighsHessian Q_;
         HighsTimer& timer_;
         double objective_; // objective function value
         HighsStatus status_;
@@ -101,11 +51,56 @@ class AsmSolver {
         // Real numbers
         double alpha_ {1.}; // step size for ratio test (TODO unused for now)
         double tol_ {1e-7}; // tolerance for zero checks
-        // functions
-        AsmBasisStatus HighsStatusToAsm(const HighsBasisStatus& status, const HighsInt i, const bool variable);
         // permutation has to be used when FTRAN and BTRAN are called
         std::vector<HighsInt> basis_idxs_; // ordered active and free indices in basiss
         std::vector<HighsInt> basis_perm_; // ordered active and free indices permutation in basis
         std::vector<AsmBasisStatus> var_status_;
         std::vector<AsmBasisStatus> con_status_;
+        // HFactor functions
+        void HSetup(const HighsSparseMatrix& constraint_mat);
+        void HBuild();
+        void HBtran(std::vector<double>& vec);
+        void HBtran(HVector& vec, const double expected_density);
+        void HFtran(std::vector<double>& vec);
+        void HFtran(HVector& vec, const double expected_density);
+        void HUpdate(HighsInt loc_idxdrop, HighsInt idx_new);
+        // Reduced Hessian operations
+        void recomputeExplicit();
+        void refactorize();
+        inline HighsInt loc(const HighsInt& i, const HighsInt& j);
+        void reduce();
+        void extend(const HighsInt& loc_deactivated);
+        void Lsolve(std::vector<double>& vec);
+        void LTsolve(std::vector<double>& vec);
+        void LLTsolve(std::vector<double>& vec);
+        // Feasibility phase functions
+        void solve();
+        void feasibility();
+        void setupQpBasis();
+        void setupBasisMat();
+        void setupReducedHessian();
+        // Main loop functions
+        void deactivate();
+        void solveREP();
+        void ratiotest();
+        // Object computations
+        void computeLocGrad();
+        double computeReducedVecs();
+        void compute_newloc(const double& alpha, std::vector<double>& loc);
+        void computeFullStep(const std::vector<double>& delta, std::vector<double>& step);
+        void updateObjective();
+        void signPrices();
+        void activate(const HighsInt& idx, const AsmBasisStatus& status);
+        // Helper functions
+        inline void addNullSpaceDim();
+        inline void removeNullSpaceDim();
+        AsmBasisStatus HighsStatusToAsm(const HighsBasisStatus& status, const HighsInt i, const bool variable);
+        inline bool isActive(const AsmBasisStatus& status);
+        inline bool isActiveInequality(const AsmBasisStatus& status);
+        inline bool isInactive(const AsmBasisStatus& status);
+        inline bool isInBasis(const AsmBasisStatus& status); // for setup
+        inline bool isFreeInBasis(const AsmBasisStatus& status); // for setup
+        HVector stdvec2hvec(const std::vector<double>& vec);
+        HVector unit_hvec(const HighsInt& p);
+        double norm(const std::vector<double>& vec);
 };

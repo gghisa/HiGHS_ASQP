@@ -8,24 +8,18 @@
 #include "Highs.h"
 #include "qpsolver/g_solver.hpp"
 
-HighsStatus gQP(HighsLp& lp,
-                HighsBasis& basis,
-                HighsSolution& solution,
-                HighsModelStatus& model_status,
-                HighsHessian hessian, // TODO make pass by reference when Micheal's code doesnt require it to be triangular anymore
-                HighsTimer& timer){
-    AsmSolver solver(lp, basis, solution, model_status, hessian, timer);
-    solver.feasibility();
-    if (solver.getHighsStatus() == HighsStatus::kError) return solver.getHighsStatus();
-    solver.run();
-    return solver.getHighsStatus();
+HighsStatus AsmSolver::run(){
+    feasibility();
+    if (getHighsStatus() == HighsStatus::kError) return getHighsStatus();
+    solve();
+    return getHighsStatus();
 }
 
 AsmSolver::AsmSolver(HighsLp& lp,
                      HighsBasis& basis,
                      HighsSolution& solution,
                      HighsModelStatus& model_status,
-                     HighsHessian& Q,
+                     HighsHessian Q, // TODO pass by reference once Micheal's code removed
                      HighsTimer& timer)
                      : lp_(lp),
                      lp_basis_(basis),
@@ -39,7 +33,7 @@ AsmSolver::AsmSolver(HighsLp& lp,
                      var_status_(lp.num_col_),
                      con_status_(lp.num_row_){}
 
-void AsmSolver::HSetup(HighsSparseMatrix& constraint_mat){
+void AsmSolver::HSetup(const HighsSparseMatrix& constraint_mat){
     // basis indices are shuffled around. it is no problem for us that that happens
     this->B_.setup(constraint_mat, this->basis_idxs_);
 }
@@ -237,7 +231,7 @@ void AsmSolver::extend(const HighsInt& loc_deactivated){
     this->chol_.push_back( std::sqrt(lambda) );
 }
 
-void AsmSolver::getFullStep(const std::vector<double>& delta, std::vector<double>& step){
+void AsmSolver::computeFullStep(const std::vector<double>& delta, std::vector<double>& step){
     step.assign(this->rangsp_dim_, 0.);
     step.insert(step.end(), delta.begin(), delta.end());
     HBtran(step); // is this cheaper than holding the explicit Z^T and using that one?
@@ -513,7 +507,11 @@ void AsmSolver::activate(const HighsInt& idx, const AsmBasisStatus& status){
         std::swap( this->basis_idxs_[ this->rangsp_dim_ ], this->basis_idxs_.back() ); // move the index before the start of V
         std::swap( this->basis_perm_[ this->rangsp_dim_ ], this->basis_perm_.back() ); // so we need to do the same with perm, to match the location in basis_idxs_   
     }
-    removeNullSpaceDim();
+    removeNullSpaceDim(); // TODO may need to be moved to after reduction
+    reduce();
+}
+
+void AsmSolver::reduce(){
     // TODO update reduced Hessian instead of recomputing it
     recomputeExplicit();
     refactorize();
@@ -586,7 +584,7 @@ void AsmSolver::updateObjective(){
     // assumes that objective is outdated compared to location
     std::vector<double> vec(this->Q_.dim_);
     this->objective_ = this->lp_.objectiveValue(this->solution_.col_value);
-    // TODO cannot use Q_.objectiveValue because it assumes triangular Hessian
+    // TODO take advantage of symmetry
     for (HighsInt iCol = 0; iCol < this->Q_.dim_; iCol++) { // from claude.ai
         for (HighsInt iEl = this->Q_.start_[iCol]; iEl < this->Q_.start_[iCol + 1]; iEl++) {
             this->objective_ += 0.5 *
@@ -606,10 +604,10 @@ void AsmSolver::solveREP(){
     }
     this->LLTsolve(this->delta_);
     // then compute full space step
-    this->getFullStep(this->delta_, this->step_); // what if step is null? degeneracy TODO
+    this->computeFullStep(this->delta_, this->step_); // what if step is null? degeneracy TODO
 }
 
-void AsmSolver::run(){
+void AsmSolver::solve(){
     // TODO set iteration limit
     for (HighsInt i {0}; i < 1000; i++){
         if (computeReducedVecs() < this->tol_){
