@@ -353,7 +353,7 @@ void AsmSolver::setupReducedHessian(){
 
 void AsmSolver::solve(){
     // TODO set iteration limit
-    for (HighsInt i {0}; i < 1000; i++){
+    for (HighsInt i {0}; i < 2 * 1000; i++){
         if (computeReducedVecs() < this->tol_){
             deactivate();
             if ( this->model_status_ == HighsModelStatus::kOptimal ) break;
@@ -610,11 +610,13 @@ void AsmSolver::removeNullSpaceDim(){
 
 // convert Highs Status to Asm Status
 AsmBasisStatus AsmSolver::HighsStatusToAsm(const HighsBasisStatus& status, const HighsInt i, const bool variable){
-    if (variable){ // it is a variable this should be a fixed variable and needs presolve
-        if (this->lp_.col_lower_[i] == this->lp_.col_upper_[i]) return AsmBasisStatus::kEquality;
-    } else if (this->lp_.row_lower_[i] == this->lp_.row_upper_[i]) return AsmBasisStatus::kEquality;
     // if no equality is found:
-    if(status == HighsBasisStatus::kLower) return AsmBasisStatus::kLower;
+    if(status == HighsBasisStatus::kLower){
+        if (variable){ // it is a variable this should be a fixed variable and needs presolve
+            if (this->lp_.col_lower_[i] == this->lp_.col_upper_[i]) return AsmBasisStatus::kEquality;
+        } else if (this->lp_.row_lower_[i] == this->lp_.row_upper_[i]) return AsmBasisStatus::kEquality;
+        return AsmBasisStatus::kLower;
+    }
     else if(status == HighsBasisStatus::kUpper) return AsmBasisStatus::kUpper;
     else if(status == HighsBasisStatus::kZero) return AsmBasisStatus::kFreeInBasis;
     else return AsmBasisStatus::kInactive;
