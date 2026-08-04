@@ -23,6 +23,7 @@ AsmSolver::AsmSolver(HighsLp& lp,
                      buffer_(lp.num_col_),
                      loc_grad_(Q.dim_),
                      step_(Q.dim_),
+                     basis_perm_(Q.dim_), // no init of basis_idxs_ as it is built with push_back()
                      var_status_(lp.num_col_),
                      con_status_(lp.num_row_){}
 
@@ -280,18 +281,14 @@ void AsmSolver::feasibility(){
 }
 
 void AsmSolver::setupQpBasis(){
-    HighsInt count_basis {0};
-    HighsInt count_nonbasis {0};
     // init active and free temporary index and permutation vectors
     std::vector<HighsInt> active_idxs;
     std::vector<HighsInt> free_idxs;
     // loop through constraints
     for (HighsInt i {0}; i < this->lp_.num_row_; i++){
         this->con_status_[i] = HighsStatusToAsm(this->lp_basis_.row_status[i], i, false);
-        if ( isInBasis(this->con_status_[i]) ){
-            active_idxs.push_back(i); // add index to list of indices
-            count_basis++; // constraints shouldn't be free in basis, ignore HighsBasisStatus::kZero and HighsBasisStatus::kNonbasic
-        } else count_nonbasis++;
+        if ( isInBasis(this->con_status_[i]) ) active_idxs.push_back(i); // add index to list of indices
+        // constraints shouldn't be free in basis, ignore HighsBasisStatus::kZero and HighsBasisStatus::kNonbasic
     }
     // loop through variables
     for (HighsInt i {0}; i < this->Q_.dim_; i++){
@@ -301,8 +298,7 @@ void AsmSolver::setupQpBasis(){
         if ( isInBasis(this->var_status_[i]) ){
             if ( isFreeInBasis(this->var_status_[i]) ) free_idxs.push_back(idx); // add index to list of indices
             else active_idxs.push_back(idx); // if not free then it is active in the basis
-            count_basis++;
-        } else count_nonbasis++;
+        }
     }
     // set nullspace and range dimensions
     this->nullsp_dim_ = (HighsInt) free_idxs.size();
@@ -312,36 +308,21 @@ void AsmSolver::setupQpBasis(){
     this->basis_idxs_ = active_idxs;
     this->basis_idxs_.insert(this->basis_idxs_.end(),
                              free_idxs.begin(), free_idxs.end());
+    std::vector<HighsInt> ordered_basis = this->basis_idxs_; // store buffer
     // setup HFactor
     setupBasisMat();
     // since basis indices may have been shuffled so that free indices may not trail active ones anymore,
     // set permutation order to match the index sets (A,V) structure
-    std::vector<HighsInt> active_idxs_locs(this->rangsp_dim_);
-    for (HighsInt i {0}; i < this->rangsp_dim_; i++){
+    for (HighsInt i {0}; i < this->Q_.dim_; i++){
         for (HighsInt j {0}; j < this->Q_.dim_; j++){
-            if (active_idxs[i] == this->basis_idxs_[j]){
-                active_idxs_locs[i] = j;
+            if (ordered_basis[i] == this->basis_idxs_[j]){
+                this->basis_perm_[i] = j;
                 break;
             }
         }
     }
-    std::vector<HighsInt> free_idxs_locs(this->nullsp_dim_);
-    for (HighsInt i {0}; i < this->nullsp_dim_; i++){
-        for (HighsInt j {0}; j < this->Q_.dim_; j++){
-            if (free_idxs[i] == this->basis_idxs_[j]){
-                free_idxs_locs[i] = j;
-                break;
-            }
-        }
-    }
-    // merge locations
-    this->basis_perm_ = active_idxs_locs;
-    this->basis_perm_.insert(this->basis_perm_.end(),
-                             free_idxs_locs.begin(), free_idxs_locs.end());
     // then restore order in basis indices
-    this->basis_idxs_ = active_idxs;
-    this->basis_idxs_.insert(this->basis_idxs_.end(),
-                             free_idxs.begin(), free_idxs.end());
+    this->basis_idxs_ = ordered_basis;
     // build Reduced Hessian
     setupReducedHessian();
     return;

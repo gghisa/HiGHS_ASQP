@@ -34,7 +34,7 @@ class AsmSolver {
         HighsHessian Q_;
         HighsTimer& timer_;
         double objective_; // objective function value
-        HighsStatus status_;
+        HighsStatus status_ {HighsStatus::kOk}; // TODO update as you go
         // ASM data
         HighsInt nullsp_dim_ {0};
         HighsInt rangsp_dim_ {this->Q_.dim_};
