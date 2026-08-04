@@ -268,18 +268,13 @@ void AsmSolver::setupQpBasis(){
     HighsInt count_nonbasis {0};
     // init active and free temporary index and permutation vectors
     std::vector<HighsInt> active_idxs;
-    std::vector<HighsInt> active_blocs;
     std::vector<HighsInt> free_idxs;
-    std::vector<HighsInt> free_blocs;
     // loop through constraints
     for (HighsInt i {0}; i < this->lp_.num_row_; i++){
         this->con_status_[i] = HighsStatusToAsm(this->lp_basis_.row_status[i], i, false);
-        // ignore HighsBasisStatus::kNonbasic
         if ( isInBasis(this->con_status_[i]) ){
             active_idxs.push_back(i); // add index to list of indices
-            active_blocs.push_back(count_basis); // add index location to list of indices locations
-            count_basis++;
-            // constraints shouldn't be free in basis, ignore HighsBasisStatus::kZero
+            count_basis++; // constraints shouldn't be free in basis, ignore HighsBasisStatus::kZero and HighsBasisStatus::kNonbasic
         } else count_nonbasis++;
     }
     // loop through variables
@@ -288,13 +283,8 @@ void AsmSolver::setupQpBasis(){
         this->var_status_[i] = HighsStatusToAsm(this->lp_basis_.col_status[i], i, true);
         // ignore HighsBasisStatus::kNonbasic
         if ( isInBasis(this->var_status_[i]) ){
-            if ( isFreeInBasis(this->var_status_[i]) ){ // count nullspace dimension at the end with size of array
-                free_idxs.push_back(idx); // add index to list of indices
-                free_blocs.push_back(count_basis); // add index location to list of indices locations
-            } else { // if not free then it is active in the basis
-                active_idxs.push_back(idx); // add index to list of indices
-                active_blocs.push_back(count_basis); // add index location to list of indices locations
-            }
+            if ( isFreeInBasis(this->var_status_[i]) ) free_idxs.push_back(idx); // add index to list of indices
+            else active_idxs.push_back(idx); // if not free then it is active in the basis
             count_basis++;
         } else count_nonbasis++;
     }
@@ -306,12 +296,36 @@ void AsmSolver::setupQpBasis(){
     this->basis_idxs_ = active_idxs;
     this->basis_idxs_.insert(this->basis_idxs_.end(),
                              free_idxs.begin(), free_idxs.end());
-    // merge permutation indices
-    this->basis_perm_ = active_blocs;
-    this->basis_perm_.insert(this->basis_perm_.end(),
-                             free_blocs.begin(), free_blocs.end());
     // setup HFactor
     setupBasisMat();
+    // since basis indices may have been shuffled so that free indices may not trail active ones anymore,
+    // set permutation order to match the index sets (A,V) structure
+    std::vector<HighsInt> active_idxs_locs(this->rangsp_dim_);
+    for (HighsInt i {0}; i < this->rangsp_dim_; i++){
+        for (HighsInt j {0}; j < this->Q_.dim_; j++){
+            if (active_idxs[i] == this->basis_idxs_[j]){
+                active_idxs_locs[i] = j;
+                break;
+            }
+        }
+    }
+    std::vector<HighsInt> free_idxs_locs(this->nullsp_dim_);
+    for (HighsInt i {0}; i < this->nullsp_dim_; i++){
+        for (HighsInt j {0}; j < this->Q_.dim_; j++){
+            if (free_idxs[i] == this->basis_idxs_[j]){
+                free_idxs_locs[i] = j;
+                break;
+            }
+        }
+    }
+    // merge locations
+    this->basis_perm_ = active_idxs_locs;
+    this->basis_perm_.insert(this->basis_perm_.end(),
+                             free_idxs_locs.begin(), free_idxs_locs.end());
+    // then restore order in basis indices
+    this->basis_idxs_ = active_idxs;
+    this->basis_idxs_.insert(this->basis_idxs_.end(),
+                             free_idxs.begin(), free_idxs.end());
     // build Reduced Hessian
     setupReducedHessian();
 }
