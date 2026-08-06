@@ -279,6 +279,7 @@ bool AsmSolver::feasibility(){
         highs_feasibility.setOptionValue("simplex_strategy", kSimplexStrategyDual); // specifying what solver to use in case a basis is set that is known to be either primal or dual feasible
         // use dual simplex if the objective value is all zeros, beacuse that means dual feasibility is guaranteed
         this->status_ = highs_feasibility.run();
+        this->info_.simplex_iteration_count = highs_feasibility.getSimplexIterationCount();
         if (this->status_ != HighsStatus::kError){ // why not returning after extracting the model status too?
             this->model_status_ = HighsModelStatus::kNotset; // note Optimal in Phase1 is Feasible for ASM
             this->lp_basis_ = highs_feasibility.getBasis();
@@ -367,9 +368,10 @@ void AsmSolver::setupReducedHessian(){
 }
 
 HighsStatus AsmSolver::run(){
+    HighsInt i {0};
     if ( feasibility() ){
-        HighsInt i {0};
-        while (i < this->options_.qp_iteration_limit){
+        while (i < this->options_.qp_iteration_limit &&
+               timer_.read() < this->options_.time_limit){
             if (computeReducedVecs() < this->tol_){
                 if ( deactivate() ) break;
             } else {
@@ -381,6 +383,8 @@ HighsStatus AsmSolver::run(){
         if (i >= this->options_.qp_iteration_limit) this->model_status_ = HighsModelStatus::kIterationLimit;
         std::cout<<this->objective_<<"\n";
     }
+    this->info_.qp_iteration_count = i;
+    this->info_;
     return getHighsStatus();
 }
 
@@ -420,7 +424,7 @@ bool AsmSolver::deactivate(){ // TODO reduce loops to loop over active constrain
         }
     }
     // check that bestprice is indeed negative, in case first price is best but non-negative
-    if ( bestprice < 0. ){
+    if ( bestprice < - this->options_.dual_feasibility_tolerance ){ // TODO check negativity of tolerance
         // update status
         if (bestidx < this->lp_.num_row_) this->con_status_[bestidx] = AsmBasisStatus::kFreeInBasis;
         else this->var_status_[bestidx - this->lp_.num_row_] = AsmBasisStatus::kFreeInBasis;
