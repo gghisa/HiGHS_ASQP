@@ -8,25 +8,29 @@
 #include "Highs.h"
 #include "qpsolver/g_solver.hpp"
 
-AsmSolver::AsmSolver(HighsLp& lp,
+AsmSolver::AsmSolver(const HighsOptions& options,
+                     HighsTimer& timer,
+                     const HighsLp& lp,
+                     HighsHessian hessian,
                      HighsBasis& basis,
                      HighsSolution& solution,
                      HighsModelStatus& model_status,
-                     HighsHessian Q, // TODO pass by reference once Micheal's code removed
-                     HighsTimer& timer,
-                     HighsOptions& options)
-                     : lp_(lp),
-                     feasibility_lp_(lp),
+                     HighsInfo& info,
+                     HighsCallback& callback)
+                     : options_(options),
+                     timer_(timer),
+                     lp_(lp),
+                     Q_(hessian),
                      lp_basis_(basis),
                      solution_(solution),
                      model_status_(model_status),
-                     Q_(Q),
-                     timer_(timer),
-                     options_(options),
+                     info_(info),
+                     callback_(callback),
+                     feasibility_lp_(lp),
                      buffer_(lp.num_col_),
-                     loc_grad_(Q.dim_),
-                     step_(Q.dim_),
-                     basis_perm_(Q.dim_), // no init of basis_idxs_ as it is built with push_back()
+                     loc_grad_(hessian.dim_),
+                     step_(hessian.dim_),
+                     basis_perm_(hessian.dim_), // no init of basis_idxs_ as it is built with push_back()
                      var_status_(lp.num_col_),
                      con_status_(lp.num_row_){}
 
@@ -288,7 +292,6 @@ bool AsmSolver::feasibility(){
 
 void AsmSolver::setupFeasibilityProblem(){
     // build feasibility_lp_
-    std::vector<double> col_cost_temp = this->feasibility_lp_.col_cost_; // store linear costs
     this->feasibility_lp_.col_cost_.assign(this->Q_.dim_, 0.); // zero out objective
 }
 

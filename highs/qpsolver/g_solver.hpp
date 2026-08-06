@@ -17,26 +17,31 @@ enum class AsmBasisStatus : HighsInt {
 
 class AsmSolver {
     public:
-        explicit AsmSolver(HighsLp& lp,
+        explicit AsmSolver(const HighsOptions& options,
+                           HighsTimer& timer,
+                           const HighsLp& lp,
+                           HighsHessian hessian,
                            HighsBasis& basis,
                            HighsSolution& solution,
                            HighsModelStatus& model_status,
-                           HighsHessian Q,
-                           HighsTimer& timer,
-                           HighsOptions& options);
+                           HighsInfo& info,
+                           HighsCallback& callback);
         inline HighsStatus getHighsStatus();
         inline HighsModelStatus getHighsModelStatus();
         HighsStatus run();
     private:
         // problem data
-        HighsLp& lp_;
-        HighsLp feasibility_lp_;
+        const HighsOptions& options_;
+        HighsTimer& timer_;
+        const HighsLp& lp_;
+        HighsHessian Q_;
         HighsBasis& lp_basis_; // basis with HighsBasisStatus vectors
         HighsSolution& solution_;
         HighsModelStatus& model_status_;
-        HighsHessian Q_;
-        HighsTimer& timer_;
-        HighsOptions& options_;
+        HighsInfo& info_;
+        HighsCallback& callback_;
+        //
+        HighsLp feasibility_lp_;
         double objective_; // objective function value
         HighsStatus status_ {HighsStatus::kOk}; // TODO update as you go
         // ASM data

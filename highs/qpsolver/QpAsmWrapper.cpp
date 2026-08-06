@@ -13,6 +13,7 @@
 
 #include "model/HighsHessianUtils.h"
 #include "qpsolver/a_quass.hpp"
+#include "qpsolver/g_solver.hpp"
 #include "qpsolver/runtime.hpp"
 
 HighsStatus solveQpAsm(HighsQpSolverObject& solver_object) {
@@ -102,6 +103,17 @@ HighsStatus solveQpAsm(const HighsOptions& options, HighsTimer& timer,
                        HighsBasis& basis, HighsSolution& solution,
                        HighsModelStatus& model_status, HighsInfo& info,
                        HighsCallback& callback) {
+  AsmSolver asm_solver(options,
+                       timer,
+                       lp,
+                       hessian,
+                       basis,
+                       solution,
+                       model_status,
+                       info,
+                       callback);
+  asm_solver.run();
+
   Instance instance(lp.num_col_, lp.num_row_);
 
   instance.sense = HighsInt(lp.sense_);
