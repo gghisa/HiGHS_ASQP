@@ -14,7 +14,6 @@
 #include "Highs.h"
 #include "lp_data/HighsLpUtils.h"
 #include "lp_data/HighsModelUtils.h"
-#include "mip/HighsMipSolver.h"  // For getGapString
 #include "mip/MipTimer.h"
 #include "model/HighsHessianUtils.h"
 #include "parallel/HighsParallel.h"
@@ -51,7 +50,7 @@ void Highs::reportModelStats() const {
   std::string problem_type;
   const bool non_continuous =
       num_integer + num_semi_continuous + num_semi_integer;
-  if (hessian.dim_) {
+  if (model_.isQp()) {
     if (non_continuous) {
       problem_type = "MIQP";
     } else {
@@ -112,6 +111,7 @@ void Highs::reportModelStats() const {
       stats_line << "; " << a_num_nz << " nonzero"
                  << (a_num_nz == 1 ? "" : "s");
     }
+    if (hessian.isOracle()) stats_line << "; Hessian as oracle";
     if (num_integer)
       stats_line << "; " << num_integer << " integer variable"
                  << (a_num_nz == 1 ? "" : "s") << " (" << num_binary
@@ -449,7 +449,8 @@ HighsStatus Highs::addColsInterface(
   return_status = interpretCallStatus(
       options_.log_options,
       assessBounds(options, "Col", lp.num_col_, index_collection,
-                   local_colLower, local_colUpper, options.infinite_bound),
+                   local_colLower, local_colUpper, options.infinite_bound,
+                   nullptr),
       return_status, "assessBounds");
   if (return_status == HighsStatus::kError) return return_status;
   // Append the columns to the LP vectors and matrix
@@ -468,13 +469,14 @@ HighsStatus Highs::addColsInterface(
     local_a_matrix.start_[ext_num_new_col] = ext_num_new_nz;
     local_a_matrix.index_ = {ext_a_index, ext_a_index + ext_num_new_nz};
     local_a_matrix.value_ = {ext_a_value, ext_a_value + ext_num_new_nz};
+    const bool sum_duplicates = false;
     // Assess the matrix rows
-    return_status =
-        interpretCallStatus(options_.log_options,
-                            local_a_matrix.assess(options.log_options, "LP",
-                                                  options.small_matrix_value,
-                                                  options.large_matrix_value),
-                            return_status, "assessMatrix");
+    return_status = interpretCallStatus(
+        options_.log_options,
+        local_a_matrix.assess(options.log_options, "LP",
+                              options.small_matrix_value,
+                              options.large_matrix_value, sum_duplicates),
+        return_status, "assessMatrix");
     if (return_status == HighsStatus::kError) return return_status;
   } else {
     // No nonzeros so, whether the constraint matrix is column-wise or
@@ -579,7 +581,8 @@ HighsStatus Highs::addRowsInterface(HighsInt ext_num_new_row,
   return_status = interpretCallStatus(
       options_.log_options,
       assessBounds(options, "Row", lp.num_row_, index_collection,
-                   local_rowLower, local_rowUpper, options.infinite_bound),
+                   local_rowLower, local_rowUpper, options.infinite_bound,
+                   nullptr),
       return_status, "assessBounds");
   if (return_status == HighsStatus::kError) return return_status;
   // Append the rows to the LP vectors
@@ -599,12 +602,13 @@ HighsStatus Highs::addRowsInterface(HighsInt ext_num_new_row,
     local_ar_matrix.index_ = {ext_ar_index, ext_ar_index + ext_num_new_nz};
     local_ar_matrix.value_ = {ext_ar_value, ext_ar_value + ext_num_new_nz};
     // Assess the matrix columns
-    return_status =
-        interpretCallStatus(options_.log_options,
-                            local_ar_matrix.assess(options.log_options, "LP",
-                                                   options.small_matrix_value,
-                                                   options.large_matrix_value),
-                            return_status, "assessMatrix");
+    const bool sum_duplicates = false;
+    return_status = interpretCallStatus(
+        options_.log_options,
+        local_ar_matrix.assess(options.log_options, "LP",
+                               options.small_matrix_value,
+                               options.large_matrix_value, sum_duplicates),
+        return_status, "assessMatrix");
     if (return_status == HighsStatus::kError) return return_status;
   } else {
     // No nonzeros so, whether the constraint matrix is row-wise or
@@ -983,7 +987,7 @@ HighsStatus Highs::changeColBoundsInterface(
   return_status = interpretCallStatus(
       options_.log_options,
       assessBounds(options_, "col", 0, index_collection, local_colLower,
-                   local_colUpper, options_.infinite_bound),
+                   local_colUpper, options_.infinite_bound, nullptr),
       return_status, "assessBounds");
   if (return_status == HighsStatus::kError) return return_status;
   HighsLp& lp = model_.lp_;
@@ -1034,7 +1038,7 @@ HighsStatus Highs::changeRowBoundsInterface(
   return_status = interpretCallStatus(
       options_.log_options,
       assessBounds(options_, "row", 0, index_collection, local_rowLower,
-                   local_rowUpper, options_.infinite_bound),
+                   local_rowUpper, options_.infinite_bound, nullptr),
       return_status, "assessBounds");
   if (return_status == HighsStatus::kError) return return_status;
   HighsLp& lp = model_.lp_;
@@ -2899,52 +2903,6 @@ void Highs::clearZeroHessian() {
   }
 }
 
-HighsStatus Highs::checkOptimality(const std::string& solver_type) {
-  // Check for infeasibility measures incompatible with optimality
-  assert(model_status_ == HighsModelStatus::kOptimal);
-  // Cannot expect to have no dual_infeasibilities since the QP solver
-  // (and, of course, the MIP solver) give no dual information
-  if (info_.num_primal_infeasibilities == 0 &&
-      info_.num_dual_infeasibilities <= 0) {
-    // Consider semi-continuous infeasibilities
-    if (info_.num_semi_infeasibilities > 0) {
-      highsLogUser(options_.log_options, HighsLogType::kError,
-                   "%s solver claims optimality, but with num/max/sum %d/%g/%g "
-                   "semi-variable infeasibilities: consider solving with "
-                   "smaller mip_feasibility_tolerance\n",
-                   solver_type.c_str(), int(info_.num_semi_infeasibilities),
-                   info_.max_semi_infeasibility,
-                   info_.sum_semi_infeasibilities);
-      model_status_ = HighsModelStatus::kSolveError;
-      highsLogUser(options_.log_options, HighsLogType::kError,
-                   "Setting model status to %s\n",
-                   modelStatusToString(model_status_).c_str());
-      return HighsStatus::kError;
-    }
-    return HighsStatus::kOk;
-  }
-  model_status_ = HighsModelStatus::kSolveError;
-  std::stringstream ss;
-  ss.str(std::string());
-  ss << highsFormatToString(
-      "%s solver claims optimality, but with num/max/sum "
-      "primal(%d/%g/%g)",
-      solver_type.c_str(), int(info_.num_primal_infeasibilities),
-      info_.max_primal_infeasibility, info_.sum_primal_infeasibilities);
-  if (info_.num_dual_infeasibilities > 0)
-    ss << highsFormatToString(
-        "and dual(%d/%g/%g)", int(info_.num_dual_infeasibilities),
-        info_.max_dual_infeasibility, info_.sum_dual_infeasibilities);
-  ss << " infeasibilities\n";
-  const std::string report_string = ss.str();
-  highsLogUser(options_.log_options, HighsLogType::kError, "%s",
-               report_string.c_str());
-  highsLogUser(options_.log_options, HighsLogType::kError,
-               "Setting model status to %s\n",
-               modelStatusToString(model_status_).c_str());
-  return HighsStatus::kError;
-}
-
 void Highs::callLpKktCheck(const HighsLp& lp, const std::string& message) {
   lpKktCheck(this->model_status_, this->info_, lp, this->solution_,
              this->basis_, this->options_, message);
@@ -3093,6 +3051,12 @@ void Highs::restoreInfCost(HighsStatus& return_status) {
 HighsStatus Highs::userScale(HighsUserScaleData& data) {
   if (!options_.user_objective_scale && !options_.user_bound_scale)
     return HighsStatus::kOk;
+  if (this->model_.hessian_.isOracle()) {
+    highsLogUser(this->options_.log_options, HighsLogType::kWarning,
+                 "Hessian is represented via an oracle, so user scaling cannot "
+                 "be applied\n");
+    return HighsStatus::kWarning;
+  }
   // User objective and bound scaling data are accumulated in the
   // HighsUserScaleData struct, in particular, there is a local copy
   // of the user objective and bound scaling options values, and
@@ -3189,11 +3153,9 @@ HighsStatus Highs::userScaleSolution(HighsUserScaleData& data,
   }
   if (!update_kkt) return return_status;
   // In scaling the objective function value, have to consider the offset
-  double objective_function_value =
-      info_.objective_function_value - model_.lp_.offset_;
-  objective_function_value *= (bound_scale_value * objective_scale_value);
-  objective_function_value += model_.lp_.offset_;
-  info_.objective_function_value = objective_function_value;
+  info_.objective_function_value *= (bound_scale_value * objective_scale_value);
+  if (has_integrality)
+    info_.mip_dual_bound *= (bound_scale_value * objective_scale_value);
   getKktFailures(options_, model_, solution_, basis_, info_);
   return reportKktFailures(model_.lp_, options_, info_,
                            "After removing user scaling")

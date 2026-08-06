@@ -527,6 +527,19 @@ class HighsDomain {
     return prevboundval_;
   }
 
+  // Walk the prevboundval_ chain until we find a position where the bound
+  // value is strictly past the target (in the given direction).
+  // direction = +1: walk while value >= target (lower bound relaxation)
+  // direction = -1: walk while value <= target (upper bound relaxation)
+  // Returns false if the chain is exhausted (pos becomes -1).
+  bool walkBoundChain(HighsInt& pos, double target, HighsInt direction) const {
+    while (pos != -1 &&
+           direction * prevboundval_[pos].first >= direction * target) {
+      pos = prevboundval_[pos].second;
+    }
+    return pos != -1;
+  }
+
   const std::vector<HighsDomainChange>& getDomainChangeStack() const {
     return domchgstack_;
   }
@@ -537,7 +550,7 @@ class HighsDomain {
 
   double getObjectiveLowerBound() const {
     if (objProp_.isActive() && objProp_.numInfObjLower == 0)
-      return double(objProp_.objectiveLower);
+      return static_cast<double>(objProp_.objectiveLower);
 
     return -kHighsInf;
   }
@@ -561,7 +574,7 @@ class HighsDomain {
     std::vector<HighsDomainChange> reducedstack;
     reducedstack.reserve(domchgstack_.size());
     branchingPositions.reserve(branchPos_.size());
-    for (HighsInt i = 0; i < (HighsInt)domchgstack_.size(); ++i) {
+    for (HighsInt i = 0; i < static_cast<HighsInt>(domchgstack_.size()); ++i) {
       // keep only the tightest bound change for each variable
       if ((domchgstack_[i].boundtype == HighsBoundType::kLower &&
            colLowerPos_[domchgstack_[i].column] != i) ||
@@ -620,11 +633,13 @@ class HighsDomain {
                            double& rhs) const;
 
   double getMinActivity(HighsInt row) const {
-    return activitymininf_[row] == 0 ? double(activitymin_[row]) : -kHighsInf;
+    return activitymininf_[row] == 0 ? static_cast<double>(activitymin_[row])
+                                     : -kHighsInf;
   }
 
   double getMaxActivity(HighsInt row) const {
-    return activitymaxinf_[row] == 0 ? double(activitymax_[row]) : kHighsInf;
+    return activitymaxinf_[row] == 0 ? static_cast<double>(activitymax_[row])
+                                     : kHighsInf;
   }
 
   double getMinCutActivity(const HighsCutPool& cutpool, HighsInt cut) const;
@@ -653,6 +668,8 @@ class HighsDomain {
   HighsDomainChange flip(const HighsDomainChange& domchg) const;
 
   double feastol() const;
+
+  double epsilon() const;
 
   HighsInt numModelNonzeros() const { return mipsolver->numNonzero(); }
 
