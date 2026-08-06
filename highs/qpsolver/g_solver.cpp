@@ -13,13 +13,16 @@ AsmSolver::AsmSolver(HighsLp& lp,
                      HighsSolution& solution,
                      HighsModelStatus& model_status,
                      HighsHessian Q, // TODO pass by reference once Micheal's code removed
-                     HighsTimer& timer)
+                     HighsTimer& timer,
+                     HighsOptions& options)
                      : lp_(lp),
+                     feasibility_lp_(lp),
                      lp_basis_(basis),
                      solution_(solution),
                      model_status_(model_status),
                      Q_(Q),
                      timer_(timer),
+                     options_(options),
                      buffer_(lp.num_col_),
                      loc_grad_(Q.dim_),
                      step_(Q.dim_),
@@ -31,11 +34,8 @@ HighsStatus AsmSolver::getHighsStatus(){ // public function
     return this->status_; // private attribute
 }
 
-HighsStatus AsmSolver::run(){
-    feasibility();
-    if (getHighsStatus() == HighsStatus::kError) return getHighsStatus();
-    solve();
-    return getHighsStatus();
+HighsModelStatus AsmSolver::getHighsModelStatus(){ // public function
+    return this->model_status_; // private attribute
 }
 
 void AsmSolver::HSetup(const HighsSparseMatrix& constraint_mat){
@@ -257,27 +257,39 @@ void AsmSolver::reduce(){
     return;
 }
 
-void AsmSolver::feasibility(){
+bool AsmSolver::feasibility(){
     // TODO hotstart if basis is provided
-    // TODO minimize slacks in this first phase
-    std::vector<double> col_cost_temp = this->lp_.col_cost_; // store linear costs
-    this->lp_.col_cost_.assign(this->Q_.dim_, 0.); // zero out objective
-    Highs feasibility_lp;
-    feasibility_lp.passModel(this->lp_);
-    feasibility_lp.setOptionValue("presolve", kHighsOnString); // presolving phase1 makes it faster, im guessing the postsolve is included
-    feasibility_lp.setOptionValue("output_flag", false); // don't print anything
-    feasibility_lp.setOptionValue("simplex_strategy", kSimplexStrategyDual); // specifying what solver to use in case a basis is set that is known to be either primal or dual feasible
-    // use dual simplex if the objective value is all zeros, beacuse that means dual feasibility is guaranteed
-    this->status_ = feasibility_lp.run();
-    if (this->status_ != HighsStatus::kError){ // why not returning after extracting the model status too?
-        this->model_status_ = HighsModelStatus::kNotset; // note Optimal in Phase1 is Feasible for ASM
-        this->lp_basis_ = feasibility_lp.getBasis();
-        this->solution_ = feasibility_lp.getSolution();
-        setupQpBasis();
+    if (this->options_.qp_allow_hot_start &&
+        this->lp_basis_.valid &&
+        this->solution_.value_valid){
+        // TODO add check to make sure basis checks out with solution
+        return false; // return false to not run the active set solver
+    } else {
+        // TODO minimize slacks in this first phase
+        setupFeasibilityProblem();
+        Highs highs_feasibility;
+        highs_feasibility.passModel(this->feasibility_lp_);
+        highs_feasibility.passOptions(this->options_);
+        //feasibility_lp.setOptionValue("presolve", kHighsOnString); // presolving phase1 makes it faster, im guessing the postsolve is included
+        highs_feasibility.setOptionValue("output_flag", false); // don't print anything
+        highs_feasibility.setOptionValue("simplex_strategy", kSimplexStrategyDual); // specifying what solver to use in case a basis is set that is known to be either primal or dual feasible
+        // use dual simplex if the objective value is all zeros, beacuse that means dual feasibility is guaranteed
+        this->status_ = highs_feasibility.run();
+        if (this->status_ != HighsStatus::kError){ // why not returning after extracting the model status too?
+            this->model_status_ = HighsModelStatus::kNotset; // note Optimal in Phase1 is Feasible for ASM
+            this->lp_basis_ = highs_feasibility.getBasis();
+            this->solution_ = highs_feasibility.getSolution();
+        } else return false; // return false to not run the active set solver
+        updateObjective();
     }
-    this->lp_.col_cost_ = col_cost_temp; // reset linear costs to original
-    updateObjective();
-    return;
+    setupQpBasis();
+    return true; // return true to run the active set solver
+}
+
+void AsmSolver::setupFeasibilityProblem(){
+    // build feasibility_lp_
+    std::vector<double> col_cost_temp = this->feasibility_lp_.col_cost_; // store linear costs
+    this->feasibility_lp_.col_cost_.assign(this->Q_.dim_, 0.); // zero out objective
 }
 
 void AsmSolver::setupQpBasis(){
@@ -351,25 +363,32 @@ void AsmSolver::setupReducedHessian(){
     return;
 }
 
-void AsmSolver::solve(){
-    // TODO set iteration limit
-    for (HighsInt i {0}; i < 2 * 1000; i++){
-        if (computeReducedVecs() < this->tol_){
-            deactivate();
-            if ( this->model_status_ == HighsModelStatus::kOptimal ) break;
-        } else {
-            solveREP();
-            ratiotest();
+HighsStatus AsmSolver::run(){
+    if ( feasibility() ){
+        HighsInt i {0};
+        while (i < this->options_.qp_iteration_limit){
+            if (computeReducedVecs() < this->tol_){
+                if ( deactivate() ) break;
+            } else {
+                solveREP();
+                ratiotest();
+                i++;
+            }
         }
+        if (i >= this->options_.qp_iteration_limit) this->model_status_ = HighsModelStatus::kIterationLimit;
+        std::cout<<this->objective_<<"\n";
     }
-    std::cout<<this->objective_<<"\n";
-    return;
+    return getHighsStatus();
 }
 
-void AsmSolver::deactivate(){ // TODO reduce loops to loop over active constraints only
-    if (this->nullsp_dim_ == this->Q_.dim_){
+bool AsmSolver::deactivate(){ // TODO reduce loops to loop over active constraints only
+    if (this->nullsp_dim_ == this->Q_.dim_){ // cannot deactivate anything anymore, nullspace is maximal already
         this->model_status_ = HighsModelStatus::kOptimal;
-        return;
+        return true; // return true to break the major loop
+    }
+    if ( this->nullsp_dim_ > this->options_.qp_nullspace_limit){
+        this->model_status_ = HighsModelStatus::kHighsInterrupt;
+        return true; // return true to break the major loop
     }
     // loop through prices to find a constraint to deactivate
     signPrices();
@@ -410,10 +429,10 @@ void AsmSolver::deactivate(){ // TODO reduce loops to loop over active constrain
         it = this->basis_perm_.begin() + bestloc;
         std::rotate(it, it + 1, this->basis_perm_.end());
         addNullSpaceDim();
-        return;
+        return false; // return false to not break the major loop
     } else {
         this->model_status_ = HighsModelStatus::kOptimal;
-        return;
+        return true; // return true to break the major loop
     }
 }
 

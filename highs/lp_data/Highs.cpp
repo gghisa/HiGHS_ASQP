@@ -4173,7 +4173,7 @@ HighsStatus Highs::callSolveQp() {
     if (this->profiling_) this->profiling_->start(kSubSolverQpAsm);
 
     // Insert your own ASM solver here
-    AsmSolver asmsolver(lp, basis_, solution_, model_status_, hessian, timer_);
+    AsmSolver asmsolver(lp, basis_, solution_, model_status_, hessian, timer_, options_);
     asmsolver.run();
     // save solution information in solution_
     // Return!

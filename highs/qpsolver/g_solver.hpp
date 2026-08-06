@@ -22,17 +22,21 @@ class AsmSolver {
                            HighsSolution& solution,
                            HighsModelStatus& model_status,
                            HighsHessian Q,
-                           HighsTimer& timer);
+                           HighsTimer& timer,
+                           HighsOptions& options);
         inline HighsStatus getHighsStatus();
+        inline HighsModelStatus getHighsModelStatus();
         HighsStatus run();
     private:
         // problem data
         HighsLp& lp_;
+        HighsLp feasibility_lp_;
         HighsBasis& lp_basis_; // basis with HighsBasisStatus vectors
         HighsSolution& solution_;
         HighsModelStatus& model_status_;
         HighsHessian Q_;
         HighsTimer& timer_;
+        HighsOptions& options_;
         double objective_; // objective function value
         HighsStatus status_ {HighsStatus::kOk}; // TODO update as you go
         // ASM data
@@ -76,13 +80,13 @@ class AsmSolver {
         void extend(const HighsInt& loc_deactivated);
         void reduce();
         // Feasibility phase functions
-        void feasibility();
+        bool feasibility();
+        void setupFeasibilityProblem();
         void setupQpBasis();
         void setupBasisMat();
         void setupReducedHessian();
         // Main loop functions
-        void solve();
-        void deactivate();
+        bool deactivate();
         void solveREP();
         void ratiotest();
         void activate(const HighsInt& idx, const AsmBasisStatus& status);
