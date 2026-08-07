@@ -27,11 +27,11 @@ AsmSolver::AsmSolver(const HighsOptions& options,
                      info_(info),
                      callback_(callback),
                      feasibility_lp_(lp),
-                     buffer_(lp.num_col_),
+                     buffer_(hessian.dim_),
                      loc_grad_(hessian.dim_),
                      step_(hessian.dim_),
                      basis_perm_(hessian.dim_), // no init of basis_idxs_ as it is built with push_back()
-                     var_status_(lp.num_col_),
+                     var_status_(hessian.dim_),
                      con_status_(lp.num_row_){}
 
 HighsStatus AsmSolver::getHighsStatus(){ // public function
@@ -43,28 +43,29 @@ HighsModelStatus AsmSolver::getHighsModelStatus(){ // public function
 }
 
 void AsmSolver::HSetup(const HighsSparseMatrix& constraint_mat){
-    // basis indices are shuffled around. it is no problem for us that that happens
-    this->B_.setup(constraint_mat, this->basis_idxs_);
+    this->B_.setup(constraint_mat, this->basis_idxs_); //suflles basis indices
     return;
 }
 
-void AsmSolver::HBuild(){
-    this->B_.build(); // also for refactorization
+void AsmSolver::HBuild(){ // also for refactorization
+    this->B_.build();
     return;
 }
 
 void AsmSolver::HBtran(std::vector<double>& vec){
+    if ((HighsInt)this->buffer_.size() != this->Q_.dim_) throw std::length_error("Wrong buffer_ size!");
     // first apply P
     for (HighsInt i {0}; i < this->Q_.dim_; i++){
         this->buffer_[ this->basis_perm_[i] ] = vec[i];
-    }
+    } // then solve
     this->B_.btranCall(this->buffer_); // B^{-T}
     vec = this->buffer_;
     return;
 }
 
 void AsmSolver::HFtran(std::vector<double>& vec){
-    this->B_.ftranCall(vec); // B^{-1}
+    if ((HighsInt)this->buffer_.size() != this->Q_.dim_) throw std::length_error("Wrong buffer_ size!");
+    this->B_.ftranCall(vec); // first solve for B^{-1}
     // then apply P^T = P^{-1}
     for (HighsInt i {0}; i < this->Q_.dim_; i++){
         this->buffer_[ i ] = vec[ this->basis_perm_[i] ];
@@ -88,11 +89,10 @@ void AsmSolver::HUpdate(HighsInt loc_idxdrop, HighsInt idx_new){
     // build HVector to add to basis
     HVector newcol;
     if (idx_new < this->lp_.num_row_){ // extract constraint and build HVec
-        std::vector<double> vec(this->Q_.dim_);
         std::vector<double> ep(this->lp_.num_row_);
         ep[idx_new] = 1.;
-        this->lp_.a_matrix_.productTranspose(vec, ep);
-        newcol = stdvec2hvec(vec);
+        this->lp_.a_matrix_.productTranspose(this->buffer_, ep);
+        newcol = stdvec2hvec(this->buffer_);
     }
     else newcol = unit_hvec(idx_new - this->lp_.num_row_); // for a new bound becoming active
     HFtran(newcol, 1.);
@@ -131,39 +131,25 @@ HVector AsmSolver::unit_hvec(const HighsInt& p){
 }
 
 HighsInt AsmSolver::locL(const HighsInt& i, const HighsInt& j) {
-    // returns the index for the chol_ vector given the indices for the triangular matrix it represents, stored row-wise as lower triangular
-    // assumes indices are given for lower triangular matrix
-    return i*(i+1)/2 + j;
+    return i*(i+1)/2 + j; // assumes indices are given for lower triangular matrix
 }
 
-void AsmSolver::recomputeExplicit(){
-    // assume:
-    // 1. number of nullspace dimensions known
-    // 2. B_ factorization completed
-    // then:
-    // extracts explicit Z^T and computes explicitly the reduced Hessian
-    // useful when starting point of ASM provides a non-empty null-space
-    // computes the factorization row by row according to Cholesky—Banachiewicz
-    // TODO pivoting
-    // while Q is dense, we can't guarantee Z is too, so M is treated as dense, and likewise its factors
-    // if we order M by the largest of its diagonal entries we need to first compute it all
-    // BUILD RED HESSIAN FIRST
+void AsmSolver::recomputeExplicit(){ // TODO pivoting?
     this->ZT_.clear();
     HighsInt chol_size = this->nullsp_dim_ * (this->nullsp_dim_ + 1) / 2;
     this->chol_.assign(chol_size, 0.);
     for (HighsInt i {0}; i < this->nullsp_dim_; i++){// get Z^T
-        std::vector<double> z_col(this->Q_.dim_);
-        z_col[this->rangsp_dim_ + i] = 1.;
-        HBtran(z_col); // solves returning a column of Z, which we store as a row of Z^T
-        this->ZT_.push_back(z_col);
+        this->buffer_.assign(this->Q_.dim_, 0.);
+        this->buffer_[this->rangsp_dim_ + i] = 1.;
+        HBtran(this->buffer_); // solves returning a column of Z, which we store as a row of Z^T
+        this->ZT_.push_back(this->buffer_);
     }
     for (HighsInt i {0}; i < this->nullsp_dim_; i++){// loop over the rows of Z^T
-        std::vector<double> row(this->Q_.dim_); // row of Z^T Q
-        this->Q_.product(this->ZT_[i], row); // compute it
+        this->Q_.product(this->ZT_[i], this->buffer_); // compute row of Z^T Q
         for (HighsInt j {0}; j <= i; j++){ // loop through columns of Z, up to the current row of Z^T, to only compute lower triangle of red_hessian_
             double sum {0.};
             for (HighsInt k {0}; k < this->Q_.dim_; k++){ // inner produce of row of Z^T Q with column of Z
-                sum += row[k] * this->ZT_[j][k];
+                sum += this->buffer_[k] * this->ZT_[j][k]; // factorization row by row according to Cholesky—Banachiewicz
             }
             this->chol_[ locL(i,j)] = sum; // should be ordered such that chol_ is row-wise of M
         }
@@ -225,18 +211,17 @@ void AsmSolver::LLTsolve(std::vector<double>& vec){
 }
 
 void AsmSolver::extend(const HighsInt& loc_deactivated){
-    // TODO is explicit ZT_ necessary?
     // get new nullspace column
-    std::vector<double> z_col(this->Q_.dim_);
-    z_col[ loc_deactivated ] = 1.; // permutation taken care of by HBtran
-    HBtran(z_col);
-    this->ZT_.push_back(z_col); // TODO remove when removing explicit ZT_
+    this->buffer_.assign(this->Q_.dim_, 0.);
+    this->buffer_[ loc_deactivated ] = 1.; // permutation taken care of by HBtran
+    HBtran(this->buffer_);
+    this->ZT_.push_back(this->buffer_); // TODO remove when removing explicit ZT_
     // TODO extend by paying attention to numerical instabilities
     double lambda {0.}; // new diagonal element for cholesky factor
     if (this->nullsp_dim_ > 0){ // nullspace dimension updated just before calling extend()
         // solve L l = Z^T ( Q z_col ) = Z^T sol
         std::vector<double> sol(this->Q_.dim_);
-        this->Q_.product(z_col, sol);
+        this->Q_.product(this->buffer_, sol);
         HFtran(sol); // B^{-1} ( sol )
         // select Z^T ( sol ), which is the bottom part of the solution vector above
         sol.erase(sol.begin(), sol.end() - this->nullsp_dim_); // TODO is the other part useful?
@@ -269,8 +254,8 @@ bool AsmSolver::feasibility(){
         // TODO add check to make sure basis checks out with solution
         return false; // return false to not run the active set solver
     } else {
-        // TODO minimize slacks in this first phase
-        setupFeasibilityProblem();
+        setupFeasibilityLp();
+        this->feasibility_lp_.col_cost_.assign(this->Q_.dim_, 0.); // zero out objective
         Highs highs_feasibility;
         highs_feasibility.passModel(this->feasibility_lp_);
         highs_feasibility.passOptions(this->options_);
@@ -291,9 +276,13 @@ bool AsmSolver::feasibility(){
     return true; // return true to run the active set solver
 }
 
-void AsmSolver::setupFeasibilityProblem(){
+void AsmSolver::setupFeasibilityLp(){
     // build feasibility_lp_
-    this->feasibility_lp_.col_cost_.assign(this->Q_.dim_, 0.); // zero out objective
+    return;
+    // TODO minimize slacks in this first phase
+    // we want to have as small of a nullspace as possible;
+    // do we also want to have as many bounds, rather than constraints,
+    // active, to maximise HFactor's sparsity?
 }
 
 void AsmSolver::setupQpBasis(){
@@ -569,10 +558,10 @@ void AsmSolver::computeLocGrad(){// g + Q x_k
 double AsmSolver::computeReducedVecs(){
     // solve B x = (g + Q x_k) to compute (Dantzig?) prices and reduced gradient
     computeLocGrad();
-    std::vector<double> vec = this->loc_grad_; // TODO is loc_grad_ storing needed?
-    this->HFtran(vec); // compute B x = g_k
-    this->pricing_.assign(vec.begin(), vec.end() - this->nullsp_dim_); // TODO, other types of pricing
-    this->red_grad_.assign(vec.end() - this->nullsp_dim_, vec.end()); // extract last z elements of the result, i.e. Z^T (g + Q x_k)
+    this->buffer_ = this->loc_grad_; // TODO is loc_grad_ storing needed?
+    this->HFtran(this->buffer_); // compute B x = g_k
+    this->pricing_.assign(this->buffer_.begin(), this->buffer_.end() - this->nullsp_dim_); // TODO, other types of pricing?
+    this->red_grad_.assign(this->buffer_.end() - this->nullsp_dim_, this->buffer_.end()); // extract last z elements of the result, i.e. Z^T (g + Q x_k)
     // returns the magnitude of the reduced gradient (0 if of null dimension)
     return norm(this->red_grad_);
 }
@@ -604,7 +593,6 @@ double AsmSolver::computeQuadObjective(const std::vector<double>& vec){
 }
 
 void AsmSolver::updateObjective(){
-    // assumes that objective is outdated compared to location
     this->objective_ = this->lp_.objectiveValue(this->solution_.col_value);
     this->objective_ += computeQuadObjective(this->solution_.col_value);
     return;

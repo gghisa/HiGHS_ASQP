@@ -86,7 +86,7 @@ class AsmSolver {
         void reduce();
         // Feasibility phase functions
         bool feasibility();
-        void setupFeasibilityProblem();
+        void setupFeasibilityLp();
         void setupQpBasis();
         void setupBasisMat();
         void setupReducedHessian();
