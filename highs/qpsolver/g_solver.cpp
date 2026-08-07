@@ -43,7 +43,7 @@ HighsModelStatus AsmSolver::getHighsModelStatus(){ // public function
 }
 
 void AsmSolver::HSetup(const HighsSparseMatrix& constraint_mat){
-    this->B_.setup(constraint_mat, this->basis_idxs_); //suflles basis indices
+    this->B_.setup(constraint_mat, this->basis_idxs_); //shuffles basis indices
     return;
 }
 
@@ -139,10 +139,10 @@ void AsmSolver::recomputeExplicit(){ // TODO pivoting?
     HighsInt chol_size = this->nullsp_dim_ * (this->nullsp_dim_ + 1) / 2;
     this->chol_.assign(chol_size, 0.);
     for (HighsInt i {0}; i < this->nullsp_dim_; i++){// get Z^T
-        this->buffer_.assign(this->Q_.dim_, 0.);
-        this->buffer_[this->rangsp_dim_ + i] = 1.;
-        HBtran(this->buffer_); // solves returning a column of Z, which we store as a row of Z^T
-        this->ZT_.push_back(this->buffer_);
+        std::vector<double> z_col(this->Q_.dim_);
+        z_col[this->rangsp_dim_ + i] = 1.;
+        HBtran(z_col); // solves returning a column of Z, which we store as a row of Z^T
+        this->ZT_.push_back(z_col);
     }
     for (HighsInt i {0}; i < this->nullsp_dim_; i++){// loop over the rows of Z^T
         this->Q_.product(this->ZT_[i], this->buffer_); // compute row of Z^T Q
@@ -212,16 +212,16 @@ void AsmSolver::LLTsolve(std::vector<double>& vec){
 
 void AsmSolver::extend(const HighsInt& loc_deactivated){
     // get new nullspace column
-    this->buffer_.assign(this->Q_.dim_, 0.);
-    this->buffer_[ loc_deactivated ] = 1.; // permutation taken care of by HBtran
-    HBtran(this->buffer_);
-    this->ZT_.push_back(this->buffer_); // TODO remove when removing explicit ZT_
+    std::vector<double> z_col(this->Q_.dim_);
+    z_col[ loc_deactivated ] = 1.; // permutation taken care of by HBtran
+    HBtran(z_col);
+    this->ZT_.push_back(z_col); 
     // TODO extend by paying attention to numerical instabilities
     double lambda {0.}; // new diagonal element for cholesky factor
     if (this->nullsp_dim_ > 0){ // nullspace dimension updated just before calling extend()
         // solve L l = Z^T ( Q z_col ) = Z^T sol
         std::vector<double> sol(this->Q_.dim_);
-        this->Q_.product(this->buffer_, sol);
+        this->Q_.product(z_col, sol);
         HFtran(sol); // B^{-1} ( sol )
         // select Z^T ( sol ), which is the bottom part of the solution vector above
         sol.erase(sol.begin(), sol.end() - this->nullsp_dim_); // TODO is the other part useful?
@@ -234,7 +234,7 @@ void AsmSolver::extend(const HighsInt& loc_deactivated){
         }
     }
     lambda += 2 * computeQuadObjective(this->ZT_.back());
-    if (lambda <= 0) throw std::domain_error("Reduced matrix is either semi- or indefinite!");
+    if (lambda <= this->options_.factor_pivot_tolerance) throw std::domain_error("Reduced matrix is either semi- or indefinite!");
     this->chol_.push_back( std::sqrt(lambda) );
     return;
 }
@@ -373,7 +373,7 @@ HighsStatus AsmSolver::run(){
         std::cout<<this->objective_<<"\n";
     }
     this->info_.qp_iteration_count = i;
-    this->info_;
+    // TODO record runtime
     return getHighsStatus();
 }
 
@@ -558,10 +558,10 @@ void AsmSolver::computeLocGrad(){// g + Q x_k
 double AsmSolver::computeReducedVecs(){
     // solve B x = (g + Q x_k) to compute (Dantzig?) prices and reduced gradient
     computeLocGrad();
-    this->buffer_ = this->loc_grad_; // TODO is loc_grad_ storing needed?
-    this->HFtran(this->buffer_); // compute B x = g_k
-    this->pricing_.assign(this->buffer_.begin(), this->buffer_.end() - this->nullsp_dim_); // TODO, other types of pricing?
-    this->red_grad_.assign(this->buffer_.end() - this->nullsp_dim_, this->buffer_.end()); // extract last z elements of the result, i.e. Z^T (g + Q x_k)
+    std::vector<double> vec = this->loc_grad_; // TODO is loc_grad_ storing needed?
+    this->HFtran(vec); // compute B x = g_k
+    this->pricing_.assign(vec.begin(), vec.end() - this->nullsp_dim_); // TODO, other types of pricing
+    this->red_grad_.assign(vec.end() - this->nullsp_dim_, vec.end()); // extract last z elements of the result, i.e. Z^T (g + Q x_k)
     // returns the magnitude of the reduced gradient (0 if of null dimension)
     return norm(this->red_grad_);
 }
