@@ -286,17 +286,15 @@ void AsmSolver::setupFeasibilityLp(){
 }
 
 void AsmSolver::setupQpBasis(){
-    // init active and free temporary index and permutation vectors
+    // init active and free temporary index vectors
     std::vector<HighsInt> active_idxs;
     std::vector<HighsInt> free_idxs;
-    // loop through constraints
-    for (HighsInt i {0}; i < this->lp_.num_row_; i++){
+    for (HighsInt i {0}; i < this->lp_.num_row_; i++){ // loop through constraints
         this->con_status_[i] = HighsStatusToAsm(this->lp_basis_.row_status[i], i, false);
         if ( isInBasis(this->con_status_[i]) ) active_idxs.push_back(i); // add index to list of indices
         // constraints shouldn't be free in basis, ignore HighsBasisStatus::kZero and HighsBasisStatus::kNonbasic
     }
-    // loop through variables
-    for (HighsInt i {0}; i < this->Q_.dim_; i++){
+    for (HighsInt i {0}; i < this->Q_.dim_; i++){ // loop through variables
         HighsInt idx = i + this->lp_.num_row_;
         this->var_status_[i] = HighsStatusToAsm(this->lp_basis_.col_status[i], i, true);
         // ignore HighsBasisStatus::kNonbasic
@@ -314,8 +312,7 @@ void AsmSolver::setupQpBasis(){
     this->basis_idxs_.insert(this->basis_idxs_.end(),
                              free_idxs.begin(), free_idxs.end());
     std::vector<HighsInt> ordered_basis = this->basis_idxs_; // store buffer
-    // setup HFactor
-    setupBasisMat();
+    setupBasisMat(); // setup HFactor
     // since basis indices may have been shuffled so that free indices may not trail active ones anymore,
     // set permutation order to match the index sets (A,V) structure
     for (HighsInt i {0}; i < this->Q_.dim_; i++){
@@ -326,15 +323,13 @@ void AsmSolver::setupQpBasis(){
             }
         }
     }
-    // then restore order in basis indices
-    this->basis_idxs_ = ordered_basis;
-    // build Reduced Hessian
-    setupReducedHessian();
+    this->basis_idxs_ = ordered_basis; // then restore order in basis indices
+    setupReducedHessian(); // build Reduced Hessian
+    computeReducedVecs(); // compute initial reduced gradient and pricing
     return;
 }
 
-void AsmSolver::setupBasisMat(){
-    // TODO do not create constraint mat copy
+void AsmSolver::setupBasisMat(){ // TODO do not create constraint mat copy
     HighsSparseMatrix constraint_mat = this->lp_.a_matrix_; // create a copy of the constraint matrix
     constraint_mat.ensureRowwise(); // flip the way in which it is stored
     constraint_mat.format_ = MatrixFormat::kColwise; // but "trick it" into thinking it is still stored columnwise
@@ -361,11 +356,11 @@ HighsStatus AsmSolver::run(){
     if ( feasibility() ){
         while (i < this->options_.qp_iteration_limit &&
                timer_.read() < this->options_.time_limit){
-            if (computeReducedVecs() < this->tol_){
-                if ( deactivate() ) break;
+            if (norm(this->red_grad_) < this->tol_){
+                if ( deactivate() ) break; // break loop if optimality check is positive during deactivation
             } else {
-                solveREP();
-                ratiotest();
+                solveEP();
+                takeStep();
                 i++;
             }
         }
@@ -377,7 +372,7 @@ HighsStatus AsmSolver::run(){
     return getHighsStatus();
 }
 
-bool AsmSolver::deactivate(){ // TODO reduce loops to loop over active constraints only
+bool AsmSolver::deactivate(){
     if (this->nullsp_dim_ == this->Q_.dim_){ // cannot deactivate anything anymore, nullspace is maximal already
         this->model_status_ = HighsModelStatus::kOptimal;
         return true; // return true to break the major loop
@@ -414,9 +409,16 @@ bool AsmSolver::deactivate(){ // TODO reduce loops to loop over active constrain
     }
     // check that bestprice is indeed negative, in case first price is best but non-negative
     if ( bestprice < - this->options_.dual_feasibility_tolerance ){ // TODO check negativity of tolerance
-        // update status
-        if (bestidx < this->lp_.num_row_) this->con_status_[bestidx] = AsmBasisStatus::kFreeInBasis;
-        else this->var_status_[bestidx - this->lp_.num_row_] = AsmBasisStatus::kFreeInBasis;
+        // first return price to original value to update reduced gradient, then update status
+        if (bestidx < this->lp_.num_row_){ 
+            bestprice *= static_cast<double>( this->con_status_[bestidx] );
+            this->con_status_[bestidx] = AsmBasisStatus::kFreeInBasis;
+        }
+        else {
+            HighsInt var_idx = bestidx - this->lp_.num_row_;
+            bestprice *= static_cast<double>( this->var_status_[var_idx] );
+            this->var_status_[var_idx] = AsmBasisStatus::kFreeInBasis;
+        }
         // extend the reduced hessian, no need to change HFactor
         extend(bestloc); // then extend the basis factorization
         // send deactivated constraint to the end
@@ -425,6 +427,9 @@ bool AsmSolver::deactivate(){ // TODO reduce loops to loop over active constrain
         it = this->basis_perm_.begin() + bestloc;
         std::rotate(it, it + 1, this->basis_perm_.end());
         addNullSpaceDim();
+        // update reduced gradient with element of pricing corresponding to deactivated constraint
+        this->red_grad_.push_back(bestprice);
+        this->pricing_.erase(this->pricing_.begin() + bestloc);
         return false; // return false to not break the major loop
     } else {
         this->model_status_ = HighsModelStatus::kOptimal;
@@ -432,7 +437,7 @@ bool AsmSolver::deactivate(){ // TODO reduce loops to loop over active constrain
     }
 }
 
-void AsmSolver::solveREP(){
+void AsmSolver::solveEP(){
     // solve reduced equality problem
     // reduced gradient is assumed already up to date
     this->delta_ = this->red_grad_; // TODO remove and flip the sign when computing new location with this->step_
@@ -445,7 +450,7 @@ void AsmSolver::solveREP(){
     return;
 }
 
-void AsmSolver::ratiotest(){
+void AsmSolver::takeStep(){
     // we keep a copy of location, whereas a temporary alpha will just be local to a broken constraint
     // at each constraint, if it is broken, we update alpha
     // with the final alpha being the product of all the alphas (so it is also update as we go)
@@ -506,6 +511,7 @@ void AsmSolver::ratiotest(){
     if (newactive_idx != -1){
         activate(newactive_idx, newactive_status);
     }
+    computeReducedVecs(); // red grad needs updating with new position
     return;
 }
 

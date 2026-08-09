@@ -92,8 +92,8 @@ class AsmSolver {
         void setupReducedHessian();
         // Main loop functions
         bool deactivate();
-        void solveREP();
-        void ratiotest();
+        void solveEP();
+        void takeStep();
         void activate(const HighsInt& idx, const AsmBasisStatus& status);
         // Object computations
         void computeLocGrad();
