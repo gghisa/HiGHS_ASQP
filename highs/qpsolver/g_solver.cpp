@@ -148,7 +148,8 @@ bool AsmSolver::feasibility(){
         // use dual simplex if the objective value is all zeros, beacuse that means dual feasibility is guaranteed
         this->status_ = highs_feasibility.run();
         this->info_.simplex_iteration_count = highs_feasibility.getSimplexIterationCount();
-        if (this->status_ != HighsStatus::kError){ // why not returning after extracting the model status too?
+        if (this->status_ != HighsStatus::kError){
+            // TODO what if kWarning?
             this->model_status_ = HighsModelStatus::kNotset; // note Optimal in Phase1 is Feasible for ASM
             this->lp_basis_ = highs_feasibility.getBasis();
             this->solution_ = highs_feasibility.getSolution();
@@ -237,17 +238,46 @@ void AsmSolver::setupReducedHessian(){
 HighsStatus AsmSolver::run(){
     HighsInt i {0};
     if ( feasibility() ){
-        while (i < this->options_.qp_iteration_limit &&
-               timer_.read() < this->options_.time_limit){
+        while ( true) {
+            // iteration limit
+            if (i >= this->options_.qp_iteration_limit){
+                this->model_status_ = HighsModelStatus::kIterationLimit;
+                this->status_ = HighsStatus::kWarning; // TODO ok?
+                break;
+            }
+            // time limit
+            if (timer_.read() >= this->options_.time_limit){
+                this->model_status_ = HighsModelStatus::kTimeLimit;
+                this->status_ = HighsStatus::kWarning; // TODO ok?
+                break;
+            }
+            // ASM iterations
             if (norm(this->red_grad_) < this->options_.primal_feasibility_tolerance){ // TODO primal residual tolerance?
-                if ( deactivate() ) break; // break loop if optimality check is positive during deactivation
+                // optimality condition
+                if (this->nullsp_dim_ == this->Q_.dim_){ // cannot deactivate anything anymore, nullspace is maximal already
+                    this->model_status_ = HighsModelStatus::kOptimal;
+                    this->status_ = HighsStatus::kOk;
+                    break;
+                }
+                // nullspace size limit
+                if ( this->nullsp_dim_ > this->options_.qp_nullspace_limit){
+                    this->model_status_ = HighsModelStatus::kSolveError;
+                    this->status_ = HighsStatus::kError;
+                    break;
+                }
+                // break loop if optimality check is positive during deactivation
+                if ( deactivate() ){ 
+                    this->model_status_ = HighsModelStatus::kOptimal;
+                    this->status_ = HighsStatus::kOk;
+                    break;
+                }
             } else {
                 solveEP();
                 takeStep();
                 i++;
             }
         }
-        if (i >= this->options_.qp_iteration_limit) this->model_status_ = HighsModelStatus::kIterationLimit;
+        // outside loop but run only if feasibility is successful:
         std::cout<<this->objective_<<"\n";
     }
     this->info_.qp_iteration_count = i;
@@ -256,14 +286,6 @@ HighsStatus AsmSolver::run(){
 }
 
 bool AsmSolver::deactivate(){
-    if (this->nullsp_dim_ == this->Q_.dim_){ // cannot deactivate anything anymore, nullspace is maximal already
-        this->model_status_ = HighsModelStatus::kOptimal;
-        return true; // return true to break the major loop
-    }
-    if ( this->nullsp_dim_ > this->options_.qp_nullspace_limit){
-        this->model_status_ = HighsModelStatus::kHighsInterrupt;
-        return true; // return true to break the major loop
-    }
     // loop through prices to find a constraint to deactivate
     signPrices();
     HighsInt bestloc {0};
@@ -314,10 +336,7 @@ bool AsmSolver::deactivate(){
         this->red_grad_.push_back(bestprice);
         this->pricing_.erase(this->pricing_.begin() + bestloc);
         return false; // return false to not break the major loop
-    } else {
-        this->model_status_ = HighsModelStatus::kOptimal;
-        return true; // return true to break the major loop
-    }
+    } else return true; // return true to break the major loop
 }
 
 void AsmSolver::solveEP(){
