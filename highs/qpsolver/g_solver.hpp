@@ -84,13 +84,13 @@ class AsmSolver {
         void extend(const HighsInt& loc_deactivated);
         void reduce();
         // Feasibility phase functions
-        bool feasibility();
+        void feasibility();
         void setupFeasibilityLp();
         void setupQpBasis();
         void setupBasisMat();
         void setupReducedHessian();
         // Main loop functions
-        bool deactivate();
+        void deactivate();
         void solveEP();
         void takeStep();
         void activate(const HighsInt& idx, const AsmBasisStatus& status);

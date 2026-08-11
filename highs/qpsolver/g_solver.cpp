@@ -129,16 +129,15 @@ HVector AsmSolver::unit_hvec(const HighsInt& p){
     return hvec;
 }
 
-bool AsmSolver::feasibility(){
+void AsmSolver::feasibility(){
     // TODO hotstart if basis is provided
     if (this->options_.qp_allow_hot_start &&
         this->lp_basis_.valid &&
         this->solution_.value_valid){
         // TODO add check to make sure basis checks out with solution
-        return false; // return false to not run the active set solver
+        this->status_ = HighsStatus::kError; // return false to not run the active set solver
     } else {
         setupFeasibilityLp();
-        this->feasibility_lp_.col_cost_.assign(this->Q_.dim_, 0.); // zero out objective
         Highs highs_feasibility;
         highs_feasibility.passModel(this->feasibility_lp_);
         highs_feasibility.passOptions(this->options_);
@@ -147,21 +146,22 @@ bool AsmSolver::feasibility(){
         highs_feasibility.setOptionValue("simplex_strategy", kSimplexStrategyDual); // specifying what solver to use in case a basis is set that is known to be either primal or dual feasible
         // use dual simplex if the objective value is all zeros, beacuse that means dual feasibility is guaranteed
         this->status_ = highs_feasibility.run();
-        this->info_.simplex_iteration_count = highs_feasibility.getSimplexIterationCount();
+        this->model_status_ = highs_feasibility.getModelStatus();
         if (this->status_ != HighsStatus::kError){
             // TODO what if kWarning?
             this->model_status_ = HighsModelStatus::kNotset; // note Optimal in Phase1 is Feasible for ASM
+            this->info_.simplex_iteration_count = highs_feasibility.getSimplexIterationCount();
             this->lp_basis_ = highs_feasibility.getBasis();
             this->solution_ = highs_feasibility.getSolution();
-        } else return false; // return false to not run the active set solver
-        updateObjective();
+            updateObjective();
+            setupQpBasis();
+        }
     }
-    setupQpBasis();
-    return true; // return true to run the active set solver
 }
 
 void AsmSolver::setupFeasibilityLp(){
     // build feasibility_lp_
+    this->feasibility_lp_.col_cost_.assign(this->Q_.dim_, 0.); // zero out objective
     return;
     // TODO minimize slacks in this first phase
     // we want to have as small of a nullspace as possible;
@@ -236,8 +236,9 @@ void AsmSolver::setupReducedHessian(){
 }
 
 HighsStatus AsmSolver::run(){
+    feasibility();
     HighsInt i {0};
-    if ( feasibility() ){
+    if ( this->model_status_ == HighsModelStatus::kNotset ){ // TODO what if kNotset is results of LP run?
         while ( true) {
             // iteration limit
             if (i >= this->options_.qp_iteration_limit){
@@ -266,8 +267,8 @@ HighsStatus AsmSolver::run(){
                     break;
                 }
                 // break loop if optimality check is positive during deactivation
-                if ( deactivate() ){ 
-                    this->model_status_ = HighsModelStatus::kOptimal;
+                deactivate();
+                if ( this->model_status_ == HighsModelStatus::kOptimal ){
                     this->status_ = HighsStatus::kOk;
                     break;
                 }
@@ -281,11 +282,11 @@ HighsStatus AsmSolver::run(){
         std::cout<<this->objective_<<"\n";
     }
     this->info_.qp_iteration_count = i;
-    // TODO record runtime
+    // TODO record runtime?
     return getHighsStatus();
 }
 
-bool AsmSolver::deactivate(){
+void AsmSolver::deactivate(){
     // loop through prices to find a constraint to deactivate
     signPrices();
     HighsInt bestloc {0};
@@ -335,8 +336,7 @@ bool AsmSolver::deactivate(){
         // update reduced gradient with element of pricing corresponding to deactivated constraint
         this->red_grad_.push_back(bestprice);
         this->pricing_.erase(this->pricing_.begin() + bestloc);
-        return false; // return false to not break the major loop
-    } else return true; // return true to break the major loop
+    } else this->model_status_ = HighsModelStatus::kOptimal; // set to optimal to break the major loop
 }
 
 void AsmSolver::solveEP(){
