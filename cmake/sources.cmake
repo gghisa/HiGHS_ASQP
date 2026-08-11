@@ -424,6 +424,7 @@ set(highs_sources
     presolve/PresolveComponent.cpp
     qpsolver/a_asm.cpp
     qpsolver/a_quass.cpp
+    qpsolver/g_factor.cpp
     qpsolver/g_solver.cpp
     qpsolver/basis.cpp
     qpsolver/QpAsmWrapper.cpp

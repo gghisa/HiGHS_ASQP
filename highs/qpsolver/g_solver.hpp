@@ -59,7 +59,6 @@ class AsmSolver {
         std::vector<double> step_; // full step, result of Z \delta
         // Real numbers
         double alpha_ {1.}; // step size for ratio test (TODO unused for now)
-        double tol_ {1e-7}; // tolerance for zero checks
         // permutation has to be used when FTRAN and BTRAN are called
         std::vector<HighsInt> basis_idxs_; // ordered active and free indices in basiss
         std::vector<HighsInt> basis_perm_; // ordered active and free indices permutation in basis

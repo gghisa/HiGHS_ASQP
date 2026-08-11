@@ -5,7 +5,6 @@
 /*    Available as open-source under the MIT License                     */
 /*                                                                       */
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
-#include "Highs.h"
 #include "qpsolver/g_solver.hpp"
 
 AsmSolver::AsmSolver(const HighsOptions& options,
@@ -109,7 +108,7 @@ HVector AsmSolver::stdvec2hvec(const std::vector<double>& vec){
     hvec.setup(vec.size());
     HighsInt count_nz {0};
     for (size_t i {0}; i < vec.size(); i++){
-        if (std::abs(vec[i]) < this->tol_){
+        if (std::abs(vec[i]) < this->options_.primal_feasibility_tolerance){
             hvec.index[count_nz] = i;
             count_nz += 1;
         }
@@ -128,122 +127,6 @@ HVector AsmSolver::unit_hvec(const HighsInt& p){
     hvec.array[p] = 1.;
     hvec.count = 1;
     return hvec;
-}
-
-HighsInt AsmSolver::locL(const HighsInt& i, const HighsInt& j) {
-    return i*(i+1)/2 + j; // assumes indices are given for lower triangular matrix
-}
-
-void AsmSolver::recomputeExplicit(){ // TODO pivoting?
-    this->ZT_.clear();
-    HighsInt chol_size = this->nullsp_dim_ * (this->nullsp_dim_ + 1) / 2;
-    this->chol_.assign(chol_size, 0.);
-    for (HighsInt i {0}; i < this->nullsp_dim_; i++){// get Z^T
-        std::vector<double> z_col(this->Q_.dim_);
-        z_col[this->rangsp_dim_ + i] = 1.;
-        HBtran(z_col); // solves returning a column of Z, which we store as a row of Z^T
-        this->ZT_.push_back(z_col);
-    }
-    for (HighsInt i {0}; i < this->nullsp_dim_; i++){// loop over the rows of Z^T
-        this->Q_.product(this->ZT_[i], this->buffer_); // compute row of Z^T Q
-        for (HighsInt j {0}; j <= i; j++){ // loop through columns of Z, up to the current row of Z^T, to only compute lower triangle of red_hessian_
-            double sum {0.};
-            for (HighsInt k {0}; k < this->Q_.dim_; k++){ // inner produce of row of Z^T Q with column of Z
-                sum += this->buffer_[k] * this->ZT_[j][k]; // factorization row by row according to Cholesky—Banachiewicz
-            }
-            this->chol_[ locL(i,j)] = sum; // should be ordered such that chol_ is row-wise of M
-        }
-    }
-    return;
-}
-
-void AsmSolver::refactorize(){
-    // perform cholesky factorization in place
-    for (HighsInt i {0}; i<this->nullsp_dim_; i++){
-        for (HighsInt j {0}; j <= i; j++){
-            if (i == j){ // diagonal element
-                for (HighsInt k {0}; k < j; k++){
-                    double row_el = this->chol_[ locL(i,k)];
-                    this->chol_[ locL(i,i)] -= row_el * row_el;
-                }
-                this->chol_[ locL(i,i)] = std::sqrt(this->chol_[ locL(i,i)]);
-            }
-            else { // off diagonal element
-                for (HighsInt k {0}; k < j; k++){
-                    this->chol_[ locL(i,j)] -= this->chol_[ locL(i,k)] * this->chol_[ locL(j,k)];
-                }
-                this->chol_[ locL(i,j)] /= this->chol_[ locL(j,j)];
-            }
-        }
-    }
-    return;
-}
-
-void AsmSolver::Lsolve(std::vector<double>& vec){
-    if ( (HighsInt)vec.size() != this->nullsp_dim_) throw std::logic_error("Fw solve requires a vector the size of the nullspace!");
-    // solve Ly = b with forward substitution
-    for (HighsInt i {0}; i < this->nullsp_dim_; i++){
-        for (HighsInt j {0}; j < i; j++){
-            vec[i] -= this->chol_[ locL(i,j) ] * vec[j]; 
-        }
-        vec[i] /= this->chol_[ locL(i,i) ];
-    }
-    return;
-}
-
-void AsmSolver::LTsolve(std::vector<double>& vec){
-    if ( (HighsInt)vec.size() != this->nullsp_dim_) throw std::logic_error("Bw solve requires a vector the size of the nullspace!");
-    // solve L^T z = y with backward substitution
-    HighsInt limit = this->nullsp_dim_ - 1;
-    for (HighsInt i {limit}; i > -1; i--){
-        for (HighsInt j {limit}; j > i; j--){// perform operation in place
-            vec[i] -= this->chol_[ locL(j,i) ] * vec[j]; // note indices are swapped since we are accessing the upper triangular image of L
-        }
-        vec[i] /= this->chol_[ locL(i,i) ];
-    }
-    return;
-}
-
-void AsmSolver::LLTsolve(std::vector<double>& vec){
-    Lsolve(vec);
-    LTsolve(vec);
-    return;
-}
-
-void AsmSolver::extend(const HighsInt& loc_deactivated){
-    // get new nullspace column
-    std::vector<double> z_col(this->Q_.dim_);
-    z_col[ loc_deactivated ] = 1.; // permutation taken care of by HBtran
-    HBtran(z_col);
-    this->ZT_.push_back(z_col); 
-    // TODO extend by paying attention to numerical instabilities
-    double lambda {0.}; // new diagonal element for cholesky factor
-    if (this->nullsp_dim_ > 0){ // nullspace dimension updated just before calling extend()
-        // solve L l = Z^T ( Q z_col ) = Z^T sol
-        std::vector<double> sol(this->Q_.dim_);
-        this->Q_.product(z_col, sol);
-        HFtran(sol); // B^{-1} ( sol )
-        // select Z^T ( sol ), which is the bottom part of the solution vector above
-        sol.erase(sol.begin(), sol.end() - this->nullsp_dim_); // TODO is the other part useful?
-        Lsolve(sol);
-        this->chol_.insert(this->chol_.end(),
-                        sol.begin(),
-                        sol.end());
-        for (HighsInt i {0}; i < this->nullsp_dim_; i++){
-            lambda -= sol[i] * sol[i];
-        }
-    }
-    lambda += 2 * computeQuadObjective(this->ZT_.back());
-    if (lambda <= this->options_.factor_pivot_tolerance) throw std::domain_error("Reduced matrix is either semi- or indefinite!");
-    this->chol_.push_back( std::sqrt(lambda) );
-    return;
-}
-
-void AsmSolver::reduce(){
-    // TODO update reduced Hessian instead of recomputing it
-    recomputeExplicit();
-    refactorize();
-    return;
 }
 
 bool AsmSolver::feasibility(){
@@ -356,7 +239,7 @@ HighsStatus AsmSolver::run(){
     if ( feasibility() ){
         while (i < this->options_.qp_iteration_limit &&
                timer_.read() < this->options_.time_limit){
-            if (norm(this->red_grad_) < this->tol_){
+            if (norm(this->red_grad_) < this->options_.primal_feasibility_tolerance){ // TODO primal residual tolerance?
                 if ( deactivate() ) break; // break loop if optimality check is positive during deactivation
             } else {
                 solveEP();
@@ -461,7 +344,7 @@ void AsmSolver::takeStep(){
     AsmBasisStatus newactive_status;
     // it may be more efficient to check bounds first (assume feasibility ofc), so we do that here
     for (HighsInt i {0}; i < this->Q_.dim_; i++){ // loop through variables
-        if ( std::abs( this->step_[i] ) > this->tol_ ){ // if change is orthogonal to dimension, no chance of breaking its bounds
+        if ( std::abs( this->step_[i] ) > this->options_.factor_pivot_tolerance){ // if change is orthogonal to dimension, no chance of breaking its bounds
             if (this->lp_.col_lower_[i] > newloc[i]){
                 double alpha_here = ( this->lp_.col_lower_[i] - this->solution_.col_value[i] ) / this->step_[i];
                 if (alpha_here < this->alpha_){
@@ -486,7 +369,7 @@ void AsmSolver::takeStep(){
     this->lp_.a_matrix_.product(newconvals, newloc); // a_i^T x_{k+1}
     this->lp_.a_matrix_.product(denoms, this->step_); // a_i^T \s
     for (HighsInt i {0}; i < this->lp_.num_row_; i++){
-        if ( std::abs(denoms[i]) > this->tol_ ){ // if change is orthogonal to constraint, no chance of breaking its bounds
+        if ( std::abs(denoms[i]) > this->options_.factor_pivot_tolerance ){ // if change is orthogonal to constraint, no chance of breaking its bounds
             if (this->lp_.row_lower_[i] > newconvals[i]){
                 double alpha_here = ( this->lp_.row_lower_[i] - this->solution_.row_value[i] ) / denoms[i];
                 if (alpha_here < this->alpha_){
@@ -627,10 +510,8 @@ void AsmSolver::removeNullSpaceDim(){
     this->rangsp_dim_++;
     return;
 }
-
 // convert Highs Status to Asm Status
 AsmBasisStatus AsmSolver::HighsStatusToAsm(const HighsBasisStatus& status, const HighsInt i, const bool variable){
-    // if no equality is found:
     if(status == HighsBasisStatus::kLower){
         if (variable){ // it is a variable this should be a fixed variable and needs presolve
             if (this->lp_.col_lower_[i] == this->lp_.col_upper_[i]) return AsmBasisStatus::kEquality;
