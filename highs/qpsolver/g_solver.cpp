@@ -237,51 +237,25 @@ void AsmSolver::setupReducedHessian(){
 
 HighsStatus AsmSolver::run(){
     feasibility();
-    HighsInt i {0};
     if ( this->model_status_ == HighsModelStatus::kNotset ){ // TODO what if kNotset is results of LP run?
         while ( true) {
-            // iteration limit
-            if (i >= this->options_.qp_iteration_limit){
-                this->model_status_ = HighsModelStatus::kIterationLimit;
-                this->status_ = HighsStatus::kWarning; // TODO ok?
-                break;
-            }
-            // time limit
-            if (timer_.read() >= this->options_.time_limit){
-                this->model_status_ = HighsModelStatus::kTimeLimit;
-                this->status_ = HighsStatus::kWarning; // TODO ok?
-                break;
-            }
+            if ( iterlimit() ) break;
+            if ( timelimit() ) break;
             // ASM iterations
             if (norm(this->red_grad_) < this->options_.primal_feasibility_tolerance){ // TODO primal residual tolerance?
-                // optimality condition
-                if (this->nullsp_dim_ == this->Q_.dim_){ // cannot deactivate anything anymore, nullspace is maximal already
-                    this->model_status_ = HighsModelStatus::kOptimal;
-                    this->status_ = HighsStatus::kOk;
-                    break;
-                }
-                // nullspace size limit
-                if ( this->nullsp_dim_ > this->options_.qp_nullspace_limit){
-                    this->model_status_ = HighsModelStatus::kSolveError;
-                    this->status_ = HighsStatus::kError;
-                    break;
-                }
-                // break loop if optimality check is positive during deactivation
+                if ( maximalsteptaken() ) break;
+                if ( nullsizelimit() ) break;
                 deactivate();
-                if ( this->model_status_ == HighsModelStatus::kOptimal ){
-                    this->status_ = HighsStatus::kOk;
-                    break;
-                }
+                if ( isoptimal() ) break;
             } else {
                 solveEP();
                 takeStep();
-                i++;
+                this->info_.qp_iteration_count++;
             }
         }
         // outside loop but run only if feasibility is successful:
         std::cout<<this->objective_<<"\n";
     }
-    this->info_.qp_iteration_count = i;
     // TODO record runtime?
     return getHighsStatus();
 }
@@ -516,6 +490,50 @@ void AsmSolver::signPrices(){
         }
     }
     return;
+}
+
+bool AsmSolver::iterlimit(){// iteration limit
+    if (this->info_.qp_iteration_count >= this->options_.qp_iteration_limit){
+        this->model_status_ = HighsModelStatus::kIterationLimit;
+        this->status_ = HighsStatus::kWarning; // TODO ok?
+        return true;
+    }
+    return false;
+};
+
+bool AsmSolver::timelimit(){// time limit
+    if (this->timer_.read() >= this->options_.time_limit){
+        this->model_status_ = HighsModelStatus::kTimeLimit;
+        this->status_ = HighsStatus::kWarning; // TODO ok?
+        return true;
+    }
+    return false;
+};
+
+bool AsmSolver::maximalsteptaken(){// optimality condition
+    if (this->nullsp_dim_ == this->Q_.dim_){ // cannot deactivate anything anymore, nullspace is maximal already
+        this->model_status_ = HighsModelStatus::kOptimal;
+        this->status_ = HighsStatus::kOk;
+        return true;
+    }
+    return false;
+};
+
+bool AsmSolver::nullsizelimit(){// nullspace size limit
+    if ( this->nullsp_dim_ > this->options_.qp_nullspace_limit){
+        this->model_status_ = HighsModelStatus::kSolveError;
+        this->status_ = HighsStatus::kError;
+        return true;
+    }
+    return false;
+};
+
+bool AsmSolver::isoptimal(){ // break loop if optimality check is positive during deactivation
+    if ( this->model_status_ == HighsModelStatus::kOptimal ){
+        this->status_ = HighsStatus::kOk;
+        return true;
+    }
+    return false;
 }
 
 void AsmSolver::addNullSpaceDim(){

@@ -57,8 +57,9 @@ class AsmSolver {
         std::vector<double> pricing_; // a value for each active constraint, based on which the choice of which to deactivate is made
         std::vector<double> delta_; // reduced step, solution of M \delta = Z^T (g + Q x_k)
         std::vector<double> step_; // full step, result of Z \delta
-        // Real numbers
+        // Numbers
         double alpha_ {1.}; // step size for ratio test (TODO unused for now)
+        HighsInt n_iter_ {0};
         // permutation has to be used when FTRAN and BTRAN are called
         std::vector<HighsInt> basis_idxs_; // ordered active and free indices in basiss
         std::vector<HighsInt> basis_perm_; // ordered active and free indices permutation in basis
@@ -102,6 +103,12 @@ class AsmSolver {
         double computeQuadObjective(const std::vector<double>& vec);
         void updateObjective();
         void signPrices();
+        // Main loop breaks
+        inline bool iterlimit();
+        inline bool timelimit();
+        inline bool maximalsteptaken();
+        inline bool nullsizelimit();
+        inline bool isoptimal();
         // Helper functions
         inline void addNullSpaceDim();
         inline void removeNullSpaceDim();
