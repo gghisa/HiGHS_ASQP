@@ -83,7 +83,7 @@ class AsmSolver {
         void LTsolve(std::vector<double>& vec);
         void LLTsolve(std::vector<double>& vec);
         void extend(const HighsInt& loc_deactivated);
-        void reduce();
+        void remove(const HighsInt& loc_activated);
         // Feasibility phase functions
         void feasibility();
         void setupFeasibilityLp();

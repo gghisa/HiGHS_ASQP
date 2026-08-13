@@ -24,6 +24,8 @@ void AsmSolver::recomputeExplicit(){ // TODO pivoting?
     for (HighsInt i {0}; i < this->nullsp_dim_; i++){// loop over the rows of Z^T
         this->Q_.product(this->ZT_[i], this->buffer_); // compute row of Z^T Q
         for (HighsInt j {0}; j <= i; j++){ // loop through columns of Z, up to the current row of Z^T, to only compute lower triangle of red_hessian_
+            // TODO this could be dont with HFtran to compute a full column of the reduced Hessian, without the need to store Z^T
+            // in which case, do not use this->buffer_ anymore
             double sum {0.};
             for (HighsInt k {0}; k < this->Q_.dim_; k++){ // inner produce of row of Z^T Q with column of Z
                 sum += this->buffer_[k] * this->ZT_[j][k]; // factorization row by row according to Cholesky—Banachiewicz
@@ -116,9 +118,44 @@ void AsmSolver::extend(const HighsInt& loc_deactivated){
     return;
 }
 
-void AsmSolver::reduce(){
+void AsmSolver::remove(const HighsInt& loc_activated){
     // TODO update reduced Hessian instead of recomputing it
-    recomputeExplicit();
-    refactorize();
+    // if activated vector was free in basis, we must remove that row from Z^T, no arbitrary choice
+    if (false){
+        HighsInt p = loc_activated + 1;
+        double a = this->chol_[ locL(p, p) ];
+        double b = this->chol_[ locL(p, p + 1) ];
+        double hyp = std::sqrt( a*a + b*b); // guaranteed to be > 0
+        double cos = a / hyp;
+        double sin = b / hyp;
+        // we remove row loc_activated, so we need to zero out the super-diagonal elements
+        // from row loc_activated+1 till the end
+        for (HighsInt i {p + 1}; i < this->nullsp_dim_; i++){
+            // change elements in column i and then i+1
+            // loop through rows beneath diagonal
+            for (HighsInt j {i}; j < this->nullsp_dim_; j++){
+                this->chol_[ locL(j,i) ] = cos * this->chol_[ locL(j,i) ] + sin * this->chol_[ locL(j, i+1) ];
+                // TODO we are accessing a row-wise matrix by column, could be better
+                if (j > i){ // TODO this check is almost always true, remove, even though when i == j the element (i, i+1) is zeroed out
+                    this->chol_[ locL(j,i+1) ] = - sin * this->chol_[ locL(j,i) ] + cos * this->chol_[ locL(j, i+1) ];
+                }
+            }
+        }
+        // then we need to erase all of the zeroes
+        HighsInt size_L1 = (loc_activated - 1) * loc_activated / 2; // size of lower diagonal matrix above removed row
+        // then delete exactly loc_activated elements which is the number of elements in row loc_activated
+        this->chol_.erase(this->chol_.begin() + size_L1, this->chol_.begin() + size_L1 + loc_activated);
+        // then erase all super-diagonal elements that were zeroed out
+        for (HighsInt i {p + 1}; i < this->nullsp_dim_; i++){
+            this->chol_.erase( this->chol_.begin() + locL(i,i+1) );
+        }
+        //
+        removeNullSpaceDim();
+    } else {
+        // old below
+        removeNullSpaceDim();
+        recomputeExplicit();
+        refactorize();
+    }
     return;
 }

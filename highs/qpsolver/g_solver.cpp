@@ -147,8 +147,8 @@ void AsmSolver::feasibility(){
         // use dual simplex if the objective value is all zeros, beacuse that means dual feasibility is guaranteed
         this->status_ = highs_feasibility.run();
         this->model_status_ = highs_feasibility.getModelStatus();
-        if (this->status_ != HighsStatus::kError){
-            // TODO what if kWarning?
+        // TODO deal with timer? report it up
+        if ( this->model_status_ == HighsModelStatus::kOptimal ){
             this->model_status_ = HighsModelStatus::kNotset; // note Optimal in Phase1 is Feasible for ASM
             this->info_.simplex_iteration_count = highs_feasibility.getSimplexIterationCount();
             this->lp_basis_ = highs_feasibility.getBasis();
@@ -405,27 +405,37 @@ void AsmSolver::activate(const HighsInt& idx, const AsmBasisStatus& status){
     }
     // TODO find good rationale to select which constraint to drop
     if (alreadyinbasis){
-        // find location of index and swap it with the first one after the active set
-        for (HighsInt i {this->rangsp_dim_}; i < this->Q_.dim_; i++){
-            if (this->basis_idxs_[i] == idx){       
-                std::swap( this->basis_idxs_[ this->rangsp_dim_ ], this->basis_idxs_[i] );
-                std::swap( this->basis_perm_[ this->rangsp_dim_ ], this->basis_perm_[i] );
+        // send element in location i to the end of active constraints
+        // and shift all free in basis down by one until the old position of the constraint in activation
+        HighsInt i;
+        for (i = this->rangsp_dim_; i < this->Q_.dim_; i++){
+            if (this->basis_idxs_[i] == idx){
+                auto it = this->basis_idxs_.begin();
+                std::rotate(it + this->rangsp_dim_, it + i, it + i + 1);
+                it = this->basis_perm_.begin();
+                std::rotate(it + this->rangsp_dim_, it + i, it + i + 1);
                 break;
             }
         }
+        if (i < this->Q_.dim_ - 1){
+            remove(i); // else we just need to drop the last row of the lower triangular factor
+            return;
+        }
     } else { // update HFactor if constraint not already in basis
         // drop the last column in V and substitute it with new index,
-        // which then moves to the end of the current active set
+        // which then moves to the end of the current active set while all other free indices are shifted by 1 to the end
         HUpdate(this->basis_perm_.back(), idx);
         // change dropped constraint to inactive
         if (this->basis_idxs_.back() < this->lp_.num_row_) this->con_status_[this->basis_idxs_.back()] = AsmBasisStatus::kInactive;
         else this->var_status_[this->basis_idxs_.back() - this->lp_.num_row_] = AsmBasisStatus::kInactive;
-        this->basis_idxs_.back() = idx; // place new index at end of array, dropping the last column in V
-        std::swap( this->basis_idxs_[ this->rangsp_dim_ ], this->basis_idxs_.back() ); // move the index before the start of V
-        std::swap( this->basis_perm_[ this->rangsp_dim_ ], this->basis_perm_.back() ); // so we need to do the same with perm, to match the location in basis_idxs_   
+        this->basis_idxs_.back() = idx;
+        std::rotate(this->basis_idxs_.begin() + this->rangsp_dim_, this->basis_idxs_.end() - 1, this->basis_idxs_.end());
+        std::rotate(this->basis_perm_.begin() + this->rangsp_dim_, this->basis_perm_.end() - 1, this->basis_perm_.end());   
     }
-    removeNullSpaceDim(); // TODO may need to be moved to after reduction
-    reduce();
+    // update factorization if the already-in-basis row was the last one or if we arbitrarily chose to drop the last one
+    this->chol_.resize(this->chol_.size() - this->nullsp_dim_); // drop last row of L
+    removeNullSpaceDim();
+    this->ZT_.resize(this->nullsp_dim_); // drop last row of Z^T (last column of Z)
     return;
 }
 
