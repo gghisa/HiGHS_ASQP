@@ -418,7 +418,7 @@ void AsmSolver::activate(const HighsInt& idx, const AsmBasisStatus& status){
             }
         }
         if (i < this->Q_.dim_ - 1){
-            remove(i); // else we just need to drop the last row of the lower triangular factor
+            remove(i - this->rangsp_dim_); // else we just need to drop the last row of the lower triangular factor
             return;
         }
     } else { // update HFactor if constraint not already in basis
