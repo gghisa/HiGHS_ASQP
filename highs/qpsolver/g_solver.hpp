@@ -26,8 +26,8 @@ class AsmSolver {
                            HighsModelStatus& model_status,
                            HighsInfo& info,
                            HighsCallback& callback);
-        inline HighsStatus getHighsStatus();
-        inline HighsModelStatus getHighsModelStatus();
+        HighsStatus getHighsStatus();
+        HighsModelStatus getHighsModelStatus();
         HighsStatus run();
     private:
         // problem data
@@ -76,7 +76,7 @@ class AsmSolver {
         HVector stdvec2hvec(const std::vector<double>& vec);
         HVector unit_hvec(const HighsInt& p);
         // Reduced Hessian operations
-        inline HighsInt locL(const HighsInt& i, const HighsInt& j);
+        HighsInt locL(const HighsInt& i, const HighsInt& j);
         void recomputeExplicit();
         void refactorize();
         void Lsolve(std::vector<double>& vec);
@@ -104,19 +104,19 @@ class AsmSolver {
         void updateObjective();
         void signPrices();
         // Main loop breaks
-        inline bool iterlimit();
-        inline bool timelimit();
-        inline bool maximalsteptaken();
-        inline bool nullsizelimit();
-        inline bool isoptimal();
+        bool iterlimit();
+        bool timelimit();
+        bool maximalsteptaken();
+        bool nullsizelimit();
+        bool isoptimal();
         // Helper functions
-        inline void addNullSpaceDim();
-        inline void removeNullSpaceDim();
+        void addNullSpaceDim();
+        void removeNullSpaceDim();
         AsmBasisStatus HighsStatusToAsm(const HighsBasisStatus& status, const HighsInt i, const bool variable);
-        inline bool isInBasis(const AsmBasisStatus& status);
-        inline bool isFreeInBasis(const AsmBasisStatus& status);
-        inline bool isActive(const AsmBasisStatus& status);
-        inline bool isActiveInequality(const AsmBasisStatus& status);
-        inline bool isInactive(const AsmBasisStatus& status);
+        bool isInBasis(const AsmBasisStatus& status);
+        bool isFreeInBasis(const AsmBasisStatus& status);
+        bool isActive(const AsmBasisStatus& status);
+        bool isActiveInequality(const AsmBasisStatus& status);
+        bool isInactive(const AsmBasisStatus& status);
         double norm(const std::vector<double>& vec);
 };

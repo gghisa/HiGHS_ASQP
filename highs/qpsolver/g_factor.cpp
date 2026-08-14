@@ -119,43 +119,40 @@ void AsmSolver::extend(const HighsInt& loc_deactivated){
 }
 
 void AsmSolver::remove(const HighsInt& loc_activated){
-    // TODO update reduced Hessian instead of recomputing it
-    // if activated vector was free in basis, we must remove that row from Z^T, no arbitrary choice
-    if (false){
-        HighsInt p = loc_activated + 1;
-        double a = this->chol_[ locL(p, p) ];
-        double b = this->chol_[ locL(p, p + 1) ];
-        double hyp = std::sqrt( a*a + b*b); // guaranteed to be > 0
-        double cos = a / hyp;
-        double sin = b / hyp;
-        // we remove row loc_activated, so we need to zero out the super-diagonal elements
-        // from row loc_activated+1 till the end
-        for (HighsInt i {p + 1}; i < this->nullsp_dim_; i++){
-            // change elements in column i and then i+1
-            // loop through rows beneath diagonal
-            for (HighsInt j {i}; j < this->nullsp_dim_; j++){
-                this->chol_[ locL(j,i) ] = cos * this->chol_[ locL(j,i) ] + sin * this->chol_[ locL(j, i+1) ];
-                // TODO we are accessing a row-wise matrix by column, could be better
-                if (j > i){ // TODO this check is almost always true, remove, even though when i == j the element (i, i+1) is zeroed out
-                    this->chol_[ locL(j,i+1) ] = - sin * this->chol_[ locL(j,i) ] + cos * this->chol_[ locL(j, i+1) ];
-                }
-            }
+    // if activated vector was free in basis, we must remove that row and column from Z^T, no arbitrary choice
+    // TODO givens rotations are also needed when dealing with indefinite matrix
+    // we remove row loc_activated, so we need to zero out the super-diagonal elements
+    // from row loc_activated+1 till the end
+    for (HighsInt i {loc_activated + 1}; i < this->nullsp_dim_; i++){
+        double a = this->chol_[ locL(i, i - 1) ];
+        double b = this->chol_[ locL(i, i) ]; // element to zero out
+        double cos;
+        double sin;
+        if ( -this->options_.factor_pivot_tolerance < a && a < this->options_.factor_pivot_tolerance){
+            cos = 0.;
+            sin = 1.;
+        } else {
+            double hyp = std::sqrt( a*a + b*b ); // guaranteed to be > 0
+            cos = a / hyp;
+            sin = b / hyp;
         }
-        // then we need to erase all of the zeroes
-        HighsInt size_L1 = (loc_activated - 1) * loc_activated / 2; // size of lower diagonal matrix above removed row
-        // then delete exactly loc_activated elements which is the number of elements in row loc_activated
-        this->chol_.erase(this->chol_.begin() + size_L1, this->chol_.begin() + size_L1 + loc_activated);
-        // then erase all super-diagonal elements that were zeroed out
-        for (HighsInt i {p + 1}; i < this->nullsp_dim_; i++){
-            this->chol_.erase( this->chol_.begin() + locL(i,i+1) );
+        // change elements in column i and then i+1
+        for (HighsInt j {i}; j < this->nullsp_dim_; j++){ // loop through rows beneath diagonal
+            double temp = cos * this->chol_[ locL(j,i-1) ] + sin * this->chol_[ locL(j, i) ];
+            // TODO we are accessing a row-wise matrix by column, could be better
+            //  when i == j the element (i, i+1) is zeroed out and then deleted so no need to change it
+            if (j != i) this->chol_[ locL(j,i) ] = - sin * this->chol_[ locL(j,i-1) ] + cos * this->chol_[ locL(j, i) ];
+            this->chol_[ locL(j,i-1) ] = temp; // in-place operation requires overwriting element when all computations are done
         }
-        //
-        removeNullSpaceDim();
-    } else {
-        // old below
-        removeNullSpaceDim();
-        recomputeExplicit();
-        refactorize();
     }
+    // then we need to erase all of the zeroes, first erase all super-diagonal elements that were zeroed out
+    for (HighsInt i {this->nullsp_dim_ - 1}; i > loc_activated; i--){
+        this->chol_.erase( this->chol_.begin() + locL(i,i) );
+    }
+    // then delete exactly loc_activated elements which is the number of elements in row loc_activated
+    HighsInt size_L1 = (loc_activated - 1) * loc_activated / 2; // size of lower diagonal matrix above removed row
+    this->chol_.erase(this->chol_.begin() + size_L1, this->chol_.begin() + size_L1 + loc_activated + 1);
+    //
+    removeNullSpaceDim();
     return;
 }
