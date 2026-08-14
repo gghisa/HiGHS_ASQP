@@ -60,6 +60,8 @@ class AsmSolver {
         // Numbers
         double alpha_ {1.}; // step size for ratio test (TODO unused for now)
         HighsInt n_iter_ {0};
+        // Truth values
+        bool step_taken_ {false};
         // permutation has to be used when FTRAN and BTRAN are called
         std::vector<HighsInt> basis_idxs_; // ordered active and free indices in basiss
         std::vector<HighsInt> basis_perm_; // ordered active and free indices permutation in basis
@@ -109,6 +111,7 @@ class AsmSolver {
         bool maximalsteptaken();
         bool nullsizelimit();
         bool isoptimal();
+        void stepSanity();
         // Helper functions
         void addNullSpaceDim();
         void removeNullSpaceDim();
