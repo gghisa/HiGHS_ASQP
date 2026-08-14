@@ -148,8 +148,7 @@ void AsmSolver::feasibility(){
         this->status_ = highs_feasibility.run();
         this->model_status_ = highs_feasibility.getModelStatus();
         // TODO deal with timer? report it up
-        if ( this->model_status_ == HighsModelStatus::kOptimal ){
-            this->model_status_ = HighsModelStatus::kNotset; // note Optimal in Phase1 is Feasible for ASM
+        if ( this->model_status_ == HighsModelStatus::kOptimal ){ // note Optimal in Phase1 is Feasible for ASM
             this->info_.simplex_iteration_count = highs_feasibility.getSimplexIterationCount();
             this->lp_basis_ = highs_feasibility.getBasis();
             this->solution_ = highs_feasibility.getSolution();
@@ -237,7 +236,8 @@ void AsmSolver::setupReducedHessian(){
 
 HighsStatus AsmSolver::run(){
     feasibility();
-    if ( this->model_status_ == HighsModelStatus::kNotset ){ // TODO what if kNotset is results of LP run?
+    if ( this->model_status_ == HighsModelStatus::kOptimal ){
+        this->model_status_ == HighsModelStatus::kNotset;
         while ( true) {
             if ( iterlimit() ) break;
             if ( timelimit() ) break;
