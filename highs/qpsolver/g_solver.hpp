@@ -113,6 +113,7 @@ class AsmSolver {
         void addNullSpaceDim();
         void removeNullSpaceDim();
         AsmBasisStatus HighsStatusToAsm(const HighsBasisStatus& status, const HighsInt i, const bool variable);
+        bool isNotEquality(const AsmBasisStatus& status);
         bool isInBasis(const AsmBasisStatus& status);
         bool isFreeInBasis(const AsmBasisStatus& status);
         bool isActive(const AsmBasisStatus& status);

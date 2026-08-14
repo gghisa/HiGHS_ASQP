@@ -251,6 +251,7 @@ HighsStatus AsmSolver::run(){
                 solveEP();
                 takeStep();
                 this->info_.qp_iteration_count++;
+                //std::cout<<this->objective_<<"\n";
             }
         }
         // outside loop but run only if feasibility is successful:
@@ -269,18 +270,18 @@ void AsmSolver::deactivate(){
     for (HighsInt i {1}; i < this->rangsp_dim_; i++){ // loop through active constraints only
         HighsInt idx = this->basis_idxs_[i];
         if (idx < this->lp_.num_row_) { // it is a constraint
-            if (isActiveInequality( this->con_status_[idx] ) && // TODO change order to improve speed
-                this->pricing_[i] < 0 && 
-                this->pricing_[i] < bestprice){
+            if (isNotEquality( this->con_status_[idx] ) &&
+                this->pricing_[i] < bestprice && 
+                this->pricing_[i] < 0){
                 bestprice = this->pricing_[i];
                 bestidx = idx;
                 bestloc = i;
             }
         } else { // it is a variable bound
             idx -= this->lp_.num_row_; // get variable index
-            if (isActiveInequality( this->var_status_[idx]) && // TODO change order to improve speed
-                this->pricing_[i] < 0 && 
-                this->pricing_[i] < bestprice){
+            if (isNotEquality( this->var_status_[idx]) &&
+                this->pricing_[i] < bestprice && 
+                this->pricing_[i] < 0){
                 bestprice = this->pricing_[i];
                 bestidx = this->basis_idxs_[i];
                 bestloc = i;
@@ -380,6 +381,7 @@ void AsmSolver::takeStep(){
             }
         }
     }
+    if (this->alpha_ < this->options_.factor_pivot_tolerance) std::cout<<"degenerate\n";
     compute_newloc(this->alpha_, this->solution_.col_value);
     this->lp_.a_matrix_.product(this->solution_.row_value, this->solution_.col_value); // a_i^T x_{k+1}
     updateObjective();
@@ -568,6 +570,11 @@ AsmBasisStatus AsmSolver::HighsStatusToAsm(const HighsBasisStatus& status, const
     else if(status == HighsBasisStatus::kUpper) return AsmBasisStatus::kUpper;
     else if(status == HighsBasisStatus::kZero) return AsmBasisStatus::kFreeInBasis;
     else return AsmBasisStatus::kInactive;
+}
+
+bool AsmSolver::isNotEquality(const AsmBasisStatus& status){
+    if (status != AsmBasisStatus::kEquality) return true;
+    else return false;
 }
 
 bool AsmSolver::isInBasis(const AsmBasisStatus& status){
