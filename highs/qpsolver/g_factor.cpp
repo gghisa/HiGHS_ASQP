@@ -128,7 +128,7 @@ void AsmSolver::remove(const HighsInt& loc_activated){
         double b = this->chol_[ locL(i, i) ]; // element to zero out
         double cos;
         double sin;
-        if ( -this->options_.factor_pivot_tolerance < a && a < this->options_.factor_pivot_tolerance){
+        if ( std::abs(a) < this->options_.factor_pivot_tolerance){
             cos = 0.;
             sin = 1.;
         } else {
