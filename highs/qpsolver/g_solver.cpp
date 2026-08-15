@@ -272,7 +272,7 @@ void AsmSolver::deactivate(){
         if (idx < this->lp_.num_row_) { // it is a constraint
             if ( this->isNotEquality( this->con_status_[idx] ) &&
                 this->pricing_[i] < bestprice && 
-                this->pricing_[i] < 0){
+                this->pricing_[i] < - this->options_.factor_pivot_tolerance){
                 bestprice = this->pricing_[i];
                 bestidx = idx;
                 bestloc = i;
@@ -281,7 +281,7 @@ void AsmSolver::deactivate(){
             idx -= this->lp_.num_row_; // get variable index
             if ( this->isNotEquality( this->var_status_[idx]) &&
                 this->pricing_[i] < bestprice && 
-                this->pricing_[i] < 0){
+                this->pricing_[i] < - this->options_.factor_pivot_tolerance){
                 bestprice = this->pricing_[i];
                 bestidx = this->basis_idxs_[i];
                 bestloc = i;
