@@ -67,6 +67,7 @@ class AsmSolver {
         std::vector<HighsInt> basis_perm_; // ordered active and free indices permutation in basis
         std::vector<AsmBasisStatus> var_status_;
         std::vector<AsmBasisStatus> con_status_;
+        std::vector<HighsInt> degenerate_idxs_;
         // HFactor functions
         void HSetup(const HighsSparseMatrix& constraint_mat);
         void HBuild();
@@ -95,6 +96,7 @@ class AsmSolver {
         // Main loop functions
         void deactivate();
         void takeStep();
+        void resolveDegeneracy();
         void activate(const HighsInt& idx, const AsmBasisStatus& status);
         // Object computations
         void computeLocGrad();

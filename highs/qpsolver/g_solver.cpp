@@ -249,7 +249,7 @@ HighsStatus AsmSolver::run(){
                 if ( this->isoptimal() ) break;
             } else {
                 this->takeStep();
-                //std::cout<<this->objective_<<"\n";
+                std::cout<<this->objective_<<"\n";
             }
         }
         // outside loop but run only if feasibility is successful:
@@ -330,11 +330,14 @@ void AsmSolver::takeStep(){
     this->compute_newloc(1., newloc); // compute potential x_{k+1}
     HighsInt newactive_idx = -1; // recall: numbering variables starts from nr of constraints
     AsmBasisStatus newactive_status;
-    // it may be more efficient to check bounds first (assume feasibility ofc), so we do that here
+    //
     for (HighsInt i {0}; i < this->Q_.dim_; i++){ // loop through variables
         if ( std::abs( this->step_[i] ) > this->options_.factor_pivot_tolerance){ // if change is orthogonal to dimension, no chance of breaking its bounds
             if (this->lp_.col_lower_[i] > newloc[i]){
                 double alpha_here = ( this->lp_.col_lower_[i] - this->solution_.col_value[i] ) / this->step_[i];
+                if ( alpha_here < this->options_.factor_pivot_tolerance ){
+                    this->degenerate_idxs_.push_back(i + this->lp_.num_row_);
+                }
                 if (alpha_here < this->alpha_){
                     newactive_idx = i + this->lp_.num_row_; // store new index
                     newactive_status = AsmBasisStatus::kLower;
@@ -342,6 +345,9 @@ void AsmSolver::takeStep(){
                 }
             } else if (this->lp_.col_upper_[i] < newloc[i]) {
                 double alpha_here = ( this->lp_.col_upper_[i] - this->solution_.col_value[i] ) / this->step_[i];
+                if ( alpha_here < this->options_.factor_pivot_tolerance ){
+                    this->degenerate_idxs_.push_back(i + this->lp_.num_row_);
+                }
                 if (alpha_here < this->alpha_){
                     newactive_idx = i + this->lp_.num_row_;
                     newactive_status = AsmBasisStatus::kUpper;
@@ -357,9 +363,13 @@ void AsmSolver::takeStep(){
     this->lp_.a_matrix_.product(newconvals, newloc); // a_i^T x_{k+1}
     this->lp_.a_matrix_.product(denoms, this->step_); // a_i^T \s
     for (HighsInt i {0}; i < this->lp_.num_row_; i++){
+        // TODO how are we sure we are not ratiotesting against active constraints?
         if ( std::abs(denoms[i]) > this->options_.factor_pivot_tolerance ){ // if change is orthogonal to constraint, no chance of breaking its bounds
             if (this->lp_.row_lower_[i] > newconvals[i]){
                 double alpha_here = ( this->lp_.row_lower_[i] - this->solution_.row_value[i] ) / denoms[i];
+                if ( alpha_here < this->options_.factor_pivot_tolerance ){
+                    this->degenerate_idxs_.push_back(i + this->lp_.num_row_);
+                }
                 if (alpha_here < this->alpha_){
                     newactive_idx = i; // store new index
                     newactive_status = AsmBasisStatus::kLower;
@@ -367,6 +377,9 @@ void AsmSolver::takeStep(){
                 }
             } else if (this->lp_.row_upper_[i] < newconvals[i]) {
                 double alpha_here = ( this->lp_.row_upper_[i] - this->solution_.row_value[i] ) / denoms[i];
+                if ( alpha_here < this->options_.factor_pivot_tolerance ){
+                    this->degenerate_idxs_.push_back(i + this->lp_.num_row_);
+                }
                 if (alpha_here < this->alpha_){
                     newactive_idx = i;
                     newactive_status = AsmBasisStatus::kUpper;
@@ -376,6 +389,10 @@ void AsmSolver::takeStep(){
         }
     }
     // TODO degeneracy
+    if (this->degenerate_idxs_.size() != 0){
+        std::cout<< this->degenerate_idxs_.size()<< " -- ";
+        resolveDegeneracy();
+    }
     this->compute_newloc(this->alpha_, this->solution_.col_value);
     this->lp_.a_matrix_.product(this->solution_.row_value, this->solution_.col_value); // a_i^T x_{k+1}
     this->updateObjective();
@@ -384,6 +401,11 @@ void AsmSolver::takeStep(){
     this->computeReducedVecs(); // red grad needs updating with new position
     this->step_taken_ = true;
     this->info_.qp_iteration_count++;
+    return;
+}
+
+void AsmSolver::resolveDegeneracy(){
+    this->degenerate_idxs_.clear();
     return;
 }
 
