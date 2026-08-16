@@ -94,7 +94,6 @@ class AsmSolver {
         void setupReducedHessian();
         // Main loop functions
         void deactivate();
-        void solveEP();
         void takeStep();
         void activate(const HighsInt& idx, const AsmBasisStatus& status);
         // Object computations
@@ -111,8 +110,8 @@ class AsmSolver {
         bool maximalsteptaken();
         bool nullsizelimit();
         bool isoptimal();
-        void stepSanity();
         // Helper functions
+        void stepSanity();
         void addNullSpaceDim();
         void removeNullSpaceDim();
         AsmBasisStatus HighsStatusToAsm(const HighsBasisStatus& status, const HighsInt i, const bool variable);

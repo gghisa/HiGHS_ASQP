@@ -248,9 +248,7 @@ HighsStatus AsmSolver::run(){
                 this->deactivate();
                 if ( this->isoptimal() ) break;
             } else {
-                this->solveEP();
                 this->takeStep();
-                this->info_.qp_iteration_count++;
                 //std::cout<<this->objective_<<"\n";
             }
         }
@@ -314,8 +312,9 @@ void AsmSolver::deactivate(){
         this->step_taken_ = false; // since problem has been modified
     } else this->model_status_ = HighsModelStatus::kOptimal; // set to optimal to break the major loop
 }
-// solve reduced (equality) problem
-void AsmSolver::solveEP(){
+
+void AsmSolver::takeStep(){
+    // solve Equality Problem first
     this->delta_ = this->red_grad_; // TODO remove and flip the sign when more convenient?
     for (size_t i {0}; i < this->delta_.size(); i++){
         this->delta_[i] *= -1.; // flip sign to solve reduced system
@@ -323,10 +322,6 @@ void AsmSolver::solveEP(){
     this->stepSanity(); // make sure the same identical problem has not been solved yet
     this->LLTsolve(this->delta_);
     this->computeFullStep(this->delta_, this->step_); // then compute full space step
-    return;
-}
-
-void AsmSolver::takeStep(){
     // we keep a copy of location, whereas a temporary alpha will just be local to a broken constraint
     // at each constraint, if it is broken, we update alpha
     // with the final alpha being the product of all the alphas (so it is also update as we go)
@@ -380,7 +375,7 @@ void AsmSolver::takeStep(){
             }
         }
     }
-    if (this->alpha_ < this->options_.factor_pivot_tolerance) std::cout<<"degenerate\n"; // TODO degeneracy
+    // TODO degeneracy
     this->compute_newloc(this->alpha_, this->solution_.col_value);
     this->lp_.a_matrix_.product(this->solution_.row_value, this->solution_.col_value); // a_i^T x_{k+1}
     this->updateObjective();
@@ -388,6 +383,7 @@ void AsmSolver::takeStep(){
     if (newactive_idx != -1) this->activate(newactive_idx, newactive_status);
     this->computeReducedVecs(); // red grad needs updating with new position
     this->step_taken_ = true;
+    this->info_.qp_iteration_count++;
     return;
 }
 
@@ -516,30 +512,30 @@ bool AsmSolver::timelimit(){// time limit
         this->status_ = HighsStatus::kWarning; // TODO ok?
         return true;
     }
-    return false;
+        return false;
 };
 
 bool AsmSolver::maximalsteptaken(){// optimality condition
-    if (this->nullsp_dim_ == this->Q_.dim_){ // cannot deactivate anything anymore, nullspace is maximal already
-        this->model_status_ = HighsModelStatus::kOptimal;
-        this->status_ = HighsStatus::kOk;
+        if (this->nullsp_dim_ == this->Q_.dim_){ // cannot deactivate anything anymore, nullspace is maximal already
+            this->model_status_ = HighsModelStatus::kOptimal;
+            this->status_ = HighsStatus::kOk;
         return true;
-    }
+        }
     return false;
 };
 
 bool AsmSolver::nullsizelimit(){// nullspace size limit
-    if ( this->nullsp_dim_ > this->options_.qp_nullspace_limit){
-        this->model_status_ = HighsModelStatus::kSolveError;
-        this->status_ = HighsStatus::kError;
+        if ( this->nullsp_dim_ > this->options_.qp_nullspace_limit){
+            this->model_status_ = HighsModelStatus::kSolveError;
+            this->status_ = HighsStatus::kError;
         return true;
-    }
+        }
     return false;
 };
 
 bool AsmSolver::isoptimal(){ // break loop if optimality check is positive during deactivation
-    if ( this->model_status_ == HighsModelStatus::kOptimal ){
-        this->status_ = HighsStatus::kOk;
+        if ( this->model_status_ == HighsModelStatus::kOptimal ){
+            this->status_ = HighsStatus::kOk;
         return true;
     }
     return false;
