@@ -19,7 +19,7 @@ class AsmSolver {
     public:
         explicit AsmSolver(const HighsOptions& options,
                            HighsTimer& timer,
-                           const HighsLp& lp,
+                           HighsLp lp,
                            HighsHessian hessian,
                            HighsBasis& basis,
                            HighsSolution& solution,
@@ -33,7 +33,7 @@ class AsmSolver {
         // problem data
         const HighsOptions& options_;
         HighsTimer& timer_;
-        const HighsLp& lp_;
+        HighsLp lp_;
         HighsHessian Q_;
         HighsBasis& lp_basis_; // basis with HighsBasisStatus vectors
         HighsSolution& solution_;
@@ -68,6 +68,7 @@ class AsmSolver {
         std::vector<AsmBasisStatus> var_status_;
         std::vector<AsmBasisStatus> con_status_;
         std::vector<HighsInt> degenerate_idxs_;
+        std::vector<AsmBasisStatus> degenerate_status_;
         // HFactor functions
         void HSetup(const HighsSparseMatrix& constraint_mat);
         void HBuild();
@@ -97,6 +98,7 @@ class AsmSolver {
         void deactivate();
         void takeStep();
         void resolveDegeneracy();
+        void addDegenConstr(HighsModel& degen_model, const HighsInt& i, const bool degen);
         void activate(const HighsInt& idx, const AsmBasisStatus& status);
         // Object computations
         void computeLocGrad();

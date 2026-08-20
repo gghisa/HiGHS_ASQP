@@ -9,7 +9,7 @@
 
 AsmSolver::AsmSolver(const HighsOptions& options,
                      HighsTimer& timer,
-                     const HighsLp& lp,
+                     HighsLp lp,
                      HighsHessian hessian,
                      HighsBasis& basis,
                      HighsSolution& solution,
@@ -236,17 +236,17 @@ void AsmSolver::setupReducedHessian(){
 
 HighsStatus AsmSolver::run(){
     this->feasibility();
+    this->lp_.a_matrix_.ensureRowwise(); // for copying row-by-row in case of degeneracy
     if ( this->model_status_ == HighsModelStatus::kOptimal ){
         this->model_status_ = HighsModelStatus::kNotset;
-        while ( true) {
-            if ( this->iterlimit() ) break;
-            if ( this->timelimit() ) break;
-            // ASM iterations
+        while ( true ) { // ASM iterations
             if (this->norm(this->red_grad_) < this->options_.primal_feasibility_tolerance){ // TODO primal residual tolerance?
                 if ( this->maximalsteptaken() ) break;
-                if ( this->nullsizelimit() ) break;
                 this->deactivate();
                 if ( this->isoptimal() ) break;
+                if ( this->iterlimit() ) break;
+                if ( this->timelimit() ) break;
+                if ( this->nullsizelimit() ) break;
             } else {
                 this->takeStep();
                 std::cout<<this->objective_<<"\n";
@@ -259,9 +259,7 @@ HighsStatus AsmSolver::run(){
     return this->getHighsStatus();
 }
 
-void AsmSolver::deactivate(){
-    // loop through prices to find a constraint to deactivate
-    this->signPrices();
+void AsmSolver::deactivate(){ // loop through prices to find a constraint to deactivate
     HighsInt bestloc {0};
     double bestprice = this->pricing_[bestloc];
     HighsInt bestidx = this->basis_idxs_[bestloc];
@@ -337,6 +335,7 @@ void AsmSolver::takeStep(){
                 double alpha_here = ( this->lp_.col_lower_[i] - this->solution_.col_value[i] ) / this->step_[i];
                 if ( alpha_here < this->options_.factor_pivot_tolerance ){
                     this->degenerate_idxs_.push_back(i + this->lp_.num_row_);
+                    this->degenerate_status_.push_back(AsmBasisStatus::kLower);
                 }
                 if (alpha_here < this->alpha_){
                     newactive_idx = i + this->lp_.num_row_; // store new index
@@ -347,6 +346,7 @@ void AsmSolver::takeStep(){
                 double alpha_here = ( this->lp_.col_upper_[i] - this->solution_.col_value[i] ) / this->step_[i];
                 if ( alpha_here < this->options_.factor_pivot_tolerance ){
                     this->degenerate_idxs_.push_back(i + this->lp_.num_row_);
+                    this->degenerate_status_.push_back(AsmBasisStatus::kUpper);
                 }
                 if (alpha_here < this->alpha_){
                     newactive_idx = i + this->lp_.num_row_;
@@ -369,6 +369,7 @@ void AsmSolver::takeStep(){
                 double alpha_here = ( this->lp_.row_lower_[i] - this->solution_.row_value[i] ) / denoms[i];
                 if ( alpha_here < this->options_.factor_pivot_tolerance ){
                     this->degenerate_idxs_.push_back(i + this->lp_.num_row_);
+                    this->degenerate_status_.push_back(AsmBasisStatus::kLower);
                 }
                 if (alpha_here < this->alpha_){
                     newactive_idx = i; // store new index
@@ -379,6 +380,7 @@ void AsmSolver::takeStep(){
                 double alpha_here = ( this->lp_.row_upper_[i] - this->solution_.row_value[i] ) / denoms[i];
                 if ( alpha_here < this->options_.factor_pivot_tolerance ){
                     this->degenerate_idxs_.push_back(i + this->lp_.num_row_);
+                    this->degenerate_status_.push_back(AsmBasisStatus::kUpper);
                 }
                 if (alpha_here < this->alpha_){
                     newactive_idx = i;
@@ -391,7 +393,7 @@ void AsmSolver::takeStep(){
     // TODO degeneracy
     if (this->degenerate_idxs_.size() != 0){
         std::cout<< this->degenerate_idxs_.size()<< " -- ";
-        resolveDegeneracy();
+        //resolveDegeneracy();
     }
     this->compute_newloc(this->alpha_, this->solution_.col_value);
     this->lp_.a_matrix_.product(this->solution_.row_value, this->solution_.col_value); // a_i^T x_{k+1}
@@ -405,8 +407,99 @@ void AsmSolver::takeStep(){
 }
 
 void AsmSolver::resolveDegeneracy(){
+    // test that degenerate constraints are orthogonal to Z
+    std::vector<double> result(this->lp_.num_col_);
+    for (HighsInt i {0}; i < this->nullsp_dim_; i++){
+        this->lp_.a_matrix_.product(result, this->ZT_[i]);
+        for (size_t i {0}; i < this->degenerate_idxs_.size(); i++){
+            if ( this->degenerate_idxs_[i] < this->lp_.num_row_ ){ // if it is a constraint
+                if ( std::abs( result[ this->degenerate_idxs_[i] ] ) > this->options_.factor_pivot_tolerance){
+                    std::cout<<"nonzero"<<this->degenerate_idxs_[i]<<"\n";
+                }
+            } else {
+                if ( std::abs( result[ this->degenerate_idxs_[i] - this->lp_.num_row_ ] ) > this->options_.factor_pivot_tolerance){
+                    std::cout<<"nonzero"<<this->degenerate_idxs_[i]<<"\n";
+                }
+            }
+        }
+    }
+    // build LP as in (5.13) Fletcher's degeneracy in QP
+    HighsModel degen_model;
+    degen_model.lp_.num_col_ = this->lp_.num_col_;
+    degen_model.lp_.col_cost_.assign(degen_model.lp_.num_col_, 0.);
+    degen_model.lp_.col_lower_.assign(degen_model.lp_.num_col_, -kHighsInf);
+    degen_model.lp_.col_upper_.assign(degen_model.lp_.num_col_, kHighsInf);
+    // add descent direction constraint to matrix
+    degen_model.lp_.a_matrix_.format_ = MatrixFormat::kRowwise;
+    for (HighsInt i {0}; i < degen_model.lp_.num_col_; i++){
+        degen_model.lp_.a_matrix_.index_.push_back(i);
+    }
+    degen_model.lp_.a_matrix_.value_.insert(degen_model.lp_.a_matrix_.value_.end(),
+                                            this->loc_grad_.begin(),
+                                            this->loc_grad_.end());
+    degen_model.lp_.a_matrix_.start_.push_back((HighsInt) degen_model.lp_.a_matrix_.index_.size());
+    // set constraint for descent direction
+    degen_model.lp_.row_lower_.push_back(-1.);
+    degen_model.lp_.row_upper_.push_back(-1.);
+    for (size_t i {0}; i < this->degenerate_idxs_.size(); i++){
+        addDegenConstr(degen_model, i, true);
+    }
+    for (HighsInt i {0}; i < this->rangsp_dim_; i++){
+        addDegenConstr(degen_model, i, false);
+    }
+    degen_model.lp_.num_row_ = 1 + this->rangsp_dim_ + (HighsInt) this->degenerate_idxs_.size();
+    degen_model.lp_.a_matrix_.start_.push_back((HighsInt) degen_model.lp_.a_matrix_.index_.size());
+    degen_model.lp_.a_matrix_.num_col_ = degen_model.lp_.num_col_;
+    degen_model.lp_.a_matrix_.num_row_ = degen_model.lp_.num_row_;
+    Highs degen_res;
+    degen_res.passModel(degen_model);
+    degen_res.setOptionValue("output_flag", false);
+    degen_res.run();
+    if (degen_res.getModelStatus() != HighsModelStatus::kOptimal) std::cout<< "degenLP_NOToptimal\n";
     this->degenerate_idxs_.clear();
     return;
+}
+
+void AsmSolver::addDegenConstr(HighsModel& degen_model, const HighsInt& i, const bool degen){
+    HighsInt idx;
+    AsmBasisStatus status;
+    if (degen){
+        idx = this->degenerate_idxs_[i];
+        status = this->degenerate_status_[i];
+    }
+    else {
+        idx = this->basis_idxs_[i];
+        if (idx < this->lp_.num_row_) status = this->con_status_[idx];
+        else status = this->var_status_[idx - this->lp_.num_row_];
+    }
+    HighsInt var_idx = idx - this->lp_.num_row_;
+    if (idx < this->lp_.num_row_){ // we are looking at a constraint
+        // add constraint to constraint matrix
+        degen_model.lp_.a_matrix_.index_.insert(degen_model.lp_.a_matrix_.index_.end(),
+                                                this->lp_.a_matrix_.index_.begin() + this->lp_.a_matrix_.start_[idx],
+                                                this->lp_.a_matrix_.index_.begin() + this->lp_.a_matrix_.start_[idx + 1]);
+        degen_model.lp_.a_matrix_.value_.insert(degen_model.lp_.a_matrix_.value_.end(),
+                                                this->lp_.a_matrix_.index_.begin() + this->lp_.a_matrix_.start_[idx],
+                                                this->lp_.a_matrix_.index_.begin() + this->lp_.a_matrix_.start_[idx + 1]);
+        degen_model.lp_.a_matrix_.start_.push_back((HighsInt) degen_model.lp_.a_matrix_.index_.size());
+    } else { // we are looking at a variable's bound so add unit vector to constraint matrix
+        degen_model.lp_.a_matrix_.index_.push_back(var_idx);
+        degen_model.lp_.a_matrix_.value_.push_back(1.);
+        degen_model.lp_.a_matrix_.start_.push_back((HighsInt) degen_model.lp_.a_matrix_.index_.size());
+    }
+    if ( (idx < this->lp_.num_row_ && this->lp_.row_lower_[idx] == this->lp_.row_upper_[idx]) || // it is an equality
+         (idx >= this->lp_.num_row_ && this->lp_.col_lower_[var_idx] == this->lp_.col_upper_[var_idx])){ // it is a fixed variable
+            degen_model.lp_.row_lower_.push_back(0.);
+            degen_model.lp_.row_upper_.push_back(0.);
+    } else if ( status == AsmBasisStatus::kUpper){
+        degen_model.lp_.row_lower_.push_back(-kHighsInf);
+        degen_model.lp_.row_upper_.push_back(0.);
+    } else if ( status == AsmBasisStatus::kLower){
+        degen_model.lp_.row_lower_.push_back(0.);
+        degen_model.lp_.row_upper_.push_back(kHighsInf);
+    } else {
+        std::cout<<"what am i doing here";
+    }
 }
 
 void AsmSolver::activate(const HighsInt& idx, const AsmBasisStatus& status){
@@ -470,6 +563,7 @@ double AsmSolver::computeReducedVecs(){ // solve B x = (g + Q x_k) to compute Da
     std::vector<double> vec = this->loc_grad_;
     this->HFtran(vec); // compute B x = g_k
     this->pricing_.assign(vec.begin(), vec.end() - this->nullsp_dim_); // TODO, other types of pricing
+    this->signPrices();
     this->red_grad_.assign(vec.end() - this->nullsp_dim_, vec.end()); // extract last z elements of the result, i.e. Z^T (g + Q x_k)
     // returns the magnitude of the reduced gradient (0 if of null dimension)
     return norm(this->red_grad_);
@@ -538,7 +632,7 @@ bool AsmSolver::timelimit(){// time limit
 };
 
 bool AsmSolver::maximalsteptaken(){// optimality condition
-        if (this->nullsp_dim_ == this->Q_.dim_){ // cannot deactivate anything anymore, nullspace is maximal already
+        if (this->nullsp_dim_ == this->Q_.dim_ && this->step_taken_){ // cannot deactivate anything anymore, nullspace is maximal already
             this->model_status_ = HighsModelStatus::kOptimal;
             this->status_ = HighsStatus::kOk;
         return true;
