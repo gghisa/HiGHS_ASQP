@@ -154,6 +154,11 @@ void AsmSolver::feasibility(){
             this->solution_ = highs_feasibility.getSolution();
             this->updateObjective();
             this->setupQpBasis();
+            // compute relaxed bounds for two pass ratio test
+            this->computeRelaxedBounds(this->lp_.row_lower_, this->lp_relaxed_.row_lower_, - 1);
+            this->computeRelaxedBounds(this->lp_.row_upper_, this->lp_relaxed_.row_upper_, 1);
+            this->computeRelaxedBounds(this->lp_.col_lower_, this->lp_relaxed_.col_lower_, - 1);
+            this->computeRelaxedBounds(this->lp_.col_upper_, this->lp_relaxed_.col_upper_, 1);
         }
     }
 }
@@ -309,6 +314,80 @@ void AsmSolver::deactivate(){ // loop through prices to find a constraint to dea
         this->pricing_.erase(this->pricing_.begin() + bestloc);
         this->step_taken_ = false; // since problem has been modified
     } else this->model_status_ = HighsModelStatus::kOptimal; // set to optimal to break the major loop
+    return;
+}
+
+void AsmSolver::ratiotest_pass1(const std::vector<double>& newloc,
+                                const std::vector<double>& newconvals,
+                                const std::vector<double>& denoms){
+    this->alpha_relaxed_ = 1.; // we want to minimise it
+    double alpha_here;
+    for (HighsInt i {0}; i < this->Q_.dim_; i++){ // loop through variables
+        if (this->step_[i] < - this->options_.factor_pivot_tolerance && this->lp_relaxed_.col_lower_[i] > newloc[i] ){
+            // lower bound break
+            alpha_here = ( this->lp_relaxed_.col_lower_[i] - this->solution_.col_value[i] ) / this->step_[i];
+            if ( alpha_here < this->alpha_relaxed_ ) this->alpha_relaxed_ = alpha_here;
+        } else if ( this->step_[i] > this->options_.factor_pivot_tolerance && this->lp_relaxed_.col_upper_[i] < newloc[i] ){
+            // upper bound break
+            alpha_here = ( this->lp_relaxed_.col_upper_[i] - this->solution_.col_value[i] ) / this->step_[i];
+            if ( alpha_here < this->alpha_relaxed_ ) this->alpha_relaxed_ = alpha_here;
+        }
+    }
+    for (HighsInt i {0}; i < this->lp_.num_row_; i++){ // loop through inactive constraints
+        if ( denoms[i] < - this->options_.factor_pivot_tolerance && this->lp_relaxed_.row_lower_[i] > newconvals[i] ){
+            alpha_here = ( this->lp_relaxed_.row_lower_[i] - this->solution_.row_value[i] ) / denoms[i];
+            if ( alpha_here < this->alpha_relaxed_ ) this->alpha_relaxed_ = alpha_here;
+        } else if ( denoms[i] > this->options_.factor_pivot_tolerance && this->lp_relaxed_.row_upper_[i] < newconvals[i] ) {
+            alpha_here = ( this->lp_relaxed_.row_upper_[i] - this->solution_.row_value[i] ) / denoms[i];
+            if ( alpha_here < this->alpha_relaxed_ ) this->alpha_relaxed_ = alpha_here;
+        }
+    }
+    return;
+}
+void AsmSolver::ratiotest_pass2(const std::vector<double>& newloc,
+                                const std::vector<double>& newconvals,
+                                const std::vector<double>& denoms,
+                                HighsInt& newactive_idx,
+                                AsmBasisStatus& newactive_status){
+    double alpha_here;
+    this->alpha_ = 0.; // we want to maximise it
+    for (HighsInt i {0}; i < this->Q_.dim_; i++){ // loop through variables
+        if ( this->step_[i] < - this->options_.factor_pivot_tolerance ){
+            // lower bound break
+            alpha_here = ( this->lp_.col_lower_[i] - this->solution_.col_value[i] ) / this->step_[i];
+            if ( this->alpha_ < alpha_here && alpha_here < this->alpha_relaxed_ ){
+                newactive_idx = i + this->lp_.num_row_;
+                newactive_status = AsmBasisStatus::kLower;
+                this->alpha_ = alpha_here;
+            }
+        } else if ( this->step_[i] > this->options_.factor_pivot_tolerance ){
+            // upper bound break
+            alpha_here = ( this->lp_.col_upper_[i] - this->solution_.col_value[i] ) / this->step_[i];
+            if ( this->alpha_ < alpha_here && alpha_here < this->alpha_relaxed_ ){
+                newactive_idx = i + this->lp_.num_row_;
+                newactive_status = AsmBasisStatus::kUpper;
+                this->alpha_ = alpha_here;
+            }
+        }
+    }
+    for (HighsInt i {0}; i < this->lp_.num_row_; i++){ // loop through inactive constraints
+        if ( denoms[i] < - this->options_.factor_pivot_tolerance ){
+            alpha_here = ( this->lp_.row_lower_[i] - this->solution_.row_value[i] ) / denoms[i];
+            if ( this->alpha_ < alpha_here && alpha_here < this->alpha_relaxed_ ){
+                newactive_idx = i;
+                newactive_status = AsmBasisStatus::kLower;
+                this->alpha_ = alpha_here;
+            }
+        } else if ( denoms[i] > this->options_.factor_pivot_tolerance ) {
+            alpha_here = ( this->lp_.row_upper_[i] - this->solution_.row_value[i] ) / denoms[i];
+            if ( this->alpha_ < alpha_here && alpha_here < this->alpha_relaxed_ ){
+                newactive_idx = i;
+                newactive_status = AsmBasisStatus::kUpper;
+                this->alpha_ = alpha_here;
+            }
+        }
+    }
+    return;
 }
 
 void AsmSolver::takeStep(){
@@ -320,186 +399,38 @@ void AsmSolver::takeStep(){
     this->stepSanity(); // make sure the same identical problem has not been solved yet
     this->LLTsolve(this->delta_);
     this->computeFullStep(this->delta_, this->step_); // then compute full space step
-    // we keep a copy of location, whereas a temporary alpha will just be local to a broken constraint
-    // at each constraint, if it is broken, we update alpha
-    // with the final alpha being the product of all the alphas (so it is also update as we go)
-    this->alpha_ = 1.;
+    // ratio test vectors
     std::vector<double> newloc(this->Q_.dim_);
-    this->compute_newloc(1., newloc); // compute potential x_{k+1}
-    HighsInt newactive_idx = -1; // recall: numbering variables starts from nr of constraints
-    AsmBasisStatus newactive_status;
-    //
-    for (HighsInt i {0}; i < this->Q_.dim_; i++){ // loop through variables
-        if ( std::abs( this->step_[i] ) > this->options_.factor_pivot_tolerance){ // if change is orthogonal to dimension, no chance of breaking its bounds
-            if (this->lp_.col_lower_[i] > newloc[i]){
-                double alpha_here = ( this->lp_.col_lower_[i] - this->solution_.col_value[i] ) / this->step_[i];
-                if ( alpha_here < this->options_.factor_pivot_tolerance ){
-                    this->degenerate_idxs_.push_back(i + this->lp_.num_row_);
-                    this->degenerate_status_.push_back(AsmBasisStatus::kLower);
-                }
-                if (alpha_here < this->alpha_){
-                    newactive_idx = i + this->lp_.num_row_; // store new index
-                    newactive_status = AsmBasisStatus::kLower;
-                    this->alpha_ = alpha_here;
-                }
-            } else if (this->lp_.col_upper_[i] < newloc[i]) {
-                double alpha_here = ( this->lp_.col_upper_[i] - this->solution_.col_value[i] ) / this->step_[i];
-                if ( alpha_here < this->options_.factor_pivot_tolerance ){
-                    this->degenerate_idxs_.push_back(i + this->lp_.num_row_);
-                    this->degenerate_status_.push_back(AsmBasisStatus::kUpper);
-                }
-                if (alpha_here < this->alpha_){
-                    newactive_idx = i + this->lp_.num_row_;
-                    newactive_status = AsmBasisStatus::kUpper;
-                    this->alpha_ = alpha_here;
-                }
-            }
-        }
-    }
-    // loop through inactive (inequality) constraints
-    // TODO is it more efficient to each time compute the products?
+    this->compute_varvals(this->alpha_, newloc); // compute (potential) x_{k+1}
     std::vector<double> newconvals(this->lp_.num_row_); // vector for new constraint values
     std::vector<double> denoms(this->lp_.num_row_); // vectors for denominators of ratio test formula
     this->lp_.a_matrix_.product(newconvals, newloc); // a_i^T x_{k+1}
     this->lp_.a_matrix_.product(denoms, this->step_); // a_i^T \s
-    for (HighsInt i {0}; i < this->lp_.num_row_; i++){
-        // TODO how are we sure we are not ratiotesting against active constraints?
-        if ( std::abs(denoms[i]) > this->options_.factor_pivot_tolerance ){ // if change is orthogonal to constraint, no chance of breaking its bounds
-            if (this->lp_.row_lower_[i] > newconvals[i]){
-                double alpha_here = ( this->lp_.row_lower_[i] - this->solution_.row_value[i] ) / denoms[i];
-                if ( alpha_here < this->options_.factor_pivot_tolerance ){
-                    this->degenerate_idxs_.push_back(i + this->lp_.num_row_);
-                    this->degenerate_status_.push_back(AsmBasisStatus::kLower);
-                }
-                if (alpha_here < this->alpha_){
-                    newactive_idx = i; // store new index
-                    newactive_status = AsmBasisStatus::kLower;
-                    this->alpha_ = alpha_here;
-                }
-            } else if (this->lp_.row_upper_[i] < newconvals[i]) {
-                double alpha_here = ( this->lp_.row_upper_[i] - this->solution_.row_value[i] ) / denoms[i];
-                if ( alpha_here < this->options_.factor_pivot_tolerance ){
-                    this->degenerate_idxs_.push_back(i + this->lp_.num_row_);
-                    this->degenerate_status_.push_back(AsmBasisStatus::kUpper);
-                }
-                if (alpha_here < this->alpha_){
-                    newactive_idx = i;
-                    newactive_status = AsmBasisStatus::kUpper;
-                    this->alpha_ = alpha_here;
-                }
-            }
-        }
+    //
+    void ratiotest_pass1(const std::vector<double>& newloc,
+                            const std::vector<double>& newconvals,
+                            const std::vector<double>& denoms);
+    if (this->alpha_relaxed_ < 1.){
+        HighsInt newactive_idx {-1};
+        AsmBasisStatus newactive_status;
+        void ratiotest_pass2(const std::vector<double>& newloc,
+                             const std::vector<double>& newconvals,
+                             const std::vector<double>& denoms,
+                             HighsInt& newactive_idx,
+                             AsmBasisStatus& newactive_status);
+        this->compute_varvals(this->alpha_, this->solution_.col_value);
+        this->updateObjective();
+        this->lp_.a_matrix_.product(this->solution_.row_value, this->solution_.col_value); // a_i^T x_{k+1}
+        this->activate(newactive_idx, newactive_status);
+    } else { // if no constraint activated
+        this->updateObjective();
+        this->solution_.row_value = newconvals; // don't recompute new constraint values
+        this->solution_.col_value = newloc; // nor variables' values either
     }
-    // TODO degeneracy
-    if (this->degenerate_idxs_.size() != 0){
-        std::cout<< this->degenerate_idxs_.size()<< " -- ";
-        //resolveDegeneracy();
-    }
-    this->compute_newloc(this->alpha_, this->solution_.col_value);
-    this->lp_.a_matrix_.product(this->solution_.row_value, this->solution_.col_value); // a_i^T x_{k+1}
-    this->updateObjective();
-    // other updates? TODO
-    if (newactive_idx != -1) this->activate(newactive_idx, newactive_status);
     this->computeReducedVecs(); // red grad needs updating with new position
     this->step_taken_ = true;
     this->info_.qp_iteration_count++;
     return;
-}
-
-void AsmSolver::resolveDegeneracy(){
-    // test that degenerate constraints are orthogonal to Z
-    std::vector<double> result(this->lp_.num_col_);
-    for (HighsInt i {0}; i < this->nullsp_dim_; i++){
-        this->lp_.a_matrix_.product(result, this->ZT_[i]);
-        for (size_t i {0}; i < this->degenerate_idxs_.size(); i++){
-            if ( this->degenerate_idxs_[i] < this->lp_.num_row_ ){ // if it is a constraint
-                if ( std::abs( result[ this->degenerate_idxs_[i] ] ) > this->options_.factor_pivot_tolerance){
-                    std::cout<<"nonzero"<<this->degenerate_idxs_[i]<<"\n";
-                }
-            } else {
-                if ( std::abs( result[ this->degenerate_idxs_[i] - this->lp_.num_row_ ] ) > this->options_.factor_pivot_tolerance){
-                    std::cout<<"nonzero"<<this->degenerate_idxs_[i]<<"\n";
-                }
-            }
-        }
-    }
-    // build LP as in (5.13) Fletcher's degeneracy in QP
-    HighsModel degen_model;
-    degen_model.lp_.num_col_ = this->lp_.num_col_;
-    degen_model.lp_.col_cost_.assign(degen_model.lp_.num_col_, 0.);
-    degen_model.lp_.col_lower_.assign(degen_model.lp_.num_col_, -kHighsInf);
-    degen_model.lp_.col_upper_.assign(degen_model.lp_.num_col_, kHighsInf);
-    // add descent direction constraint to matrix
-    degen_model.lp_.a_matrix_.format_ = MatrixFormat::kRowwise;
-    for (HighsInt i {0}; i < degen_model.lp_.num_col_; i++){
-        degen_model.lp_.a_matrix_.index_.push_back(i);
-    }
-    degen_model.lp_.a_matrix_.value_.insert(degen_model.lp_.a_matrix_.value_.end(),
-                                            this->loc_grad_.begin(),
-                                            this->loc_grad_.end());
-    degen_model.lp_.a_matrix_.start_.push_back((HighsInt) degen_model.lp_.a_matrix_.index_.size());
-    // set constraint for descent direction
-    degen_model.lp_.row_lower_.push_back(-1.);
-    degen_model.lp_.row_upper_.push_back(-1.);
-    for (size_t i {0}; i < this->degenerate_idxs_.size(); i++){
-        addDegenConstr(degen_model, i, true);
-    }
-    for (HighsInt i {0}; i < this->rangsp_dim_; i++){
-        addDegenConstr(degen_model, i, false);
-    }
-    degen_model.lp_.num_row_ = 1 + this->rangsp_dim_ + (HighsInt) this->degenerate_idxs_.size();
-    degen_model.lp_.a_matrix_.start_.push_back((HighsInt) degen_model.lp_.a_matrix_.index_.size());
-    degen_model.lp_.a_matrix_.num_col_ = degen_model.lp_.num_col_;
-    degen_model.lp_.a_matrix_.num_row_ = degen_model.lp_.num_row_;
-    Highs degen_res;
-    degen_res.passModel(degen_model);
-    degen_res.setOptionValue("output_flag", false);
-    degen_res.run();
-    if (degen_res.getModelStatus() != HighsModelStatus::kOptimal) std::cout<< "degenLP_NOToptimal\n";
-    this->degenerate_idxs_.clear();
-    return;
-}
-
-void AsmSolver::addDegenConstr(HighsModel& degen_model, const HighsInt& i, const bool degen){
-    HighsInt idx;
-    AsmBasisStatus status;
-    if (degen){
-        idx = this->degenerate_idxs_[i];
-        status = this->degenerate_status_[i];
-    }
-    else {
-        idx = this->basis_idxs_[i];
-        if (idx < this->lp_.num_row_) status = this->con_status_[idx];
-        else status = this->var_status_[idx - this->lp_.num_row_];
-    }
-    HighsInt var_idx = idx - this->lp_.num_row_;
-    if (idx < this->lp_.num_row_){ // we are looking at a constraint
-        // add constraint to constraint matrix
-        degen_model.lp_.a_matrix_.index_.insert(degen_model.lp_.a_matrix_.index_.end(),
-                                                this->lp_.a_matrix_.index_.begin() + this->lp_.a_matrix_.start_[idx],
-                                                this->lp_.a_matrix_.index_.begin() + this->lp_.a_matrix_.start_[idx + 1]);
-        degen_model.lp_.a_matrix_.value_.insert(degen_model.lp_.a_matrix_.value_.end(),
-                                                this->lp_.a_matrix_.index_.begin() + this->lp_.a_matrix_.start_[idx],
-                                                this->lp_.a_matrix_.index_.begin() + this->lp_.a_matrix_.start_[idx + 1]);
-        degen_model.lp_.a_matrix_.start_.push_back((HighsInt) degen_model.lp_.a_matrix_.index_.size());
-    } else { // we are looking at a variable's bound so add unit vector to constraint matrix
-        degen_model.lp_.a_matrix_.index_.push_back(var_idx);
-        degen_model.lp_.a_matrix_.value_.push_back(1.);
-        degen_model.lp_.a_matrix_.start_.push_back((HighsInt) degen_model.lp_.a_matrix_.index_.size());
-    }
-    if ( (idx < this->lp_.num_row_ && this->lp_.row_lower_[idx] == this->lp_.row_upper_[idx]) || // it is an equality
-         (idx >= this->lp_.num_row_ && this->lp_.col_lower_[var_idx] == this->lp_.col_upper_[var_idx])){ // it is a fixed variable
-            degen_model.lp_.row_lower_.push_back(0.);
-            degen_model.lp_.row_upper_.push_back(0.);
-    } else if ( status == AsmBasisStatus::kUpper){
-        degen_model.lp_.row_lower_.push_back(-kHighsInf);
-        degen_model.lp_.row_upper_.push_back(0.);
-    } else if ( status == AsmBasisStatus::kLower){
-        degen_model.lp_.row_lower_.push_back(0.);
-        degen_model.lp_.row_upper_.push_back(kHighsInf);
-    } else {
-        std::cout<<"what am i doing here";
-    }
 }
 
 void AsmSolver::activate(const HighsInt& idx, const AsmBasisStatus& status){
@@ -550,6 +481,16 @@ void AsmSolver::activate(const HighsInt& idx, const AsmBasisStatus& status){
     return;
 }
 
+void AsmSolver::computeRelaxedBounds(const std::vector<double>& old_bounds,
+                                     std::vector<double> new_bounds,
+                                     const double& sign_tol){
+    double signed_tol = sign_tol * this->options_.factor_pivot_tolerance;
+    new_bounds = old_bounds;
+    for (size_t i {0}; i < old_bounds.size(); i++){
+        new_bounds[i] += signed_tol;
+    }
+}
+
 void AsmSolver::computeLocGrad(){ // g + Q x_k
     this->Q_.product(this->solution_.col_value, this->loc_grad_); // stores result in loc_grad_
     for (HighsInt i {0}; i < this->Q_.dim_; i++){ // add g to Q x_k
@@ -569,7 +510,7 @@ double AsmSolver::computeReducedVecs(){ // solve B x = (g + Q x_k) to compute Da
     return norm(this->red_grad_);
 }
 
-void AsmSolver::compute_newloc(const double& alpha, std::vector<double>& loc){
+void AsmSolver::compute_varvals(const double& alpha, std::vector<double>& loc){
     for (HighsInt i {0}; i < this->Q_.dim_; i++){
         this->step_[i] *= alpha;
         loc[i] = this->solution_.col_value[i] + this->step_[i];

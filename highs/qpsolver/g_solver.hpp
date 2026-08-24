@@ -34,6 +34,7 @@ class AsmSolver {
         const HighsOptions& options_;
         HighsTimer& timer_;
         HighsLp lp_;
+        HighsLp lp_relaxed_; // for double pass ratiotest
         HighsHessian Q_;
         HighsBasis& lp_basis_; // basis with HighsBasisStatus vectors
         HighsSolution& solution_;
@@ -58,7 +59,8 @@ class AsmSolver {
         std::vector<double> delta_; // reduced step, solution of M \delta = Z^T (g + Q x_k)
         std::vector<double> step_; // full step, result of Z \delta
         // Numbers
-        double alpha_ {1.}; // step size for ratio test (TODO unused for now)
+        double alpha_ {1.}; // step size for ratio test
+        double alpha_relaxed_ {1.};
         HighsInt n_iter_ {0};
         // Truth values
         bool step_taken_ {false};
@@ -96,14 +98,21 @@ class AsmSolver {
         void setupReducedHessian();
         // Main loop functions
         void deactivate();
+        void ratiotest_pass1(const std::vector<double>& newloc,
+                             const std::vector<double>& newconvals,
+                             const std::vector<double>& denoms);
+        void ratiotest_pass2(const std::vector<double>& newloc,
+                             const std::vector<double>& newconvals,
+                             const std::vector<double>& denoms,
+                             HighsInt& newactive_idx,
+                             AsmBasisStatus& newactive_status);
         void takeStep();
-        void resolveDegeneracy();
-        void addDegenConstr(HighsModel& degen_model, const HighsInt& i, const bool degen);
         void activate(const HighsInt& idx, const AsmBasisStatus& status);
         // Object computations
+        void computeRelaxedBounds(const std::vector<double>& old_bounds, std::vector<double> new_bounds, const double& sign_tol);
         void computeLocGrad();
         double computeReducedVecs();
-        void compute_newloc(const double& alpha, std::vector<double>& loc);
+        void compute_varvals(const double& alpha, std::vector<double>& loc);
         void computeFullStep(const std::vector<double>& delta, std::vector<double>& step);
         double computeQuadObjective(const std::vector<double>& vec);
         void updateObjective();
