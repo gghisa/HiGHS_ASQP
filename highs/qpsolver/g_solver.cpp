@@ -155,10 +155,10 @@ void AsmSolver::feasibility(){
             this->updateObjective();
             this->setupQpBasis();
             // compute relaxed bounds for two pass ratio test
-            this->computeRelaxedBounds(this->lp_.row_lower_, this->lp_relaxed_.row_lower_, - 1);
-            this->computeRelaxedBounds(this->lp_.row_upper_, this->lp_relaxed_.row_upper_, 1);
-            this->computeRelaxedBounds(this->lp_.col_lower_, this->lp_relaxed_.col_lower_, - 1);
-            this->computeRelaxedBounds(this->lp_.col_upper_, this->lp_relaxed_.col_upper_, 1);
+            this->computeRelaxedBounds(this->lp_.row_lower_, this->lp_.row_upper_,
+                                       this->lp_relaxed_.row_lower_, this->lp_relaxed_.row_upper_);
+            this->computeRelaxedBounds(this->lp_.col_lower_, this->lp_.col_upper_,
+                                       this->lp_relaxed_.col_lower_, this->lp_relaxed_.col_upper_);
         }
     }
 }
@@ -350,12 +350,12 @@ void AsmSolver::ratiotest_pass2(const std::vector<double>& newloc,
                                 HighsInt& newactive_idx,
                                 AsmBasisStatus& newactive_status){
     double alpha_here;
-    this->alpha_ = 0.; // we want to maximise it
+    this->alpha_ = -1.; // we want to maximise it
     for (HighsInt i {0}; i < this->Q_.dim_; i++){ // loop through variables
         if ( this->step_[i] < - this->options_.factor_pivot_tolerance ){
             // lower bound break
             alpha_here = ( this->lp_.col_lower_[i] - this->solution_.col_value[i] ) / this->step_[i];
-            if ( this->alpha_ < alpha_here && alpha_here < this->alpha_relaxed_ ){
+            if ( this->alpha_ < alpha_here && alpha_here <= this->alpha_relaxed_ ){
                 newactive_idx = i + this->lp_.num_row_;
                 newactive_status = AsmBasisStatus::kLower;
                 this->alpha_ = alpha_here;
@@ -363,7 +363,7 @@ void AsmSolver::ratiotest_pass2(const std::vector<double>& newloc,
         } else if ( this->step_[i] > this->options_.factor_pivot_tolerance ){
             // upper bound break
             alpha_here = ( this->lp_.col_upper_[i] - this->solution_.col_value[i] ) / this->step_[i];
-            if ( this->alpha_ < alpha_here && alpha_here < this->alpha_relaxed_ ){
+            if ( this->alpha_ < alpha_here && alpha_here <= this->alpha_relaxed_ ){
                 newactive_idx = i + this->lp_.num_row_;
                 newactive_status = AsmBasisStatus::kUpper;
                 this->alpha_ = alpha_here;
@@ -373,14 +373,14 @@ void AsmSolver::ratiotest_pass2(const std::vector<double>& newloc,
     for (HighsInt i {0}; i < this->lp_.num_row_; i++){ // loop through inactive constraints
         if ( denoms[i] < - this->options_.factor_pivot_tolerance ){
             alpha_here = ( this->lp_.row_lower_[i] - this->solution_.row_value[i] ) / denoms[i];
-            if ( this->alpha_ < alpha_here && alpha_here < this->alpha_relaxed_ ){
+            if ( this->alpha_ < alpha_here && alpha_here <= this->alpha_relaxed_ ){
                 newactive_idx = i;
                 newactive_status = AsmBasisStatus::kLower;
                 this->alpha_ = alpha_here;
             }
         } else if ( denoms[i] > this->options_.factor_pivot_tolerance ) {
             alpha_here = ( this->lp_.row_upper_[i] - this->solution_.row_value[i] ) / denoms[i];
-            if ( this->alpha_ < alpha_here && alpha_here < this->alpha_relaxed_ ){
+            if ( this->alpha_ < alpha_here && alpha_here <= this->alpha_relaxed_ ){
                 newactive_idx = i;
                 newactive_status = AsmBasisStatus::kUpper;
                 this->alpha_ = alpha_here;
@@ -401,31 +401,24 @@ void AsmSolver::takeStep(){
     this->computeFullStep(this->delta_, this->step_); // then compute full space step
     // ratio test vectors
     std::vector<double> newloc(this->Q_.dim_);
-    this->compute_varvals(this->alpha_, newloc); // compute (potential) x_{k+1}
+    this->compute_varvals(1., newloc); // compute (potential) x_{k+1}
     std::vector<double> newconvals(this->lp_.num_row_); // vector for new constraint values
     std::vector<double> denoms(this->lp_.num_row_); // vectors for denominators of ratio test formula
     this->lp_.a_matrix_.product(newconvals, newloc); // a_i^T x_{k+1}
     this->lp_.a_matrix_.product(denoms, this->step_); // a_i^T \s
-    //
-    void ratiotest_pass1(const std::vector<double>& newloc,
-                            const std::vector<double>& newconvals,
-                            const std::vector<double>& denoms);
+    ratiotest_pass1(newloc, newconvals, denoms); // ratio test on relaxed instance
     if (this->alpha_relaxed_ < 1.){
         HighsInt newactive_idx {-1};
         AsmBasisStatus newactive_status;
-        void ratiotest_pass2(const std::vector<double>& newloc,
-                             const std::vector<double>& newconvals,
-                             const std::vector<double>& denoms,
-                             HighsInt& newactive_idx,
-                             AsmBasisStatus& newactive_status);
+        ratiotest_pass2(newloc, newconvals, denoms, newactive_idx, newactive_status);
         this->compute_varvals(this->alpha_, this->solution_.col_value);
         this->updateObjective();
         this->lp_.a_matrix_.product(this->solution_.row_value, this->solution_.col_value); // a_i^T x_{k+1}
         this->activate(newactive_idx, newactive_status);
     } else { // if no constraint activated
-        this->updateObjective();
         this->solution_.row_value = newconvals; // don't recompute new constraint values
         this->solution_.col_value = newloc; // nor variables' values either
+        this->updateObjective();
     }
     this->computeReducedVecs(); // red grad needs updating with new position
     this->step_taken_ = true;
@@ -481,13 +474,15 @@ void AsmSolver::activate(const HighsInt& idx, const AsmBasisStatus& status){
     return;
 }
 
-void AsmSolver::computeRelaxedBounds(const std::vector<double>& old_bounds,
-                                     std::vector<double> new_bounds,
-                                     const double& sign_tol){
-    double signed_tol = sign_tol * this->options_.factor_pivot_tolerance;
-    new_bounds = old_bounds;
-    for (size_t i {0}; i < old_bounds.size(); i++){
-        new_bounds[i] += signed_tol;
+void AsmSolver::computeRelaxedBounds(const std::vector<double>& old_lower,
+                                     const std::vector<double>& old_upper,
+                                     std::vector<double>& new_lower,
+                                     std::vector<double>& new_upper){
+    new_lower = old_lower;
+    new_upper = old_upper;
+    for (size_t i {0}; i < new_lower.size(); i++){
+        new_lower[i] -= this->options_.factor_pivot_tolerance;
+        new_upper[i] += this->options_.factor_pivot_tolerance;
     }
 }
 
@@ -510,11 +505,10 @@ double AsmSolver::computeReducedVecs(){ // solve B x = (g + Q x_k) to compute Da
     return norm(this->red_grad_);
 }
 
-void AsmSolver::compute_varvals(const double& alpha, std::vector<double>& loc){
+void AsmSolver::compute_varvals(const double& alpha, std::vector<double>& loc){ // compute x_{k+1}
     for (HighsInt i {0}; i < this->Q_.dim_; i++){
-        this->step_[i] *= alpha;
-        loc[i] = this->solution_.col_value[i] + this->step_[i];
-    } // compute x_{k+1}
+        loc[i] = this->solution_.col_value[i] + alpha * this->step_[i];
+    }
     return;
 }
 

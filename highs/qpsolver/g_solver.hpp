@@ -109,7 +109,10 @@ class AsmSolver {
         void takeStep();
         void activate(const HighsInt& idx, const AsmBasisStatus& status);
         // Object computations
-        void computeRelaxedBounds(const std::vector<double>& old_bounds, std::vector<double> new_bounds, const double& sign_tol);
+        void computeRelaxedBounds(const std::vector<double>& old_lower,
+                                  const std::vector<double>& old_upper,
+                                  std::vector<double>& new_lower,
+                                  std::vector<double>& new_upper);
         void computeLocGrad();
         double computeReducedVecs();
         void compute_varvals(const double& alpha, std::vector<double>& loc);
