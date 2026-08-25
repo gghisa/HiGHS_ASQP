@@ -72,8 +72,6 @@ class AsmSolver {
         std::vector<HighsInt> degenerate_idxs_;
         std::vector<AsmBasisStatus> degenerate_status_;
         // HFactor functions
-        void HSetup(const HighsSparseMatrix& constraint_mat);
-        void HBuild();
         void HBtran(std::vector<double>& vec);
         void HFtran(std::vector<double>& vec);
         void HUpdate(HighsInt loc_idxdrop, HighsInt idx_new);

@@ -41,21 +41,11 @@ HighsModelStatus AsmSolver::getHighsModelStatus(){ // public function
     return this->model_status_; // private attribute
 }
 
-void AsmSolver::HSetup(const HighsSparseMatrix& constraint_mat){
-    this->B_.setup(constraint_mat, this->basis_idxs_); //shuffles basis indices
-    return;
-}
-
-void AsmSolver::HBuild(){ // also for refactorization
-    this->B_.build();
-    return;
-}
-
 void AsmSolver::HBtran(std::vector<double>& vec){
     if ((HighsInt)this->buffer_.size() != this->Q_.dim_) throw std::length_error("Wrong buffer_ size!");
     // first apply P
     for (HighsInt i {0}; i < this->Q_.dim_; i++){
-        this->buffer_[ this->basis_perm_[i] ] = vec[i];
+        this->buffer_[ this->basis_perm_[i] ] = vec[ i ];
     } // then solve
     this->B_.btranCall(this->buffer_); // B^{-T}
     vec = this->buffer_;
@@ -125,7 +115,7 @@ void AsmSolver::feasibility(){
         this->lp_basis_.valid &&
         this->solution_.value_valid){
         // TODO add check to make sure basis checks out with solution
-        this->status_ = HighsStatus::kError; // return false to not run the active set solver
+        this->status_ = HighsStatus::kError; // TODO, for now do not run the active set solver
     } else {
         this->setupFeasibilityLp();
         Highs highs_feasibility;
@@ -214,8 +204,9 @@ void AsmSolver::setupBasisMat(){ // TODO do not create constraint mat copy
     HighsInt temp_old_num_row = constraint_mat.num_row_; // flip the number of rows and columns
     constraint_mat.num_row_ = constraint_mat.num_col_; // so that when HFactor uses the matrix
     constraint_mat.num_col_ = temp_old_num_row; // it receives the constraint matrix stored "column wise"
-    this->HSetup(constraint_mat); // where each column is a constraint. its inverse transpose will have as columns the nullspace basis
-    this->HBuild();
+    // where each column is a constraint. its inverse transpose will have as columns the nullspace basis
+    this->B_.setup(constraint_mat, this->basis_idxs_); //shuffles basis indices
+    this->B_.build();
     return;
 }
 
@@ -244,11 +235,11 @@ HighsStatus AsmSolver::run(){
                 if ( this->nullsizelimit() ) break;
             } else {
                 this->takeStep();
-                std::cout<<this->objective_<<"\n";
+                std::cout<<this->objective_<<" - "<< this->nullsp_dim_<<"\n";
             }
         }
         // outside loop but run only if feasibility is successful:
-        std::cout<<this->objective_<<" "<<this->info_.qp_iteration_count<<"\n";
+        std::cout<<this->objective_<<" iterations: "<<this->info_.qp_iteration_count<<"\n";
     }
     // TODO record runtime?
     return this->getHighsStatus();
@@ -371,9 +362,9 @@ void AsmSolver::ratiotest_pass2(const std::vector<double>& newloc,
 
 void AsmSolver::takeStep(){
     // solve Equality Problem first
-    this->delta_ = this->red_grad_; // TODO remove and flip the sign when more convenient?
-    for (size_t i {0}; i < this->delta_.size(); i++){
-        this->delta_[i] *= -1.; // flip sign to solve reduced system
+    this->delta_.resize(this->red_grad_.size());
+    for (size_t i {0}; i < this->red_grad_.size(); i++){
+        this->delta_[i] = - this->red_grad_[i]; // TODO, is there a better place to flip sign?
     }
     this->stepSanity(); // make sure the same identical problem has not been solved yet
     this->LLTsolve(this->delta_);
@@ -390,7 +381,7 @@ void AsmSolver::takeStep(){
         HighsInt newactive_idx;
         AsmBasisStatus newactive_status;
         ratiotest_pass2(newloc, newconvals, denoms, newactive_idx, newactive_status);
-        if ( std::abs(this->alpha_) < this->options_.factor_pivot_threshold ) this->alpha_ = 0.; // if we are not moving at all
+        if ( std::abs(this->alpha_) < this->options_.factor_pivot_tolerance ) this->alpha_ = 0.; // if we are not moving at all
         else {
             this->compute_varvals(this->alpha_, this->solution_.col_value);
             this->updateObjective();
@@ -508,10 +499,11 @@ void AsmSolver::computeFullStep(const std::vector<double>& delta, std::vector<do
 
 double AsmSolver::computeQuadObjective(const std::vector<double>& vec){
     double sum {0.};
-    // TODO take advantage of symmetry
-    for (HighsInt iCol = 0; iCol < this->Q_.dim_; iCol++) { // from claude.ai
+    // matrix is stored in full, but it is symmetric
+    for (HighsInt iCol = 0; iCol < this->Q_.dim_; iCol++) {
         for (HighsInt iEl = this->Q_.start_[iCol]; iEl < this->Q_.start_[iCol + 1]; iEl++) {
-            sum += 0.5 * vec[iCol] * this->Q_.value_[iEl] * vec[this->Q_.index_[iEl]];
+            if ( this->Q_.index_[iEl] < iCol ) sum += vec[iCol] * this->Q_.value_[iEl] * vec[this->Q_.index_[iEl]];
+            else if ( this->Q_.index_[iEl] == iCol ) sum += 0.5 * vec[iCol] * vec[iCol] * this->Q_.value_[iEl];
         }
     }
     return sum;
