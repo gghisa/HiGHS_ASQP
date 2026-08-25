@@ -350,40 +350,42 @@ void AsmSolver::ratiotest_pass2(const std::vector<double>& newloc,
                                 HighsInt& newactive_idx,
                                 AsmBasisStatus& newactive_status){
     double alpha_here;
-    this->alpha_ = -1.; // we want to maximise it
+    double max_pivot = this->options_.factor_pivot_tolerance; // here select constraint to activate based on denominator, not alpha
     for (HighsInt i {0}; i < this->Q_.dim_; i++){ // loop through variables
-        if ( this->step_[i] < - this->options_.factor_pivot_tolerance ){
-            // lower bound break
+        if ( this->step_[i] < - max_pivot ){ // potential lower bound break
             alpha_here = ( this->lp_.col_lower_[i] - this->solution_.col_value[i] ) / this->step_[i];
-            if ( this->alpha_ < alpha_here && alpha_here <= this->alpha_relaxed_ ){
+            if ( alpha_here < this->alpha_relaxed_ ){
                 newactive_idx = i + this->lp_.num_row_;
                 newactive_status = AsmBasisStatus::kLower;
                 this->alpha_ = alpha_here;
+                max_pivot = - this->step_[i];
             }
-        } else if ( this->step_[i] > this->options_.factor_pivot_tolerance ){
-            // upper bound break
+        } else if ( this->step_[i] > max_pivot ){ // potential upper bound break
             alpha_here = ( this->lp_.col_upper_[i] - this->solution_.col_value[i] ) / this->step_[i];
-            if ( this->alpha_ < alpha_here && alpha_here <= this->alpha_relaxed_ ){
+            if ( alpha_here < this->alpha_relaxed_ ){
                 newactive_idx = i + this->lp_.num_row_;
                 newactive_status = AsmBasisStatus::kUpper;
                 this->alpha_ = alpha_here;
+                max_pivot = this->step_[i];
             }
         }
     }
     for (HighsInt i {0}; i < this->lp_.num_row_; i++){ // loop through inactive constraints
-        if ( denoms[i] < - this->options_.factor_pivot_tolerance ){
+        if ( denoms[i] < - max_pivot ){
             alpha_here = ( this->lp_.row_lower_[i] - this->solution_.row_value[i] ) / denoms[i];
-            if ( this->alpha_ < alpha_here && alpha_here <= this->alpha_relaxed_ ){
+            if ( alpha_here < this->alpha_relaxed_ ){
                 newactive_idx = i;
                 newactive_status = AsmBasisStatus::kLower;
                 this->alpha_ = alpha_here;
+                max_pivot = - denoms[i];
             }
-        } else if ( denoms[i] > this->options_.factor_pivot_tolerance ) {
+        } else if ( denoms[i] > max_pivot ) {
             alpha_here = ( this->lp_.row_upper_[i] - this->solution_.row_value[i] ) / denoms[i];
-            if ( this->alpha_ < alpha_here && alpha_here <= this->alpha_relaxed_ ){
+            if ( alpha_here < this->alpha_relaxed_ ){
                 newactive_idx = i;
                 newactive_status = AsmBasisStatus::kUpper;
                 this->alpha_ = alpha_here;
+                max_pivot = denoms[i];
             }
         }
     }
@@ -454,10 +456,10 @@ void AsmSolver::activate(const HighsInt& idx, const AsmBasisStatus& status){
                 break;
             }
         }
-        if (i < this->Q_.dim_ - 1){ // else we just need to drop the last row of the lower triangular factor
+        if (i < this->Q_.dim_ - 1){
             this->remove(i - this->rangsp_dim_);
             return;
-        }
+        } // else we just need to drop the last row of the lower triangular factor
     } else { // update HFactor if constraint not already in basis
         // drop the last column in V and substitute it with new index,
         // which then moves to the end of the current active set while all other free indices are shifted by 1 to the end

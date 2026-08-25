@@ -30,7 +30,7 @@ void AsmSolver::recomputeExplicit(){ // TODO pivoting?
             for (HighsInt k {0}; k < this->Q_.dim_; k++){ // inner produce of row of Z^T Q with column of Z
                 sum += this->buffer_[k] * this->ZT_[j][k]; // factorization row by row according to Cholesky—Banachiewicz
             }
-            this->chol_[ locL(i,j)] = sum; // should be ordered such that chol_ is row-wise of M
+            this->chol_[ locL(i,j) ] = sum; // should be ordered such that chol_ is row-wise of M
         }
     }
     return;
@@ -43,15 +43,15 @@ void AsmSolver::refactorize(){
             if (i == j){ // diagonal element
                 for (HighsInt k {0}; k < j; k++){
                     double row_el = this->chol_[ locL(i,k)];
-                    this->chol_[ locL(i,i)] -= row_el * row_el;
+                    this->chol_[ locL(i,i) ] -= row_el * row_el;
                 }
-                this->chol_[ locL(i,i)] = std::sqrt(this->chol_[ locL(i,i)]);
+                this->chol_[ locL(i,i) ] = std::sqrt(this->chol_[ locL(i,i) ]);
             }
             else { // off diagonal element
                 for (HighsInt k {0}; k < j; k++){
-                    this->chol_[ locL(i,j)] -= this->chol_[ locL(i,k)] * this->chol_[ locL(j,k)];
+                    this->chol_[ locL(i,j) ] -= this->chol_[ locL(i,k) ] * this->chol_[ locL(j,k) ];
                 }
-                this->chol_[ locL(i,j)] /= this->chol_[ locL(j,j)];
+                this->chol_[ locL(i,j) ] /= this->chol_[ locL(j,j) ];
             }
         }
     }
