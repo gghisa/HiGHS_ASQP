@@ -76,8 +76,6 @@ class AsmSolver {
         void HBuild();
         void HBtran(std::vector<double>& vec);
         void HFtran(std::vector<double>& vec);
-        void HBtran(HVector& vec, const double expected_density);
-        void HFtran(HVector& vec, const double expected_density);
         void HUpdate(HighsInt loc_idxdrop, HighsInt idx_new);
         HVector stdvec2hvec(const std::vector<double>& vec);
         HVector unit_hvec(const HighsInt& p);
@@ -131,7 +129,6 @@ class AsmSolver {
         void addNullSpaceDim();
         void removeNullSpaceDim();
         AsmBasisStatus HighsStatusToAsm(const HighsBasisStatus& status, const HighsInt i, const bool variable);
-        bool isNotEquality(const AsmBasisStatus& status);
         bool isInBasis(const AsmBasisStatus& status);
         bool isFreeInBasis(const AsmBasisStatus& status);
         bool isActive(const AsmBasisStatus& status);

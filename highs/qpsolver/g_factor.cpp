@@ -106,8 +106,8 @@ void AsmSolver::extend(const HighsInt& loc_deactivated){
         sol.erase(sol.begin(), sol.end() - this->nullsp_dim_); // TODO is the other part useful?
         Lsolve(sol);
         this->chol_.insert(this->chol_.end(),
-                        sol.begin(),
-                        sol.end());
+                           sol.begin(),
+                           sol.end());
         for (HighsInt i {0}; i < this->nullsp_dim_; i++){
             lambda -= sol[i] * sol[i];
         }

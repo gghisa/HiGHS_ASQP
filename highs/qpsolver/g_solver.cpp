@@ -73,16 +73,6 @@ void AsmSolver::HFtran(std::vector<double>& vec){
     return;
 }
 
-void AsmSolver::HBtran(HVector& vec, const double expected_density){
-    this->B_.btranCall(vec, expected_density); // no permutations here, assumed to be taken care of when forming inputs
-    return;
-}
-
-void AsmSolver::HFtran(HVector& vec, const double expected_density){
-    this->B_.ftranCall(vec, expected_density); // no permutations here, assumed to be taken care of when forming inputs
-    return;
-}
-
 void AsmSolver::HUpdate(HighsInt loc_idxdrop, HighsInt idx_new){
     HighsInt hint { 99999 }; // same number as Micheal in Basis::updatebasis
     // build HVector to add to basis
@@ -94,10 +84,10 @@ void AsmSolver::HUpdate(HighsInt loc_idxdrop, HighsInt idx_new){
         newcol = stdvec2hvec(this->buffer_);
     }
     else newcol = unit_hvec(idx_new - this->lp_.num_row_); // for a new bound becoming active
-    this->HFtran(newcol, 1.);
+    this->B_.ftranCall(newcol, 1.);
     // build HVector to point to constraint exiting basis
     HVector ep = unit_hvec(loc_idxdrop);
-    this->HBtran(ep, 1.);
+    this->B_.btranCall(ep, 1.);
     // update basis matrix
     this->B_.update(&newcol, &ep, &loc_idxdrop, &hint);
     return;
@@ -269,28 +259,15 @@ void AsmSolver::deactivate(){ // loop through prices to find a constraint to dea
     double bestprice = this->pricing_[bestloc];
     HighsInt bestidx = this->basis_idxs_[bestloc];
     for (HighsInt i {1}; i < this->rangsp_dim_; i++){ // loop through active constraints only
-        HighsInt idx = this->basis_idxs_[i];
-        if (idx < this->lp_.num_row_) { // it is a constraint
-            if ( this->isNotEquality( this->con_status_[idx] ) &&
-                this->pricing_[i] < bestprice && 
-                this->pricing_[i] < - this->options_.factor_pivot_tolerance){
-                bestprice = this->pricing_[i];
-                bestidx = idx;
-                bestloc = i;
-            }
-        } else { // it is a variable bound
-            idx -= this->lp_.num_row_; // get variable index
-            if ( this->isNotEquality( this->var_status_[idx]) &&
-                this->pricing_[i] < bestprice && 
-                this->pricing_[i] < - this->options_.factor_pivot_tolerance){
-                bestprice = this->pricing_[i];
-                bestidx = this->basis_idxs_[i];
-                bestloc = i;
-            }
+        if ( this->pricing_[i] < bestprice && 
+             this->pricing_[i] < - this->options_.dual_feasibility_tolerance ){ // prices are signed already
+            bestprice = this->pricing_[i];
+            bestidx = this->basis_idxs_[i];
+            bestloc = i;
         }
     }
     // check that bestprice is indeed negative, in case first price is best but non-negative
-    if ( bestprice < - this->options_.dual_feasibility_tolerance ){ // TODO check negativity of tolerance
+    if ( bestprice < - this->options_.dual_feasibility_tolerance ){
         // first return price to original value to update reduced gradient, then update status
         if (bestidx < this->lp_.num_row_){ 
             bestprice *= static_cast<double>( this->con_status_[bestidx] );
@@ -409,15 +386,19 @@ void AsmSolver::takeStep(){
     this->lp_.a_matrix_.product(newconvals, newloc); // a_i^T x_{k+1}
     this->lp_.a_matrix_.product(denoms, this->step_); // a_i^T \s
     ratiotest_pass1(newloc, newconvals, denoms); // ratio test on relaxed instance
-    if (this->alpha_relaxed_ < 1.){
-        HighsInt newactive_idx {-1};
+    if (this->alpha_relaxed_ < 1.){ //implies there is an activation the relaxed test yielded a step smaller than unity
+        HighsInt newactive_idx;
         AsmBasisStatus newactive_status;
         ratiotest_pass2(newloc, newconvals, denoms, newactive_idx, newactive_status);
-        this->compute_varvals(this->alpha_, this->solution_.col_value);
-        this->updateObjective();
-        this->lp_.a_matrix_.product(this->solution_.row_value, this->solution_.col_value); // a_i^T x_{k+1}
+        if ( std::abs(this->alpha_) < this->options_.factor_pivot_threshold ) this->alpha_ = 0.; // if we are not moving at all
+        else {
+            this->compute_varvals(this->alpha_, this->solution_.col_value);
+            this->updateObjective();
+            this->lp_.a_matrix_.product(this->solution_.row_value, this->solution_.col_value); // a_i^T x_{k+1}
+        }
         this->activate(newactive_idx, newactive_status);
-    } else { // if no constraint activated
+    } else { // if no constraint activated and we take the full step
+        this->alpha_ = 1.; // book-keeping only
         this->solution_.row_value = newconvals; // don't recompute new constraint values
         this->solution_.col_value = newloc; // nor variables' values either
         this->updateObjective();
@@ -433,12 +414,14 @@ void AsmSolver::activate(const HighsInt& idx, const AsmBasisStatus& status){
     bool alreadyinbasis {false};
     if (idx < this->lp_.num_row_){
         if ( this->isFreeInBasis(this->con_status_[idx]) ) alreadyinbasis = true;
+        //
         if ( this->lp_.row_lower_[idx] == this->lp_.row_upper_[idx] ) this->con_status_[idx] = AsmBasisStatus::kEquality;
         else this->con_status_[idx] = status;
     }
     else {
         HighsInt var_idx = idx - this->lp_.num_row_;
         if ( this->isFreeInBasis(this->var_status_[var_idx]) ) alreadyinbasis = true;
+        //
         if ( this->lp_.col_lower_[var_idx] == this->lp_.col_upper_[var_idx] ) this->var_status_[var_idx] = AsmBasisStatus::kEquality;
         else this->var_status_[var_idx] = status;
     }
@@ -544,7 +527,7 @@ void AsmSolver::signPrices(){
     for (HighsInt i {0}; i < this->rangsp_dim_; i++){
         HighsInt idx { this->basis_idxs_[i] };
         if (idx < this->lp_.num_row_) this->pricing_[i] *= static_cast<double>( this->con_status_[idx] );
-        else{
+        else {
             idx -= this->lp_.num_row_;
             this->pricing_[i] *= static_cast<double>( this->var_status_[idx] );
         }
@@ -627,11 +610,6 @@ AsmBasisStatus AsmSolver::HighsStatusToAsm(const HighsBasisStatus& status, const
     else if(status == HighsBasisStatus::kUpper) return AsmBasisStatus::kUpper;
     else if(status == HighsBasisStatus::kZero) return AsmBasisStatus::kFreeInBasis;
     else return AsmBasisStatus::kInactive;
-}
-
-bool AsmSolver::isNotEquality(const AsmBasisStatus& status){
-    if (status != AsmBasisStatus::kEquality) return true;
-    else return false;
 }
 
 bool AsmSolver::isInBasis(const AsmBasisStatus& status){
