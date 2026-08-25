@@ -431,12 +431,14 @@ void AsmSolver::activate(const HighsInt& idx, const AsmBasisStatus& status){
     bool alreadyinbasis {false};
     if (idx < this->lp_.num_row_){
         if ( this->isFreeInBasis(this->con_status_[idx]) ) alreadyinbasis = true;
-        this->con_status_[idx] = status;
+        if ( this->lp_.row_lower_[idx] == this->lp_.row_upper_[idx] ) this->con_status_[idx] = AsmBasisStatus::kEquality;
+        else this->con_status_[idx] = status;
     }
     else {
         HighsInt var_idx = idx - this->lp_.num_row_;
         if ( this->isFreeInBasis(this->var_status_[var_idx]) ) alreadyinbasis = true;
-        this->var_status_[var_idx] = status;
+        if ( this->lp_.col_lower_[var_idx] == this->lp_.col_upper_[var_idx] ) this->var_status_[var_idx] = AsmBasisStatus::kEquality;
+        else this->var_status_[var_idx] = status;
     }
     // TODO find good rationale to select which constraint to drop
     if (alreadyinbasis){
