@@ -220,7 +220,7 @@ HighsStatus AsmSolver::run(){
     if ( this->model_status_ == HighsModelStatus::kOptimal ){
         this->model_status_ = HighsModelStatus::kNotset;
         while ( true ) { // ASM iterations
-            if (this->norm(this->red_grad_) < this->options_.primal_feasibility_tolerance){ // TODO primal residual tolerance?
+            if ( this->norm(this->red_grad_) < this->options_.primal_feasibility_tolerance ){ // TODO primal residual tolerance?
                 if ( this->maximalsteptaken() ) break;
                 this->deactivate();
                 if ( this->isoptimal() ) break;
@@ -255,6 +255,7 @@ void AsmSolver::deactivate(){ // loop through prices to find a constraint to dea
     if ( bestprice < - this->options_.dual_feasibility_tolerance ){
         // first return price to original value to update reduced gradient, then update status
         if (bestidx < this->lp_.num_row_){ 
+            // return bestprice to original sign to then move to reduced gradient
             bestprice *= static_cast<double>( this->con_status_[bestidx] );
             this->con_status_[bestidx] = AsmBasisStatus::kFreeInBasis;
         }
@@ -413,6 +414,7 @@ void AsmSolver::activate(const HighsInt& idx, const AsmBasisStatus& status){
     }
     // TODO find good rationale to select which constraint to drop
     if (alreadyinbasis){
+        std::cout<<"Already in basis! Not happening often...\n";
         // send element in location i to the end of active constraints
         // and shift all free in basis down by one until the old position of the constraint in activation
         HighsInt i;
@@ -427,6 +429,7 @@ void AsmSolver::activate(const HighsInt& idx, const AsmBasisStatus& status){
         }
         if (i < this->Q_.dim_ - 1){
             this->remove(i - this->rangsp_dim_);
+            // TODO resize ZT_
             return;
         } // else we just need to drop the last row of the lower triangular factor
     } else { // update HFactor if constraint not already in basis

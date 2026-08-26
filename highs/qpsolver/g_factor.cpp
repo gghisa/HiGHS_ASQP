@@ -12,7 +12,7 @@ HighsInt AsmSolver::locL(const HighsInt& i, const HighsInt& j) {
 }
 
 void AsmSolver::recomputeExplicit(){ // TODO pivoting?
-    this->ZT_.resize(this->nullsp_dim_, std::vector<double>(this->Q_.dim_));
+    this->ZT_.assign(this->nullsp_dim_, std::vector<double>(this->Q_.dim_)); // TODO is it necessary to also recompute ZT_?
     HighsInt chol_size = this->nullsp_dim_ * (this->nullsp_dim_ + 1) / 2;
     this->chol_.assign(chol_size, 0.);
     for (HighsInt i {0}; i < this->nullsp_dim_; i++){// get Z^T
