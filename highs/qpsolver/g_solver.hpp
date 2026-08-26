@@ -110,7 +110,7 @@ class AsmSolver {
                                   std::vector<double>& new_lower,
                                   std::vector<double>& new_upper);
         void computeLocGrad();
-        double computeReducedVecs();
+        void computeReducedVecs();
         void compute_varvals(const double& alpha, std::vector<double>& loc);
         void computeFullStep(const std::vector<double>& delta, std::vector<double>& step);
         double computeQuadObjective(const std::vector<double>& vec);

@@ -12,19 +12,17 @@ HighsInt AsmSolver::locL(const HighsInt& i, const HighsInt& j) {
 }
 
 void AsmSolver::recomputeExplicit(){ // TODO pivoting?
-    this->ZT_.clear();
+    this->ZT_.resize(this->nullsp_dim_, std::vector<double>(this->Q_.dim_));
     HighsInt chol_size = this->nullsp_dim_ * (this->nullsp_dim_ + 1) / 2;
     this->chol_.assign(chol_size, 0.);
     for (HighsInt i {0}; i < this->nullsp_dim_; i++){// get Z^T
-        std::vector<double> z_col(this->Q_.dim_);
-        z_col[this->rangsp_dim_ + i] = 1.;
-        HBtran(z_col); // solves returning a column of Z, which we store as a row of Z^T
-        this->ZT_.push_back(z_col);
+        this->ZT_[i][this->rangsp_dim_ + i] = 1.;
+        HBtran(this->ZT_[i]); // solves returning a column of Z, which we store as a row of Z^T
     }
     for (HighsInt i {0}; i < this->nullsp_dim_; i++){// loop over the rows of Z^T
         this->Q_.product(this->ZT_[i], this->buffer_); // compute row of Z^T Q
         for (HighsInt j {0}; j <= i; j++){ // loop through columns of Z, up to the current row of Z^T, to only compute lower triangle of red_hessian_
-            // TODO this could be dont with HFtran to compute a full column of the reduced Hessian, without the need to store Z^T
+            // TODO could this be done with HFtran to compute a full column of the reduced Hessian, without the need to store Z^T?
             // in which case, do not use this->buffer_ anymore
             double sum {0.};
             for (HighsInt k {0}; k < this->Q_.dim_; k++){ // inner produce of row of Z^T Q with column of Z
@@ -91,16 +89,15 @@ void AsmSolver::LLTsolve(std::vector<double>& vec){
 
 void AsmSolver::extend(const HighsInt& loc_deactivated){
     // get new nullspace column
-    std::vector<double> z_col(this->Q_.dim_);
-    z_col[ loc_deactivated ] = 1.; // permutation taken care of by HBtran
-    HBtran(z_col);
-    this->ZT_.push_back(z_col); 
+    this->ZT_.emplace_back(this->Q_.dim_, 0.); // create new z_col
+    this->ZT_.back()[loc_deactivated] = 1.; // making a unit vector
+    HBtran(this->ZT_.back()); // compute z_col inplace
     // TODO extend by paying attention to numerical instabilities
     double lambda {0.}; // new diagonal element for cholesky factor
     if (this->nullsp_dim_ > 0){ // nullspace dimension updated just before calling extend()
         // solve L l = Z^T ( Q z_col ) = Z^T sol
         std::vector<double> sol(this->Q_.dim_);
-        this->Q_.product(z_col, sol);
+        this->Q_.product(this->ZT_.back(), sol);
         HFtran(sol); // B^{-1} ( sol )
         // select Z^T ( sol ), which is the bottom part of the solution vector above
         sol.erase(sol.begin(), sol.end() - this->nullsp_dim_); // TODO is the other part useful?

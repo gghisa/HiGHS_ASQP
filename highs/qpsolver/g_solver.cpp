@@ -155,28 +155,25 @@ void AsmSolver::setupFeasibilityLp(){
 
 void AsmSolver::setupQpBasis(){
     // init active and free temporary index vectors
-    std::vector<HighsInt> active_idxs;
     std::vector<HighsInt> free_idxs;
     for (HighsInt i {0}; i < this->lp_.num_row_; i++){ // loop through constraints
         this->con_status_[i] = this->HighsStatusToAsm(this->lp_basis_.row_status[i], i, false);
-        if ( this->isInBasis(this->con_status_[i]) ) active_idxs.push_back(i); // add index to list of indices
+        if ( this->isInBasis(this->con_status_[i]) ) this->basis_idxs_.push_back(i); // add index to list of indices
         // constraints shouldn't be free in basis, ignore HighsBasisStatus::kZero and HighsBasisStatus::kNonbasic
     }
     for (HighsInt i {0}; i < this->Q_.dim_; i++){ // loop through variables
-        HighsInt idx = i + this->lp_.num_row_;
         this->var_status_[i] = this->HighsStatusToAsm(this->lp_basis_.col_status[i], i, true);
         // ignore HighsBasisStatus::kNonbasic
         if ( this->isInBasis(this->var_status_[i]) ){
-            if ( this->isFreeInBasis(this->var_status_[i]) ) free_idxs.push_back(idx); // add index to list of indices
-            else active_idxs.push_back(idx); // if not free then it is active in the basis
+            if ( this->isFreeInBasis(this->var_status_[i]) ) free_idxs.push_back(i + this->lp_.num_row_); // add index to list of indices
+            else this->basis_idxs_.push_back(i + this->lp_.num_row_); // if not free then it is active in the basis
         }
     }
     // set nullspace and range dimensions
     this->nullsp_dim_ = (HighsInt) free_idxs.size();
-    this->rangsp_dim_ = (HighsInt) active_idxs.size();
+    this->rangsp_dim_ = (HighsInt) this->basis_idxs_.size();
     if (this->rangsp_dim_ + this->nullsp_dim_ != this->Q_.dim_) throw std::logic_error("Active and Free constraints should add up to number of columns!");
     // merge indices
-    this->basis_idxs_ = active_idxs;
     this->basis_idxs_.insert(this->basis_idxs_.end(),
                              free_idxs.begin(), free_idxs.end());
     std::vector<HighsInt> ordered_basis = this->basis_idxs_; // store buffer
@@ -213,8 +210,6 @@ void AsmSolver::setupBasisMat(){ // TODO do not create constraint mat copy
 void AsmSolver::setupReducedHessian(){
     // change hessian to square for future
     if (this->Q_.format_ == HessianFormat::kTriangular) this->Q_ = this->Q_.toSquare();
-    HighsInt chol_size = this->nullsp_dim_ * (this->nullsp_dim_ + 1) / 2; // number of elements in lower triangular matrix
-    this->chol_.assign(chol_size, 0.);
     this->recomputeExplicit();
     this->refactorize();
     return;
@@ -222,7 +217,6 @@ void AsmSolver::setupReducedHessian(){
 
 HighsStatus AsmSolver::run(){
     this->feasibility();
-    this->lp_.a_matrix_.ensureRowwise(); // for copying row-by-row in case of degeneracy
     if ( this->model_status_ == HighsModelStatus::kOptimal ){
         this->model_status_ = HighsModelStatus::kNotset;
         while ( true ) { // ASM iterations
@@ -289,6 +283,7 @@ void AsmSolver::ratiotest_pass1(const std::vector<double>& newloc,
                                 const std::vector<double>& newconvals,
                                 const std::vector<double>& denoms){
     this->alpha_relaxed_ = 1.; // we want to minimise it
+    this->alpha_ = 1.;
     double alpha_here;
     for (HighsInt i {0}; i < this->Q_.dim_; i++){ // loop through variables
         if (this->step_[i] < - this->options_.factor_pivot_tolerance && this->lp_relaxed_.col_lower_[i] > newloc[i] ){
@@ -357,6 +352,7 @@ void AsmSolver::ratiotest_pass2(const std::vector<double>& newloc,
             }
         }
     }
+    if ( max_pivot == this->options_.factor_pivot_tolerance) throw std::logic_error("Second pass not activating any constraint!");
     return;
 }
 
@@ -373,15 +369,15 @@ void AsmSolver::takeStep(){
     std::vector<double> newloc(this->Q_.dim_);
     this->compute_varvals(1., newloc); // compute (potential) x_{k+1}
     std::vector<double> newconvals(this->lp_.num_row_); // vector for new constraint values
-    std::vector<double> denoms(this->lp_.num_row_); // vectors for denominators of ratio test formula
     this->lp_.a_matrix_.product(newconvals, newloc); // a_i^T x_{k+1}
+    std::vector<double> denoms(this->lp_.num_row_); // vectors for denominators of ratio test formula
     this->lp_.a_matrix_.product(denoms, this->step_); // a_i^T \s
     ratiotest_pass1(newloc, newconvals, denoms); // ratio test on relaxed instance
     if (this->alpha_relaxed_ < 1.){ //implies there is an activation the relaxed test yielded a step smaller than unity
         HighsInt newactive_idx;
         AsmBasisStatus newactive_status;
         ratiotest_pass2(newloc, newconvals, denoms, newactive_idx, newactive_status);
-        if ( std::abs(this->alpha_) < this->options_.factor_pivot_tolerance ) this->alpha_ = 0.; // if we are not moving at all
+        if ( this->alpha_ < this->options_.factor_pivot_tolerance ) this->alpha_ = 0.; // if we are not moving at all
         else {
             this->compute_varvals(this->alpha_, this->solution_.col_value);
             this->updateObjective();
@@ -389,7 +385,6 @@ void AsmSolver::takeStep(){
         }
         this->activate(newactive_idx, newactive_status);
     } else { // if no constraint activated and we take the full step
-        this->alpha_ = 1.; // book-keeping only
         this->solution_.row_value = newconvals; // don't recompute new constraint values
         this->solution_.col_value = newloc; // nor variables' values either
         this->updateObjective();
@@ -472,15 +467,15 @@ void AsmSolver::computeLocGrad(){ // g + Q x_k
     return;
 }
 
-double AsmSolver::computeReducedVecs(){ // solve B x = (g + Q x_k) to compute Dantzig prices and reduced gradient
+void AsmSolver::computeReducedVecs(){ // solve B x = (g + Q x_k) to compute Dantzig prices and reduced gradient
     this->computeLocGrad();
-    std::vector<double> vec = this->loc_grad_;
-    this->HFtran(vec); // compute B x = g_k
-    this->pricing_.assign(vec.begin(), vec.end() - this->nullsp_dim_); // TODO, other types of pricing
+    this->pricing_ = this->loc_grad_;
+    this->HFtran(this->pricing_); // compute B x = g_k, TODO other types of pricing
+    this->red_grad_.assign( std::make_move_iterator(this->pricing_.begin() + this->rangsp_dim_),
+                            std::make_move_iterator(this->pricing_.end()));
+    this->pricing_.resize(this->rangsp_dim_);    
     this->signPrices();
-    this->red_grad_.assign(vec.end() - this->nullsp_dim_, vec.end()); // extract last z elements of the result, i.e. Z^T (g + Q x_k)
-    // returns the magnitude of the reduced gradient (0 if of null dimension)
-    return norm(this->red_grad_);
+    return;
 }
 
 void AsmSolver::compute_varvals(const double& alpha, std::vector<double>& loc){ // compute x_{k+1}
