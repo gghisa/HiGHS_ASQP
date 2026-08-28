@@ -31,7 +31,10 @@ AsmSolver::AsmSolver(const HighsOptions& options,
                      step_(hessian.dim_),
                      basis_perm_(hessian.dim_), // no init of basis_idxs_ as it is built with push_back()
                      var_status_(hessian.dim_),
-                     con_status_(lp.num_row_){}
+                     con_status_(lp.num_row_){
+    // change hessian to square for better memory access
+    if (this->Q_.format_ == HessianFormat::kTriangular) this->Q_ = this->Q_.toSquare();
+}
 
 HighsStatus AsmSolver::getHighsStatus(){ // public function
     return this->status_; // private attribute
@@ -78,6 +81,8 @@ void AsmSolver::HUpdate(HighsInt loc_idxdrop, HighsInt idx_new){
     // build HVector to point to constraint exiting basis
     HVector ep = unit_hvec(loc_idxdrop);
     this->B_.btranCall(ep, 1.);
+    //HVector ep0 = stdvec2hvec(this->ZT_.back()); this is wrong
+    //ep0.pack(); packing or not makes a difference!
     // update basis matrix
     this->B_.update(&newcol, &ep, &loc_idxdrop, &hint);
     return;
@@ -86,15 +91,13 @@ void AsmSolver::HUpdate(HighsInt loc_idxdrop, HighsInt idx_new){
 HVector AsmSolver::stdvec2hvec(const std::vector<double>& vec){
     HVector hvec;
     hvec.setup(vec.size());
-    HighsInt count_nz {0};
     for (size_t i {0}; i < vec.size(); i++){
-        if (std::abs(vec[i]) < this->options_.primal_feasibility_tolerance){
-            hvec.index[count_nz] = i;
-            count_nz += 1;
+        if (std::abs(vec[i]) > 0){
+            hvec.index[hvec.count] = i;
+            hvec.count += 1;
         }
     }
     hvec.array = vec;
-    hvec.count = count_nz;
     hvec.packFlag = true;
     return hvec;
 }
@@ -102,7 +105,7 @@ HVector AsmSolver::stdvec2hvec(const std::vector<double>& vec){
 HVector AsmSolver::unit_hvec(const HighsInt& p){
     HVector hvec;
     hvec.setup(this->Q_.dim_);
-    hvec.packFlag = true; // what is this?
+    hvec.packFlag = true; // what is this? Same as Micheal line 272 of basis.cpp
     hvec.index[0] = p;
     hvec.array[p] = 1.;
     hvec.count = 1;
@@ -208,8 +211,6 @@ void AsmSolver::setupBasisMat(){ // TODO do not create constraint mat copy
 }
 
 void AsmSolver::setupReducedHessian(){
-    // change hessian to square for future
-    if (this->Q_.format_ == HessianFormat::kTriangular) this->Q_ = this->Q_.toSquare();
     this->recomputeExplicit();
     this->refactorize();
     return;
@@ -223,10 +224,7 @@ HighsStatus AsmSolver::run(){
             if ( this->norm(this->red_grad_) < this->options_.primal_feasibility_tolerance ){ // TODO primal residual tolerance?
                 if ( this->maximalsteptaken() ) break;
                 this->deactivate();
-                if ( this->isoptimal() ) break;
-                if ( this->iterlimit() ) break;
-                if ( this->timelimit() ) break;
-                if ( this->nullsizelimit() ) break;
+                if ( this->isoptimal() || this->iterlimit() || this->timelimit() || this->nullsizelimit()) break;
             } else {
                 this->takeStep();
                 std::cout<<this->objective_<<" - "<< this->nullsp_dim_<<"\n";
@@ -266,7 +264,7 @@ void AsmSolver::deactivate(){ // loop through prices to find a constraint to dea
         }
         // extend the reduced hessian, no need to change HFactor
         this->extend(bestloc); // then extend the basis factorization
-        // send deactivated constraint to the end
+        // send deactivated constraint to the end of free-in-basis constraints
         std::vector<HighsInt>::iterator it = this->basis_idxs_.begin() + bestloc;
         std::rotate(it, it + 1, this->basis_idxs_.end());
         it = this->basis_perm_.begin() + bestloc;
@@ -429,7 +427,6 @@ void AsmSolver::activate(const HighsInt& idx, const AsmBasisStatus& status){
         }
         if (i < this->Q_.dim_ - 1){
             this->remove(i - this->rangsp_dim_);
-            // TODO resize ZT_
             return;
         } // else we just need to drop the last row of the lower triangular factor
     } else { // update HFactor if constraint not already in basis

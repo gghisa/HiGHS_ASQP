@@ -150,6 +150,7 @@ void AsmSolver::remove(const HighsInt& loc_activated){
     HighsInt size_L1 = (loc_activated - 1) * loc_activated / 2; // size of lower diagonal matrix above removed row
     this->chol_.erase(this->chol_.begin() + size_L1, this->chol_.begin() + size_L1 + loc_activated + 1);
     //
+    this->ZT_.erase(this->ZT_.begin() + loc_activated);
     removeNullSpaceDim();
     return;
 }
