@@ -361,7 +361,7 @@ void AsmSolver::takeStep(){
     for (size_t i {0}; i < this->red_grad_.size(); i++){
         this->delta_[i] = - this->red_grad_[i]; // TODO, is there a better place to flip sign?
     }
-    this->stepSanity(); // make sure the same identical problem has not been solved yet
+    //this->stepSanity(); // make sure the same identical problem has not been solved yet
     this->LLTsolve(this->delta_);
     this->computeFullStep(this->delta_, this->step_); // then compute full space step
     // ratio test vectors
