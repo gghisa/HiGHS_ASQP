@@ -69,18 +69,21 @@ void AsmSolver::HFtran(std::vector<double>& vec){
 void AsmSolver::HUpdate(HighsInt loc_idxdrop, HighsInt idx_new){
     HighsInt hint { 99999 }; // same number as Micheal in Basis::updatebasis
     // build HVector to add to basis
-    HVector newcol;
     if (idx_new < this->lp_.num_row_){ // extract constraint and build HVec
-        std::vector<double> ep(this->lp_.num_row_);
-        ep[idx_new] = 1.;
-        this->lp_.a_matrix_.productTranspose(this->buffer_, ep);
-        newcol = stdvec2hvec(this->buffer_);
+        std::vector<double> select(this->lp_.num_row_);
+        select[idx_new] = 1.;
+        this->lp_.a_matrix_.productTranspose(this->buffer_, select);
+    } else {
+        this->buffer_.assign(this->Q_.dim_, 0.);
+        this->buffer_[idx_new - this->lp_.num_row_] = 1.;
     }
-    else newcol = unit_hvec(idx_new - this->lp_.num_row_); // for a new bound becoming active
-    this->B_.ftranCall(newcol, 1.);
+    this->B_.ftranCall(this->buffer_);
+    HVector newcol = stdvec2hvec(this->buffer_);
     // build HVector to point to constraint exiting basis
-    HVector ep = unit_hvec(loc_idxdrop);
-    this->B_.btranCall(ep, 1.);
+    this->buffer_.assign(this->Q_.dim_, 0.);
+    this->buffer_[loc_idxdrop] = 1.;
+    this->B_.btranCall(this->buffer_);
+    HVector ep = stdvec2hvec(this->buffer_);
     //HVector ep0 = stdvec2hvec(this->ZT_.back()); this is wrong
     //ep0.pack(); packing or not makes a difference!
     // update basis matrix
@@ -88,7 +91,7 @@ void AsmSolver::HUpdate(HighsInt loc_idxdrop, HighsInt idx_new){
     return;
 }
 
-HVector AsmSolver::stdvec2hvec(const std::vector<double>& vec){
+HVector AsmSolver::stdvec2hvec(std::vector<double>& vec){
     HVector hvec;
     hvec.setup(vec.size());
     for (size_t i {0}; i < vec.size(); i++){
@@ -99,16 +102,7 @@ HVector AsmSolver::stdvec2hvec(const std::vector<double>& vec){
     }
     hvec.array = vec;
     hvec.packFlag = true;
-    return hvec;
-}
-
-HVector AsmSolver::unit_hvec(const HighsInt& p){
-    HVector hvec;
-    hvec.setup(this->Q_.dim_);
-    hvec.packFlag = true; // what is this? Same as Micheal line 272 of basis.cpp
-    hvec.index[0] = p;
-    hvec.array[p] = 1.;
-    hvec.count = 1;
+    hvec.pack();
     return hvec;
 }
 
@@ -227,7 +221,7 @@ HighsStatus AsmSolver::run(){
                 if ( this->isoptimal() || this->iterlimit() || this->timelimit() || this->nullsizelimit()) break;
             } else {
                 this->takeStep();
-                std::cout<<this->objective_<<" - "<< this->nullsp_dim_<<"\n";
+                std::cout<<this->objective_<<" - "<< this->nullsp_dim_<<"\n"<<std::flush;
             }
         }
         // outside loop but run only if feasibility is successful:
@@ -243,7 +237,7 @@ void AsmSolver::deactivate(){ // loop through prices to find a constraint to dea
     HighsInt bestidx = this->basis_idxs_[bestloc];
     for (HighsInt i {1}; i < this->rangsp_dim_; i++){ // loop through active constraints only
         if ( this->pricing_[i] < bestprice && 
-             this->pricing_[i] < - this->options_.dual_feasibility_tolerance ){ // prices are signed already
+             this->pricing_[i] < - this->options_.dual_feasibility_tolerance){ // prices are signed already
             bestprice = this->pricing_[i];
             bestidx = this->basis_idxs_[i];
             bestloc = i;
@@ -285,23 +279,27 @@ void AsmSolver::ratiotest_pass1(const std::vector<double>& newloc,
     this->alpha_ = 1.;
     double alpha_here;
     for (HighsInt i {0}; i < this->Q_.dim_; i++){ // loop through variables
-        if (this->step_[i] < - this->options_.factor_pivot_tolerance && this->lp_relaxed_.col_lower_[i] > newloc[i] ){
-            // lower bound break
-            alpha_here = ( this->lp_relaxed_.col_lower_[i] - this->solution_.col_value[i] ) / this->step_[i];
-            if ( alpha_here < this->alpha_relaxed_ ) this->alpha_relaxed_ = alpha_here;
-        } else if ( this->step_[i] > this->options_.factor_pivot_tolerance && this->lp_relaxed_.col_upper_[i] < newloc[i] ){
-            // upper bound break
-            alpha_here = ( this->lp_relaxed_.col_upper_[i] - this->solution_.col_value[i] ) / this->step_[i];
-            if ( alpha_here < this->alpha_relaxed_ ) this->alpha_relaxed_ = alpha_here;
+        if ( isInactive( this->var_status_[i] ) ) {
+            if (this->step_[i] < - this->options_.factor_pivot_tolerance && this->lp_relaxed_.col_lower_[i] > newloc[i] ){
+                // lower bound break
+                alpha_here = ( this->lp_relaxed_.col_lower_[i] - this->solution_.col_value[i] ) / this->step_[i];
+                if ( alpha_here < this->alpha_relaxed_ ) this->alpha_relaxed_ = alpha_here;
+            } else if ( this->step_[i] > this->options_.factor_pivot_tolerance && this->lp_relaxed_.col_upper_[i] < newloc[i] ){
+                // upper bound break
+                alpha_here = ( this->lp_relaxed_.col_upper_[i] - this->solution_.col_value[i] ) / this->step_[i];
+                if ( alpha_here < this->alpha_relaxed_ ) this->alpha_relaxed_ = alpha_here;
+            }
         }
     }
     for (HighsInt i {0}; i < this->lp_.num_row_; i++){ // loop through inactive constraints
-        if ( denoms[i] < - this->options_.factor_pivot_tolerance && this->lp_relaxed_.row_lower_[i] > newconvals[i] ){
-            alpha_here = ( this->lp_relaxed_.row_lower_[i] - this->solution_.row_value[i] ) / denoms[i];
-            if ( alpha_here < this->alpha_relaxed_ ) this->alpha_relaxed_ = alpha_here;
-        } else if ( denoms[i] > this->options_.factor_pivot_tolerance && this->lp_relaxed_.row_upper_[i] < newconvals[i] ) {
-            alpha_here = ( this->lp_relaxed_.row_upper_[i] - this->solution_.row_value[i] ) / denoms[i];
-            if ( alpha_here < this->alpha_relaxed_ ) this->alpha_relaxed_ = alpha_here;
+        if ( isInactive( this->con_status_[i] ) ){
+            if ( denoms[i] < - this->options_.factor_pivot_tolerance && this->lp_relaxed_.row_lower_[i] > newconvals[i] ){
+                alpha_here = ( this->lp_relaxed_.row_lower_[i] - this->solution_.row_value[i] ) / denoms[i];
+                if ( alpha_here < this->alpha_relaxed_ ) this->alpha_relaxed_ = alpha_here;
+            } else if ( denoms[i] > this->options_.factor_pivot_tolerance && this->lp_relaxed_.row_upper_[i] < newconvals[i] ) {
+                alpha_here = ( this->lp_relaxed_.row_upper_[i] - this->solution_.row_value[i] ) / denoms[i];
+                if ( alpha_here < this->alpha_relaxed_ ) this->alpha_relaxed_ = alpha_here;
+            }
         }
     }
     return;
@@ -314,41 +312,51 @@ void AsmSolver::ratiotest_pass2(const std::vector<double>& newloc,
     double alpha_here;
     double max_pivot = this->options_.factor_pivot_tolerance; // here select constraint to activate based on denominator, not alpha
     for (HighsInt i {0}; i < this->Q_.dim_; i++){ // loop through variables
-        if ( this->step_[i] < - max_pivot ){ // potential lower bound break
-            alpha_here = ( this->lp_.col_lower_[i] - this->solution_.col_value[i] ) / this->step_[i];
-            if ( alpha_here < this->alpha_relaxed_ ){
-                newactive_idx = i + this->lp_.num_row_;
-                newactive_status = AsmBasisStatus::kLower;
-                this->alpha_ = alpha_here;
-                max_pivot = - this->step_[i];
+        if ( isInactive( this->var_status_[i] ) ){
+            if ( this->step_[i] < - max_pivot ){ // potential lower bound break
+                alpha_here = ( this->lp_.col_lower_[i] - this->solution_.col_value[i] ) / this->step_[i];
+                if ( alpha_here < this->alpha_relaxed_ ){
+                    newactive_idx = i + this->lp_.num_row_;
+                    newactive_status = AsmBasisStatus::kLower;
+                    this->alpha_ = alpha_here;
+                    max_pivot = - this->step_[i];
+                }
+            } else if ( this->step_[i] > max_pivot ){ // potential upper bound break
+                alpha_here = ( this->lp_.col_upper_[i] - this->solution_.col_value[i] ) / this->step_[i];
+                if ( alpha_here < this->alpha_relaxed_ ){
+                    newactive_idx = i + this->lp_.num_row_;
+                    newactive_status = AsmBasisStatus::kUpper;
+                    this->alpha_ = alpha_here;
+                    max_pivot = this->step_[i];
+                }
             }
-        } else if ( this->step_[i] > max_pivot ){ // potential upper bound break
-            alpha_here = ( this->lp_.col_upper_[i] - this->solution_.col_value[i] ) / this->step_[i];
-            if ( alpha_here < this->alpha_relaxed_ ){
-                newactive_idx = i + this->lp_.num_row_;
-                newactive_status = AsmBasisStatus::kUpper;
-                this->alpha_ = alpha_here;
-                max_pivot = this->step_[i];
-            }
+        } else {
+            double a;
+            a+=1.;
         }
     }
     for (HighsInt i {0}; i < this->lp_.num_row_; i++){ // loop through inactive constraints
-        if ( denoms[i] < - max_pivot ){
-            alpha_here = ( this->lp_.row_lower_[i] - this->solution_.row_value[i] ) / denoms[i];
-            if ( alpha_here < this->alpha_relaxed_ ){
-                newactive_idx = i;
-                newactive_status = AsmBasisStatus::kLower;
-                this->alpha_ = alpha_here;
-                max_pivot = - denoms[i];
+        if ( isInactive( this->con_status_[i] ) ){
+            if ( denoms[i] < - max_pivot ){
+                alpha_here = ( this->lp_.row_lower_[i] - this->solution_.row_value[i] ) / denoms[i];
+                if ( alpha_here < this->alpha_relaxed_ ){
+                    newactive_idx = i;
+                    newactive_status = AsmBasisStatus::kLower;
+                    this->alpha_ = alpha_here;
+                    max_pivot = - denoms[i];
+                }
+            } else if ( denoms[i] > max_pivot ) {
+                alpha_here = ( this->lp_.row_upper_[i] - this->solution_.row_value[i] ) / denoms[i];
+                if ( alpha_here < this->alpha_relaxed_ ){
+                    newactive_idx = i;
+                    newactive_status = AsmBasisStatus::kUpper;
+                    this->alpha_ = alpha_here;
+                    max_pivot = denoms[i];
+                }
             }
-        } else if ( denoms[i] > max_pivot ) {
-            alpha_here = ( this->lp_.row_upper_[i] - this->solution_.row_value[i] ) / denoms[i];
-            if ( alpha_here < this->alpha_relaxed_ ){
-                newactive_idx = i;
-                newactive_status = AsmBasisStatus::kUpper;
-                this->alpha_ = alpha_here;
-                max_pivot = denoms[i];
-            }
+        } else {
+            double a;
+            a+=1.;
         }
     }
     if ( max_pivot == this->options_.factor_pivot_tolerance) throw std::logic_error("Second pass not activating any constraint!");
@@ -512,7 +520,7 @@ void AsmSolver::updateObjective(){
 
 void AsmSolver::signPrices(){
     for (HighsInt i {0}; i < this->rangsp_dim_; i++){
-        HighsInt idx { this->basis_idxs_[i] };
+        HighsInt idx = this->basis_idxs_[i];
         if (idx < this->lp_.num_row_) this->pricing_[i] *= static_cast<double>( this->con_status_[idx] );
         else {
             idx -= this->lp_.num_row_;
@@ -622,7 +630,7 @@ bool AsmSolver::isActiveInequality(const AsmBasisStatus& status){
     else return false;
 }
 
-bool AsmSolver::isInactive(const AsmBasisStatus& status){ // TODO unused, remove
+bool AsmSolver::isInactive(const AsmBasisStatus& status){
     if (status == AsmBasisStatus::kInactive ||
         status == AsmBasisStatus::kFreeInBasis) return true;
     else return false;

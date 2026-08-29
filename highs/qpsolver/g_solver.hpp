@@ -75,8 +75,7 @@ class AsmSolver {
         void HBtran(std::vector<double>& vec);
         void HFtran(std::vector<double>& vec);
         void HUpdate(HighsInt loc_idxdrop, HighsInt idx_new);
-        HVector stdvec2hvec(const std::vector<double>& vec);
-        HVector unit_hvec(const HighsInt& p);
+        HVector stdvec2hvec(std::vector<double>& vec);
         // Reduced Hessian operations
         HighsInt locL(const HighsInt& i, const HighsInt& j);
         void recomputeExplicit();
