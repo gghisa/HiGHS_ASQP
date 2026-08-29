@@ -77,15 +77,13 @@ void AsmSolver::HUpdate(HighsInt loc_idxdrop, HighsInt idx_new){
         this->buffer_.assign(this->Q_.dim_, 0.);
         this->buffer_[idx_new - this->lp_.num_row_] = 1.;
     }
-    this->B_.ftranCall(this->buffer_);
     HVector newcol = stdvec2hvec(this->buffer_);
+    this->B_.ftranCall(newcol, 1.);
     // build HVector to point to constraint exiting basis
     this->buffer_.assign(this->Q_.dim_, 0.);
     this->buffer_[loc_idxdrop] = 1.;
-    this->B_.btranCall(this->buffer_);
     HVector ep = stdvec2hvec(this->buffer_);
-    //HVector ep0 = stdvec2hvec(this->ZT_.back()); this is wrong
-    //ep0.pack(); packing or not makes a difference!
+    this->B_.btranCall(ep, 1.);
     // update basis matrix
     this->B_.update(&newcol, &ep, &loc_idxdrop, &hint);
     return;
@@ -95,14 +93,13 @@ HVector AsmSolver::stdvec2hvec(std::vector<double>& vec){
     HVector hvec;
     hvec.setup(vec.size());
     for (size_t i {0}; i < vec.size(); i++){
-        if (std::abs(vec[i]) > 0){
+        if (vec[i] != 0){
             hvec.index[hvec.count] = i;
             hvec.count += 1;
         }
     }
     hvec.array = vec;
     hvec.packFlag = true;
-    hvec.pack();
     return hvec;
 }
 
