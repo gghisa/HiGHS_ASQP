@@ -79,13 +79,8 @@ void AsmSolver::HUpdate(HighsInt loc_idxdrop, HighsInt idx_new){
     }
     HVector newcol = stdvec2hvec(this->buffer_);
     this->B_.ftranCall(newcol, 1.);
-    // build HVector to point to constraint exiting basis
-    this->buffer_.assign(this->Q_.dim_, 0.);
-    this->buffer_[loc_idxdrop] = 1.;
-    HVector ep = stdvec2hvec(this->buffer_);
-    this->B_.btranCall(ep, 1.);
     // update basis matrix
-    this->B_.update(&newcol, &ep, &loc_idxdrop, &hint);
+    this->B_.update(&newcol, &this->ZT_.back(), &loc_idxdrop, &hint);
     return;
 }
 
@@ -171,24 +166,23 @@ void AsmSolver::setupQpBasis(){
     this->basis_idxs_.insert(this->basis_idxs_.end(),
                              free_idxs.begin(), free_idxs.end());
     std::vector<HighsInt> ordered_basis = this->basis_idxs_; // store buffer
-    this->setupBasisMat(); // setup HFactor
+    this->setupBasisMat(ordered_basis); // setup HFactor
     // since basis indices may have been shuffled so that free indices may not trail active ones anymore,
     // set permutation order to match the index sets (A,V) structure
     for (HighsInt i {0}; i < this->Q_.dim_; i++){
         for (HighsInt j {0}; j < this->Q_.dim_; j++){
-            if (ordered_basis[i] == this->basis_idxs_[j]){
+            if ( this->basis_idxs_[i] == ordered_basis[j] ){
                 this->basis_perm_[i] = j;
                 break;
             }
         }
     }
-    this->basis_idxs_ = ordered_basis; // then restore order in basis indices
     this->setupReducedHessian(); // build Reduced Hessian
     this->computeReducedVecs(); // compute initial reduced gradient and pricing
     return;
 }
 
-void AsmSolver::setupBasisMat(){ // TODO do not create constraint mat copy
+void AsmSolver::setupBasisMat(std::vector<HighsInt>& basis_idxs){ // TODO do not create constraint mat copy
     HighsSparseMatrix constraint_mat = this->lp_.a_matrix_; // create a copy of the constraint matrix
     constraint_mat.ensureRowwise(); // flip the way in which it is stored
     constraint_mat.format_ = MatrixFormat::kColwise; // but "trick it" into thinking it is still stored columnwise
@@ -196,7 +190,7 @@ void AsmSolver::setupBasisMat(){ // TODO do not create constraint mat copy
     constraint_mat.num_row_ = constraint_mat.num_col_; // so that when HFactor uses the matrix
     constraint_mat.num_col_ = temp_old_num_row; // it receives the constraint matrix stored "column wise"
     // where each column is a constraint. its inverse transpose will have as columns the nullspace basis
-    this->B_.setup(constraint_mat, this->basis_idxs_); //shuffles basis indices
+    this->B_.setup(constraint_mat, basis_idxs); // shuffles basis indices
     this->B_.build();
     return;
 }
@@ -254,7 +248,7 @@ void AsmSolver::deactivate(){ // loop through prices to find a constraint to dea
             this->var_status_[var_idx] = AsmBasisStatus::kFreeInBasis;
         }
         // extend the reduced hessian, no need to change HFactor
-        this->extend(bestloc); // then extend the basis factorization
+        this->extend( this->basis_perm_[bestloc] ); // then extend the basis factorization
         // send deactivated constraint to the end of free-in-basis constraints
         std::vector<HighsInt>::iterator it = this->basis_idxs_.begin() + bestloc;
         std::rotate(it, it + 1, this->basis_idxs_.end());
@@ -315,7 +309,6 @@ void AsmSolver::ratiotest_pass2(const std::vector<double>& newloc,
                 if ( alpha_here < this->alpha_relaxed_ ){
                     newactive_idx = i + this->lp_.num_row_;
                     newactive_status = AsmBasisStatus::kLower;
-                    this->alpha_ = alpha_here;
                     max_pivot = - this->step_[i];
                 }
             } else if ( this->step_[i] > max_pivot ){ // potential upper bound break
@@ -323,13 +316,9 @@ void AsmSolver::ratiotest_pass2(const std::vector<double>& newloc,
                 if ( alpha_here < this->alpha_relaxed_ ){
                     newactive_idx = i + this->lp_.num_row_;
                     newactive_status = AsmBasisStatus::kUpper;
-                    this->alpha_ = alpha_here;
                     max_pivot = this->step_[i];
                 }
             }
-        } else {
-            double a;
-            a+=1.;
         }
     }
     for (HighsInt i {0}; i < this->lp_.num_row_; i++){ // loop through inactive constraints
@@ -339,7 +328,6 @@ void AsmSolver::ratiotest_pass2(const std::vector<double>& newloc,
                 if ( alpha_here < this->alpha_relaxed_ ){
                     newactive_idx = i;
                     newactive_status = AsmBasisStatus::kLower;
-                    this->alpha_ = alpha_here;
                     max_pivot = - denoms[i];
                 }
             } else if ( denoms[i] > max_pivot ) {
@@ -347,16 +335,12 @@ void AsmSolver::ratiotest_pass2(const std::vector<double>& newloc,
                 if ( alpha_here < this->alpha_relaxed_ ){
                     newactive_idx = i;
                     newactive_status = AsmBasisStatus::kUpper;
-                    this->alpha_ = alpha_here;
                     max_pivot = denoms[i];
                 }
             }
-        } else {
-            double a;
-            a+=1.;
         }
     }
-    if ( max_pivot == this->options_.factor_pivot_tolerance) throw std::logic_error("Second pass not activating any constraint!");
+    if ( max_pivot <= this->options_.factor_pivot_tolerance) throw std::logic_error("Second pass not activating any constraint!");
     return;
 }
 
@@ -381,8 +365,9 @@ void AsmSolver::takeStep(){
         HighsInt newactive_idx;
         AsmBasisStatus newactive_status;
         ratiotest_pass2(newloc, newconvals, denoms, newactive_idx, newactive_status);
-        if ( this->alpha_ < this->options_.factor_pivot_tolerance ) this->alpha_ = 0.; // if we are not moving at all
+        if ( this->alpha_relaxed_ < 0 ) this->alpha_ = 0.; // if we are not moving at all
         else {
+            this->alpha_ = this->alpha_relaxed_;
             this->compute_varvals(this->alpha_, this->solution_.col_value);
             this->updateObjective();
             this->lp_.a_matrix_.product(this->solution_.row_value, this->solution_.col_value); // a_i^T x_{k+1}
@@ -434,13 +419,14 @@ void AsmSolver::activate(const HighsInt& idx, const AsmBasisStatus& status){
             this->remove(i - this->rangsp_dim_);
             return;
         } // else we just need to drop the last row of the lower triangular factor
-    } else { // update HFactor if constraint not already in basis
-        // drop the last column in V and substitute it with new index,
-        // which then moves to the end of the current active set while all other free indices are shifted by 1 to the end
-        this->HUpdate(this->basis_perm_.back(), idx);
+    } else { 
         // change dropped constraint to inactive
         if (this->basis_idxs_.back() < this->lp_.num_row_) this->con_status_[this->basis_idxs_.back()] = AsmBasisStatus::kInactive;
         else this->var_status_[this->basis_idxs_.back() - this->lp_.num_row_] = AsmBasisStatus::kInactive;
+        // update HFactor if constraint not already in basis
+        // drop the last column in V and substitute it with new index,
+        // which then moves to the end of the current active set while all other free indices are shifted by 1 to the end
+        this->HUpdate(this->basis_perm_.back(), idx);
         this->basis_idxs_.back() = idx;
         std::rotate(this->basis_idxs_.begin() + this->rangsp_dim_, this->basis_idxs_.end() - 1, this->basis_idxs_.end());
         std::rotate(this->basis_perm_.begin() + this->rangsp_dim_, this->basis_perm_.end() - 1, this->basis_perm_.end());   
@@ -490,7 +476,7 @@ void AsmSolver::compute_varvals(const double& alpha, std::vector<double>& loc){ 
     return;
 }
 
-void AsmSolver::computeFullStep(const std::vector<double>& delta, std::vector<double>& step){
+void AsmSolver::computeFullStep(const std::vector<double>& delta, std::vector<double>& step){ // TODO don't use function arguments
     step.assign(this->rangsp_dim_, 0.);
     step.insert(step.end(), delta.begin(), delta.end());
     this->HBtran(step); // is this cheaper than holding the explicit Z^T and using that one?

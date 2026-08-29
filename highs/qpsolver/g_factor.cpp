@@ -12,21 +12,27 @@ HighsInt AsmSolver::locL(const HighsInt& i, const HighsInt& j) {
 }
 
 void AsmSolver::recomputeExplicit(){ // TODO pivoting?
-    this->ZT_.assign(this->nullsp_dim_, std::vector<double>(this->Q_.dim_)); // TODO is it necessary to also recompute ZT_?
+    this->ZT_.assign(this->nullsp_dim_, HVector()); // TODO is it necessary to also recompute ZT_?
     HighsInt chol_size = this->nullsp_dim_ * (this->nullsp_dim_ + 1) / 2;
     this->chol_.assign(chol_size, 0.);
-    for (HighsInt i {0}; i < this->nullsp_dim_; i++){// get Z^T
-        this->ZT_[i][this->rangsp_dim_ + i] = 1.;
-        HBtran(this->ZT_[i]); // solves returning a column of Z, which we store as a row of Z^T
+    for (HighsInt i {0}; i < this->nullsp_dim_; i++){ // get Z^T
+        // create unit HVector
+        this->ZT_[i].setup(this->Q_.dim_);
+        this->ZT_[i].index[0] = this->basis_perm_[this->rangsp_dim_ + i];
+        this->ZT_[i].array[ this->ZT_[i].index[0] ] = 1.;
+        this->ZT_[i].count = 1;
+        this->ZT_[i].packFlag = true;
+        // extract column of Z
+        this->B_.btranCall(this->ZT_[i], 1.); // solves returning a column of Z, which we store as a row of Z^T
     }
     for (HighsInt i {0}; i < this->nullsp_dim_; i++){// loop over the rows of Z^T
-        this->Q_.product(this->ZT_[i], this->buffer_); // compute row of Z^T Q
+        this->Q_.product(this->ZT_[i].array, this->buffer_); // compute row of Z^T Q
         for (HighsInt j {0}; j <= i; j++){ // loop through columns of Z, up to the current row of Z^T, to only compute lower triangle of red_hessian_
             // TODO could this be done with HFtran to compute a full column of the reduced Hessian, without the need to store Z^T?
             // in which case, do not use this->buffer_ anymore
             double sum {0.};
             for (HighsInt k {0}; k < this->Q_.dim_; k++){ // inner produce of row of Z^T Q with column of Z
-                sum += this->buffer_[k] * this->ZT_[j][k]; // factorization row by row according to Cholesky—Banachiewicz
+                sum += this->buffer_[k] * this->ZT_[j].array[k]; // factorization row by row according to Cholesky—Banachiewicz
             }
             this->chol_[ locL(i,j) ] = sum; // should be ordered such that chol_ is row-wise of M
         }
@@ -89,15 +95,20 @@ void AsmSolver::LLTsolve(std::vector<double>& vec){
 
 void AsmSolver::extend(const HighsInt& loc_deactivated){
     // get new nullspace column
-    this->ZT_.emplace_back(this->Q_.dim_, 0.); // create new z_col
-    this->ZT_.back()[loc_deactivated] = 1.; // making a unit vector
-    HBtran(this->ZT_.back()); // compute z_col inplace
+    // create unit HVector
+    this->ZT_.emplace_back(); // create new z_col (first get unit HVector)
+    this->ZT_.back().setup(this->Q_.dim_);
+    this->ZT_.back().index[0] = loc_deactivated;
+    this->ZT_.back().array[ this->ZT_.back().index[0] ] = 1.;
+    this->ZT_.back().count = 1;
+    this->ZT_.back().packFlag = true;
+    this->B_.btranCall(this->ZT_.back(), 1.); // compute z_col inplace
     // TODO extend by paying attention to numerical instabilities
     double lambda {0.}; // new diagonal element for cholesky factor
-    if (this->nullsp_dim_ > 0){ // nullspace dimension updated just before calling extend()
+    if (this->nullsp_dim_ > 0){ // nullspace dimension updated after calling extend()
         // solve L l = Z^T ( Q z_col ) = Z^T sol
         std::vector<double> sol(this->Q_.dim_);
-        this->Q_.product(this->ZT_.back(), sol);
+        this->Q_.product(this->ZT_.back().array, sol);
         HFtran(sol); // B^{-1} ( sol )
         // select Z^T ( sol ), which is the bottom part of the solution vector above
         sol.erase(sol.begin(), sol.end() - this->nullsp_dim_); // TODO is the other part useful?
@@ -109,7 +120,7 @@ void AsmSolver::extend(const HighsInt& loc_deactivated){
             lambda -= sol[i] * sol[i];
         }
     }
-    lambda += 2 * computeQuadObjective(this->ZT_.back());
+    lambda += 2 * computeQuadObjective(this->ZT_.back().array);
     if (lambda <= this->options_.factor_pivot_tolerance) throw std::domain_error("Reduced matrix is either semi- or indefinite!");
     this->chol_.push_back( std::sqrt(lambda) );
     return;

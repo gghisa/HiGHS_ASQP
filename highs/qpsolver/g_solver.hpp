@@ -50,7 +50,7 @@ class AsmSolver {
         HighsInt rangsp_dim_ {this->Q_.dim_};
         std::vector<double> chol_; // explicit hessian or its cholesky factor
         HFactor B_;
-        std::vector<std::vector<double>> ZT_; // explicit null space span
+        std::vector<HVector> ZT_; // explicit null space span
         std::vector<double> buffer_; // for operations with permutations
         // Real numbers vectors
         std::vector<double> loc_grad_; // current gradient g + Q x_k, where x_k = solution_.col_value
@@ -89,7 +89,7 @@ class AsmSolver {
         void feasibility();
         void setupFeasibilityLp();
         void setupQpBasis();
-        void setupBasisMat();
+        void setupBasisMat(std::vector<HighsInt>& basis_idxs);
         void setupReducedHessian();
         // Main loop functions
         void deactivate();
