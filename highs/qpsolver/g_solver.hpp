@@ -75,7 +75,7 @@ class AsmSolver {
         void HBtran(std::vector<double>& vec);
         void HFtran(std::vector<double>& vec);
         void HUpdate(HighsInt loc_idxdrop, HighsInt idx_new);
-        HVector stdvec2hvec(std::vector<double>& vec);
+        HVector stdvec2hvec(const std::vector<double>& vec, HVector& hvec);
         // Reduced Hessian operations
         HighsInt locL(const HighsInt& i, const HighsInt& j);
         void recomputeExplicit();
@@ -90,7 +90,6 @@ class AsmSolver {
         void setupFeasibilityLp();
         void setupQpBasis();
         void setupBasisMat(std::vector<HighsInt>& basis_idxs);
-        void setupReducedHessian();
         // Main loop functions
         void deactivate();
         void ratiotest_pass1(const std::vector<double>& newloc,
@@ -122,6 +121,11 @@ class AsmSolver {
         bool nullsizelimit();
         bool isoptimal();
         // Helper functions
+        static void ratio1(const double tol, const double denom, const double lower, const double upper,
+                           const double oldval, const double newval, double& alpha); // static from Claude.ai
+        static void ratio2(double& max_pivot, const double denom, const double lower, const double upper,
+                           const double oldval, const double newval, const double alpha,
+                           const HighsInt idx, HighsInt& newactive_idx, AsmBasisStatus& newactive_status);
         void stepSanity();
         void addNullSpaceDim();
         void removeNullSpaceDim();

@@ -94,6 +94,8 @@ void AsmSolver::LLTsolve(std::vector<double>& vec){
 }
 
 void AsmSolver::extend(const HighsInt& loc_deactivated){
+    // TODO new column in V may not be the deactivated column, even though the deactivated index stays the same?
+    // TODO if a vector is changed in basis matrix, weights may change too, update pricing and red grad accordingly
     // get new nullspace column
     // create unit HVector
     this->ZT_.emplace_back(); // create new z_col (first get unit HVector)
