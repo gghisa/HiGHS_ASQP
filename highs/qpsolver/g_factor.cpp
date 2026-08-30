@@ -128,7 +128,13 @@ void AsmSolver::extend(const HighsInt& loc_deactivated){
     return;
 }
 
-void AsmSolver::remove(const HighsInt& loc_activated){
+void AsmSolver::reduce(const HighsInt& loc_activated){
+    if ( loc_activated == this->nullsp_dim_){
+        this->chol_.resize(this->chol_.size() - this->nullsp_dim_); // drop last row of L
+        this->ZT_.pop_back(); // drop last row of Z^T (last column of Z)
+        this->removeNullSpaceDim();
+        return;
+    }
     // if activated vector was free in basis, we must remove that row and column from Z^T, no arbitrary choice
     // TODO givens rotations are also needed when dealing with indefinite matrix
     // we remove row loc_activated, so we need to zero out the super-diagonal elements

@@ -58,6 +58,10 @@ class AsmSolver {
         std::vector<double> pricing_; // a value for each active constraint, based on which the choice of which to deactivate is made
         std::vector<double> delta_; // reduced step, solution of M \delta = Z^T (g + Q x_k)
         std::vector<double> step_; // full step, result of Z \delta
+        // vectors for forward stepping
+        std::vector<double> newvarvals_;
+        std::vector<double> newconvals_;
+        std::vector<double> newconpivots_;
         // Numbers
         double alpha_ {1.}; // step size for ratio test
         double alpha_relaxed_ {1.};
@@ -84,7 +88,7 @@ class AsmSolver {
         void LTsolve(std::vector<double>& vec);
         void LLTsolve(std::vector<double>& vec);
         void extend(const HighsInt& loc_deactivated);
-        void remove(const HighsInt& loc_activated);
+        void reduce(const HighsInt& loc_activated);
         // Feasibility phase functions
         void feasibility();
         void setupFeasibilityLp();

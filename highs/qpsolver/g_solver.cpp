@@ -29,6 +29,9 @@ AsmSolver::AsmSolver(const HighsOptions& options,
                      buffer_(hessian.dim_),
                      loc_grad_(hessian.dim_),
                      step_(hessian.dim_),
+                     newvarvals_(hessian.dim_),
+                     newconvals_(lp.num_row_),
+                     newconpivots_(lp.num_row_),
                      basis_perm_(hessian.dim_), // no init of basis_idxs_ as it is built with push_back()
                      var_status_(hessian.dim_),
                      con_status_(lp.num_row_){
@@ -295,8 +298,7 @@ void AsmSolver::ratio2(double& max_pivot, const double denom, const double lower
 void AsmSolver::ratiotest_pass2(const std::vector<double>& newloc,
                                 const std::vector<double>& newconvals,
                                 const std::vector<double>& denoms,
-                                HighsInt& newactive_idx,
-                                AsmBasisStatus& newactive_status){
+                                HighsInt& newactive_idx, AsmBasisStatus& newactive_status){
     double max_pivot = std::max( this->options_.factor_pivot_tolerance, 0. ); // to ensure no division by 0 in ratio2
     for (HighsInt i {0}; i < this->Q_.dim_; i++) // loop through variables
         ratio2(max_pivot, this->step_[i], this->lp_.col_lower_[i], this->lp_.col_upper_[i],
@@ -320,19 +322,16 @@ void AsmSolver::takeStep(){
     this->LLTsolve(this->delta_);
     this->computeFullStep(this->delta_, this->step_); // then compute full space step
     // ratio test vectors
-    std::vector<double> newloc(this->Q_.dim_);
-    this->compute_varvals(1., newloc); // compute (potential) x_{k+1}
-    std::vector<double> newconvals(this->lp_.num_row_); // vector for new constraint values
-    this->lp_.a_matrix_.product(newconvals, newloc); // a_i^T x_{k+1}
-    std::vector<double> denoms(this->lp_.num_row_); // vectors for denominators of ratio test formula
-    this->lp_.a_matrix_.product(denoms, this->step_); // a_i^T \s
-    ratiotest_pass1(newloc, newconvals, denoms); // ratio test on relaxed instance
+    this->compute_varvals(1., this->newvarvals_); // compute (potential) x_{k+1}
+    this->lp_.a_matrix_.product(this->newconvals_, this->newvarvals_); // a_i^T x_{k+1}
+    this->lp_.a_matrix_.product(this->newconpivots_, this->step_); // a_i^T \s
+    ratiotest_pass1(this->newvarvals_, this->newconvals_, this->newconpivots_); // ratio test on relaxed instance
     if (this->alpha_relaxed_ < 1.){ //implies there is an activation the relaxed test yielded a step smaller than unity
         HighsInt newactive_idx;
         AsmBasisStatus newactive_status;
-        ratiotest_pass2(newloc, newconvals, denoms, newactive_idx, newactive_status);
+        ratiotest_pass2(this->newvarvals_, this->newconvals_, this->newconpivots_, newactive_idx, newactive_status);
         if ( this->alpha_relaxed_ < 0 ) this->alpha_ = 0.; // if we are not moving at all
-        else {
+        else { // TODO these checks can be removed
             this->alpha_ = this->alpha_relaxed_;
             this->compute_varvals(this->alpha_, this->solution_.col_value);
             this->updateObjective();
@@ -340,8 +339,8 @@ void AsmSolver::takeStep(){
         }
         this->activate(newactive_idx, newactive_status);
     } else { // if no constraint activated and we take the full step
-        this->solution_.row_value = newconvals; // don't recompute new constraint values
-        this->solution_.col_value = newloc; // nor variables' values either
+        this->solution_.row_value = this->newconvals_; // don't recompute new constraint values
+        this->solution_.col_value = this->newvarvals_; // nor variables' values either
         this->updateObjective();
     }
     this->computeReducedVecs(); // red grad needs updating with new position
@@ -353,6 +352,7 @@ void AsmSolver::takeStep(){
 void AsmSolver::activate(const HighsInt& idx, const AsmBasisStatus& status){
     // handle status update
     bool alreadyinbasis {false};
+    HighsInt loc_remove {-1};
     if (idx < this->lp_.num_row_){
         if ( this->isFreeInBasis(this->con_status_[idx]) ) alreadyinbasis = true;
         //
@@ -371,21 +371,18 @@ void AsmSolver::activate(const HighsInt& idx, const AsmBasisStatus& status){
         std::cout<<"Already in basis! Not happening often...\n";
         // send element in location i to the end of active constraints
         // and shift all free in basis down by one until the old position of the constraint in activation
-        HighsInt i;
-        for (i = this->rangsp_dim_; i < this->Q_.dim_; i++){
-            if (this->basis_idxs_[i] == idx){
+        for (loc_remove = this->rangsp_dim_; loc_remove < this->Q_.dim_; loc_remove++){
+            if (this->basis_idxs_[loc_remove] == idx){
                 auto it = this->basis_idxs_.begin();
-                std::rotate(it + this->rangsp_dim_, it + i, it + i + 1);
+                std::rotate(it + this->rangsp_dim_, it + loc_remove, it + loc_remove + 1);
                 it = this->basis_perm_.begin();
-                std::rotate(it + this->rangsp_dim_, it + i, it + i + 1);
+                std::rotate(it + this->rangsp_dim_, it + loc_remove, it + loc_remove + 1);
                 break;
             }
         }
-        if (i < this->Q_.dim_ - 1){
-            this->remove(i - this->rangsp_dim_);
-            return;
-        } // else we just need to drop the last row of the lower triangular factor
+        loc_remove -= this->rangsp_dim_;
     } else { 
+        loc_remove = this->nullsp_dim_; // drop last, TODO select which to drop
         // change dropped constraint to inactive
         if (this->basis_idxs_.back() < this->lp_.num_row_) this->con_status_[this->basis_idxs_.back()] = AsmBasisStatus::kInactive;
         else this->var_status_[this->basis_idxs_.back() - this->lp_.num_row_] = AsmBasisStatus::kInactive;
@@ -398,9 +395,7 @@ void AsmSolver::activate(const HighsInt& idx, const AsmBasisStatus& status){
         std::rotate(this->basis_perm_.begin() + this->rangsp_dim_, this->basis_perm_.end() - 1, this->basis_perm_.end());   
     }
     // update factorization if the already-in-basis row was the last one or if we arbitrarily chose to drop the last one
-    this->chol_.resize(this->chol_.size() - this->nullsp_dim_); // drop last row of L
-    this->ZT_.pop_back(); // drop last row of Z^T (last column of Z)
-    removeNullSpaceDim();
+    this->reduce(loc_remove);
     return;
 }
 
@@ -445,7 +440,7 @@ void AsmSolver::compute_varvals(const double& alpha, std::vector<double>& loc){ 
 void AsmSolver::computeFullStep(const std::vector<double>& delta, std::vector<double>& step){ // TODO don't use function arguments
     step.assign(this->rangsp_dim_, 0.);
     step.insert(step.end(), delta.begin(), delta.end());
-    this->HBtran(step); // is this cheaper than holding the explicit Z^T and using that one?
+    this->HBtran(step);
     return;
 }
 
