@@ -132,8 +132,5 @@ class AsmSolver {
         AsmBasisStatus HighsStatusToAsm(const HighsBasisStatus& status, const HighsInt i, const bool variable);
         bool isInBasis(const AsmBasisStatus& status);
         bool isFreeInBasis(const AsmBasisStatus& status);
-        bool isActive(const AsmBasisStatus& status);
-        bool isActiveInequality(const AsmBasisStatus& status);
-        bool isInactive(const AsmBasisStatus& status);
         double norm(const std::vector<double>& vec);
 };

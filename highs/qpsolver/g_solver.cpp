@@ -566,25 +566,6 @@ bool AsmSolver::isFreeInBasis(const AsmBasisStatus& status){
     else return false;
 }
 
-bool AsmSolver::isActive(const AsmBasisStatus& status){ // TODO unused, remove
-    if (status == AsmBasisStatus::kLower ||
-        status == AsmBasisStatus::kUpper ||
-        status == AsmBasisStatus::kEquality) return true;
-    else return false;
-}
-
-bool AsmSolver::isActiveInequality(const AsmBasisStatus& status){
-    if (status == AsmBasisStatus::kLower ||
-        status == AsmBasisStatus::kUpper) return true;
-    else return false;
-}
-
-bool AsmSolver::isInactive(const AsmBasisStatus& status){
-    if (status == AsmBasisStatus::kInactive ||
-        status == AsmBasisStatus::kFreeInBasis) return true;
-    else return false;
-}
-
 double AsmSolver::norm(const std::vector<double>& vec){
     double sum {0.}; // returns zero if size is null
     for (size_t i {0}; i < vec.size(); i++){
