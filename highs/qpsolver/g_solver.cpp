@@ -269,32 +269,26 @@ void AsmSolver::ratiotest_pass1(const std::vector<double>& newloc,
     this->alpha_relaxed_ = 1.; // we want to minimise it
     this->alpha_ = 1.;
     const double tol = this->options_.factor_pivot_tolerance;
-    for (HighsInt i {0}; i < this->Q_.dim_; i++){ // loop through variables
+    for (HighsInt i {0}; i < this->Q_.dim_; i++) // loop through variables
         ratio1(tol, this->step_[i], this->lp_relaxed_.col_lower_[i], this->lp_relaxed_.col_upper_[i],
               this->solution_.col_value[i], newloc[i], this->alpha_relaxed_);
-    }
-    for (HighsInt i {0}; i < this->lp_.num_row_; i++){ // loop through constraints
+    for (HighsInt i {0}; i < this->lp_.num_row_; i++) // loop through constraints
         ratio1(tol, denoms[i], this->lp_relaxed_.row_lower_[i], this->lp_relaxed_.row_upper_[i],
               this->solution_.row_value[i], newconvals[i], this->alpha_relaxed_);
-    }
     return;
 }
 
 void AsmSolver::ratio2(double& max_pivot, const double denom, const double lower, const double upper,
                        const double oldval, const double newval, const double alpha,
                        const HighsInt idx, HighsInt& newactive_idx, AsmBasisStatus& newactive_status){
-    if ( denom < - max_pivot ){
-        if ( ( lower - oldval ) / denom < alpha ){
+    if ( denom < - max_pivot && ( lower - oldval ) / denom < alpha ){
             newactive_idx = idx;
             newactive_status = AsmBasisStatus::kLower;
             max_pivot = - denom;
-        }
-    } else if ( denom > max_pivot ){
-        if ( ( upper - oldval ) / denom < alpha ){
+    } else if ( denom > max_pivot && ( upper - oldval ) / denom < alpha ){
             newactive_idx = idx;
             newactive_status = AsmBasisStatus::kUpper;
             max_pivot = denom;
-        }
     }
 }
 
@@ -303,18 +297,15 @@ void AsmSolver::ratiotest_pass2(const std::vector<double>& newloc,
                                 const std::vector<double>& denoms,
                                 HighsInt& newactive_idx,
                                 AsmBasisStatus& newactive_status){
-    double alpha_here;
-    double max_pivot = this->options_.factor_pivot_tolerance; // here select constraint to activate based on denominator, not alpha
-    for (HighsInt i {0}; i < this->Q_.dim_; i++){ // loop through variables
+    double max_pivot = std::max( this->options_.factor_pivot_tolerance, 0. ); // to ensure no division by 0 in ratio2
+    for (HighsInt i {0}; i < this->Q_.dim_; i++) // loop through variables
         ratio2(max_pivot, this->step_[i], this->lp_.col_lower_[i], this->lp_.col_upper_[i],
                this->solution_.col_value[i], newloc[i], this->alpha_relaxed_,
                i + this->lp_.num_row_, newactive_idx, newactive_status);
-    }
-    for (HighsInt i {0}; i < this->lp_.num_row_; i++){ // loop through constraints
+    for (HighsInt i {0}; i < this->lp_.num_row_; i++) // loop through constraints
         ratio2(max_pivot, denoms[i], this->lp_.row_lower_[i], this->lp_.row_upper_[i],
                this->solution_.row_value[i], newconvals[i], this->alpha_relaxed_,
                i, newactive_idx, newactive_status);
-    }
     if ( max_pivot <= this->options_.factor_pivot_tolerance) throw std::logic_error("Second pass not activating any constraint!");
     return;
 }
