@@ -245,7 +245,7 @@ void AsmSolver::deactivate(){ // loop through prices to find a constraint to dea
         // make redgrad and pricing ready for basis factorization and potential update
         this->red_grad_.push_back(bestprice);
         this->pricing_.erase(this->pricing_.begin() + bestloc);
-        this->extend( this->basis_perm_[bestloc] ); // update factorization(s)
+        this->extend( this->basis_perm_[bestloc], bestidx ); // update factorization(s)
         // send deactivated constraint to the end of free-in-basis constraints
         std::vector<HighsInt>::iterator it = this->basis_idxs_.begin() + bestloc;
         std::rotate(it, it + 1, this->basis_idxs_.end());

@@ -8,6 +8,7 @@
 #include "qpsolver/g_solver.hpp"
 
 HighsInt AsmSolver::locL(const HighsInt& i, const HighsInt& j) {
+    if ( j > i ) throw std::domain_error("Column index should not be larger than row index!");
     return i*(i+1)/2 + j; // assumes indices are given for lower triangular matrix
 }
 
@@ -93,11 +94,8 @@ void AsmSolver::LLTsolve(std::vector<double>& vec){
     return;
 }
 
-void AsmSolver::extend(const HighsInt& loc_deactivated){
-    // TODO new column in V may not be the deactivated column, even though the deactivated index stays the same?
-    // TODO if a vector is changed in basis matrix, weights may change too, update pricing and red grad accordingly
-    // get new nullspace column
-    // create unit HVector
+void AsmSolver::extend(const HighsInt& loc_deactivated, const HighsInt& idx_deactivated){
+    // get new nullspace column, creating unit HVector
     this->ZT_.emplace_back(); // create new z_col (first get unit HVector)
     this->ZT_.back().setup(this->Q_.dim_);
     this->ZT_.back().index[0] = loc_deactivated;
@@ -105,7 +103,6 @@ void AsmSolver::extend(const HighsInt& loc_deactivated){
     this->ZT_.back().count = 1;
     this->ZT_.back().packFlag = true;
     this->B_.btranCall(this->ZT_.back(), 1.); // compute z_col inplace
-    // TODO extend by paying attention to numerical instabilities
     double lambda {0.}; // new diagonal element for cholesky factor
     if (this->nullsp_dim_ > 0){ // nullspace dimension updated after calling extend()
         // solve L l = Z^T ( Q z_col ) = Z^T sol
@@ -125,7 +122,73 @@ void AsmSolver::extend(const HighsInt& loc_deactivated){
     lambda += 2 * computeQuadObjective(this->ZT_.back().array);
     if (lambda <= this->options_.factor_pivot_tolerance) throw std::domain_error("Reduced matrix is either semi- or indefinite!");
     this->chol_.push_back( std::sqrt(lambda) );
+    if ( idx_deactivated < this->lp_.num_row_ ){
+        // after adding a vector to Z, for numerical reasons we update the L and the factorisation of B
+        // by changing the newly freed vector (that now pads A in B) with a unit vector
+        HighsInt hint { 99999 }; // same number as Micheal in Basis::updatebasis
+        HighsInt iRow = loc_deactivated; // because function argument loc_deactivated is constant
+        HVector yp;
+        HVector newcol;
+        // build unit HVector to add to basis, first extracting constraint and build HVec
+        this->buffer_.assign(this->Q_.dim_,0.);
+        this->buffer_[iRow] = 1.;
+        stdvec2hvec(this->buffer_, yp);
+        this->B_.btranCall(yp, 1.);
+        // find largest element modulus in yp
+        double max_abs {0.};
+        HighsInt max_idx {-1};
+        for (size_t i {0}; i < yp.count; i++){ // yp is a sparse vector
+            if ( std::abs( yp.array[yp.index[i]] ) > max_abs ) {
+                max_abs = std::abs( yp.array[yp.index[i]] );
+                max_idx = yp.index[i];
+            }
+        }
+        // build ep by pointing to the vector that is to be replaced with the unit column
+        this->buffer_.assign(this->Q_.dim_,0.);
+        this->buffer_[max_idx] = 1.;
+        stdvec2hvec(this->buffer_, newcol);
+        this->B_.ftranCall(newcol, 1.);
+        // update basis matrix
+        this->B_.update(&newcol, &yp, &iRow, &hint);
+        // then update reduced hessian factor
+        // first reorder elements of newcol with the permutation in which vectors in Z sit
+        for (HighsInt i { this->rangsp_dim_ }; i < this->Q_.dim_; i++){ // elements i < this->rangsp_dim_ in buffer_ are rubbish
+            this->buffer_[ i ] = - newcol.array[ this->basis_perm_[i] ] / max_abs;
+        } // now elements d_[p+1 to n] in (24) of 10.1007/s101070050113 are the last n - (p+1) elements of buffer
+        // and d_p is max_abs from above
+        // apply givens rotation from the left to zero out all but the rightmost element in the last row of the enhanced L
+        // use their memory space to store the spike column that appears in the rightmost column of L
+        // for loop + leftGivens();
+        // for loop with multiplyspike();
+        // for loop + rightGivens();
+    }
     return;
+}
+
+void AsmSolver::leftGivens(const HighsInt& j){
+    // Givens rotations on L from the left that affect rows
+    // intended for spike creation and reduction
+    // argument j refers to element in column j of the last row of L that is to be zeroed out,
+    // to create a non-zero entry in row j of the last column of L
+    HighsInt i = this->nullsp_dim_ + 1; // at this point the size of the nullspace hasnt been updated yet, but L is enhanced already
+    double cos {0.};
+    double sin {1.};
+    double a = this->chol_[ locL(j, j) ]; // diagonal element in the column whose bottom element has to be zeroed out
+    if ( std::abs(a) >= this->options_.factor_pivot_tolerance){
+        double b = this->chol_[ locL(i, j) ]; // element to zero out
+        double hyp = std::sqrt( a*a + b*b ); // guaranteed to be > 0
+        cos = a / hyp;
+        sin = b / hyp;
+    }
+    // change elements in row j and then i (the last one), so loop through columns k from the first one affected
+    for (HighsInt k {j}; k < i; k++){
+        // update elements in row j if they are (sub)diagonal
+        if ( k <= j ) this->chol_[ locL(j, k) ] = cos * this->chol_[ locL(j, k) ] + sin * this->chol_[ locL(i, k) ];
+        // for elements that will be zeroed out later, update element in place as normal
+        if ( k < j ) this->chol_[ locL(i, k) ] = - 
+        // for elements that are being zeroed out in the last row, update them as if they were in the last column
+    }
+
 }
 
 void AsmSolver::reduce(const HighsInt& loc_activated){
@@ -139,28 +202,7 @@ void AsmSolver::reduce(const HighsInt& loc_activated){
     // TODO givens rotations are also needed when dealing with indefinite matrix
     // we remove row loc_activated, so we need to zero out the super-diagonal elements
     // from row loc_activated+1 till the end
-    for (HighsInt i {loc_activated + 1}; i < this->nullsp_dim_; i++){
-        double a = this->chol_[ locL(i, i - 1) ];
-        double b = this->chol_[ locL(i, i) ]; // element to zero out
-        double cos;
-        double sin;
-        if ( std::abs(a) < this->options_.factor_pivot_tolerance){
-            cos = 0.;
-            sin = 1.;
-        } else {
-            double hyp = std::sqrt( a*a + b*b ); // guaranteed to be > 0
-            cos = a / hyp;
-            sin = b / hyp;
-        }
-        // change elements in column i and then i+1
-        for (HighsInt j {i}; j < this->nullsp_dim_; j++){ // loop through rows beneath diagonal
-            double temp = cos * this->chol_[ locL(j,i-1) ] + sin * this->chol_[ locL(j, i) ];
-            // TODO we are accessing a row-wise matrix by column, could be better
-            //  when i == j the element (i, i+1) is zeroed out and then deleted so no need to change it
-            if (j != i) this->chol_[ locL(j,i) ] = - sin * this->chol_[ locL(j,i-1) ] + cos * this->chol_[ locL(j, i) ];
-            this->chol_[ locL(j,i-1) ] = temp; // in-place operation requires overwriting element when all computations are done
-        }
-    }
+    for (HighsInt i {loc_activated + 1}; i < this->nullsp_dim_; i++) rightGivens(i);
     // then we need to erase all of the zeroes, first erase all super-diagonal elements that were zeroed out
     for (HighsInt i {this->nullsp_dim_ - 1}; i > loc_activated; i--){
         this->chol_.erase( this->chol_.begin() + locL(i,i) );
@@ -172,4 +214,27 @@ void AsmSolver::reduce(const HighsInt& loc_activated){
     this->ZT_.erase(this->ZT_.begin() + loc_activated);
     removeNullSpaceDim();
     return;
+}
+
+void AsmSolver::rightGivens(const HighsInt& i){
+    // Givens rotations on L from the right that affect columns
+    // intended for removing a row/column from L when an arbitrary vector is removed
+    // argument i refers to element (i,i) in L that is to be zeroed out
+    double cos {0.};
+    double sin {1.};
+    double a = this->chol_[ locL(i, i - 1) ];
+    if ( std::abs(a) >= this->options_.factor_pivot_tolerance){
+        double b = this->chol_[ locL(i, i) ]; // element to zero out
+        double hyp = std::sqrt( a*a + b*b ); // guaranteed to be > 0
+        cos = a / hyp;
+        sin = b / hyp;
+    }
+    // change elements in column i and then i+1, so loop through rows beneath the diagonal
+    for (HighsInt j {i}; j < this->nullsp_dim_; j++){
+        double temp = cos * this->chol_[ locL(j,i-1) ] + sin * this->chol_[ locL(j, i) ];
+        // TODO we are accessing a row-wise matrix by column, could be better
+        //  when i == j the element (i, i+1) is zeroed out and then deleted so no need to change it
+        if (j != i) this->chol_[ locL(j,i) ] = - sin * this->chol_[ locL(j,i-1) ] + cos * this->chol_[ locL(j, i) ];
+        this->chol_[ locL(j,i-1) ] = temp; // in-place operation requires overwriting element when all computations are done
+    }
 }
