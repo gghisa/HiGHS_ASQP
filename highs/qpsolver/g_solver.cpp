@@ -83,8 +83,15 @@ void AsmSolver::HUpdate(HighsInt loc_idxdrop, HighsInt idx_new){
     HVector newcol;
     stdvec2hvec(this->buffer_, newcol);
     this->B_.ftranCall(newcol, 1.);
+    // old col vector may not correspond to what was deactivated when it became free in basis
+    // since we are replaing arbitrary vectors with arbitrary unit vectors
+    HVector oldcol;
+    this->buffer_.assign(this->Q_.dim_, 0.);
+    this->buffer_[loc_idxdrop] = 1.;
+    stdvec2hvec(this->buffer_, oldcol);
+    this->B_.btranCall(oldcol, 1.);
     // update basis matrix
-    this->B_.update(&newcol, &this->ZT_.back(), &loc_idxdrop, &hint);
+    this->B_.update(&newcol, &oldcol, &loc_idxdrop, &hint);
     return;
 }
 
