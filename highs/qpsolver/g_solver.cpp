@@ -69,45 +69,6 @@ void AsmSolver::HFtran(std::vector<double>& vec){
     return;
 }
 
-void AsmSolver::HUpdate(HighsInt loc_idxdrop, HighsInt idx_new){
-    HighsInt hint { 99999 }; // same number as Micheal in Basis::updatebasis
-    // build HVector to add to basis
-    if (idx_new < this->lp_.num_row_){ // extract constraint and build HVec
-        std::vector<double> select(this->lp_.num_row_);
-        select[idx_new] = 1.;
-        this->lp_.a_matrix_.productTranspose(this->buffer_, select);
-    } else {
-        this->buffer_.assign(this->Q_.dim_, 0.);
-        this->buffer_[idx_new - this->lp_.num_row_] = 1.;
-    }
-    HVector newcol;
-    stdvec2hvec(this->buffer_, newcol);
-    this->B_.ftranCall(newcol, 1.);
-    // old col vector may not correspond to what was deactivated when it became free in basis
-    // since we are replaing arbitrary vectors with arbitrary unit vectors
-    HVector oldcol;
-    this->buffer_.assign(this->Q_.dim_, 0.);
-    this->buffer_[loc_idxdrop] = 1.;
-    stdvec2hvec(this->buffer_, oldcol);
-    this->B_.btranCall(oldcol, 1.);
-    // update basis matrix
-    this->B_.update(&newcol, &oldcol, &loc_idxdrop, &hint);
-    return;
-}
-
-HVector AsmSolver::stdvec2hvec(const std::vector<double>& vec, HVector& hvec){
-    hvec.setup(vec.size());
-    for (size_t i {0}; i < vec.size(); i++){
-        if (vec[i] != 0){
-            hvec.index[hvec.count] = i;
-            hvec.count += 1;
-        }
-    }
-    hvec.array = vec;
-    hvec.packFlag = true;
-    return hvec;
-}
-
 void AsmSolver::feasibility(){
     // TODO hotstart if basis is provided
     if (this->options_.qp_allow_hot_start &&
@@ -133,11 +94,7 @@ void AsmSolver::feasibility(){
             this->solution_ = highs_feasibility.getSolution();
             this->updateObjective();
             this->setupQpBasis();
-            // compute relaxed bounds for two pass ratio test
-            this->computeRelaxedBounds(this->lp_.row_lower_, this->lp_.row_upper_,
-                                       this->lp_relaxed_.row_lower_, this->lp_relaxed_.row_upper_);
-            this->computeRelaxedBounds(this->lp_.col_lower_, this->lp_.col_upper_,
-                                       this->lp_relaxed_.col_lower_, this->lp_relaxed_.col_upper_);
+            this->buildRelaxedLp();
         }
     }
 }
@@ -157,14 +114,14 @@ void AsmSolver::setupQpBasis(){
     std::vector<HighsInt> free_idxs;
     for (HighsInt i {0}; i < this->lp_.num_row_; i++){ // loop through constraints
         this->con_status_[i] = this->HighsStatusToAsm(this->lp_basis_.row_status[i], i, false);
-        if ( this->isInBasis(this->con_status_[i]) ) this->basis_idxs_.push_back(i); // add index to list of indices
+        if ( this->con_status_[i] != AsmBasisStatus::kInactive ) this->basis_idxs_.push_back(i); // add index to list of indices
         // constraints shouldn't be free in basis, ignore HighsBasisStatus::kZero and HighsBasisStatus::kNonbasic
     }
     for (HighsInt i {0}; i < this->Q_.dim_; i++){ // loop through variables
         this->var_status_[i] = this->HighsStatusToAsm(this->lp_basis_.col_status[i], i, true);
         // ignore HighsBasisStatus::kNonbasic
-        if ( this->isInBasis(this->var_status_[i]) ){
-            if ( this->isFreeInBasis(this->var_status_[i]) ) free_idxs.push_back(i + this->lp_.num_row_); // add index to list of indices
+        if ( this->var_status_[i] != AsmBasisStatus::kInactive ){
+            if ( this->var_status_[i] == AsmBasisStatus::kFreeInBasis ) free_idxs.push_back(i + this->lp_.num_row_); // add index to list of indices
             else this->basis_idxs_.push_back(i + this->lp_.num_row_); // if not free then it is active in the basis
         }
     }
@@ -273,18 +230,16 @@ void AsmSolver::ratio1(const double tol, const double denom, const double lower,
     alpha = std::min( alpha, ( bound - oldval ) / denom );
 }
 
-void AsmSolver::ratiotest_pass1(const std::vector<double>& newloc,
-                                const std::vector<double>& newconvals,
-                                const std::vector<double>& denoms){
+void AsmSolver::ratiotest_pass1(){
     this->alpha_relaxed_ = 1.; // we want to minimise it
     this->alpha_ = 1.;
     const double tol = this->options_.factor_pivot_tolerance;
     for (HighsInt i {0}; i < this->Q_.dim_; i++) // loop through variables
-        ratio1(tol, this->step_[i], this->lp_relaxed_.col_lower_[i], this->lp_relaxed_.col_upper_[i],
-              this->solution_.col_value[i], newloc[i], this->alpha_relaxed_);
+        this->ratio1(tol, this->step_[i], this->lp_relaxed_.col_lower_[i], this->lp_relaxed_.col_upper_[i],
+                     this->solution_.col_value[i], this->newvarvals_[i], this->alpha_relaxed_);
     for (HighsInt i {0}; i < this->lp_.num_row_; i++) // loop through constraints
-        ratio1(tol, denoms[i], this->lp_relaxed_.row_lower_[i], this->lp_relaxed_.row_upper_[i],
-              this->solution_.row_value[i], newconvals[i], this->alpha_relaxed_);
+        this->ratio1(tol, this->newconpivots_[i], this->lp_relaxed_.row_lower_[i], this->lp_relaxed_.row_upper_[i],
+                     this->solution_.row_value[i], this->newconvals_[i], this->alpha_relaxed_);
     return;
 }
 
@@ -302,19 +257,16 @@ void AsmSolver::ratio2(double& max_pivot, const double denom, const double lower
     }
 }
 
-void AsmSolver::ratiotest_pass2(const std::vector<double>& newloc,
-                                const std::vector<double>& newconvals,
-                                const std::vector<double>& denoms,
-                                HighsInt& newactive_idx, AsmBasisStatus& newactive_status){
+void AsmSolver::ratiotest_pass2(HighsInt& newactive_idx, AsmBasisStatus& newactive_status){
     double max_pivot = std::max( this->options_.factor_pivot_tolerance, 0. ); // to ensure no division by 0 in ratio2
     for (HighsInt i {0}; i < this->Q_.dim_; i++) // loop through variables
-        ratio2(max_pivot, this->step_[i], this->lp_.col_lower_[i], this->lp_.col_upper_[i],
-               this->solution_.col_value[i], newloc[i], this->alpha_relaxed_,
-               i + this->lp_.num_row_, newactive_idx, newactive_status);
+        this->ratio2(max_pivot, this->step_[i], this->lp_.col_lower_[i], this->lp_.col_upper_[i],
+                     this->solution_.col_value[i], this->newvarvals_[i], this->alpha_relaxed_,
+                     i + this->lp_.num_row_, newactive_idx, newactive_status);
     for (HighsInt i {0}; i < this->lp_.num_row_; i++) // loop through constraints
-        ratio2(max_pivot, denoms[i], this->lp_.row_lower_[i], this->lp_.row_upper_[i],
-               this->solution_.row_value[i], newconvals[i], this->alpha_relaxed_,
-               i, newactive_idx, newactive_status);
+        this->ratio2(max_pivot, this->newconpivots_[i], this->lp_.row_lower_[i], this->lp_.row_upper_[i],
+                     this->solution_.row_value[i], this->newconvals_[i], this->alpha_relaxed_,
+                     i, newactive_idx, newactive_status);
     if ( max_pivot <= this->options_.factor_pivot_tolerance) throw std::logic_error("Second pass not activating any constraint!");
     return;
 }
@@ -332,11 +284,11 @@ void AsmSolver::takeStep(){
     this->compute_varvals(1., this->newvarvals_); // compute (potential) x_{k+1}
     this->lp_.a_matrix_.product(this->newconvals_, this->newvarvals_); // a_i^T x_{k+1}
     this->lp_.a_matrix_.product(this->newconpivots_, this->step_); // a_i^T \s
-    ratiotest_pass1(this->newvarvals_, this->newconvals_, this->newconpivots_); // ratio test on relaxed instance
+    ratiotest_pass1(); // ratio test on relaxed instance
     if (this->alpha_relaxed_ < 1.){ //implies there is an activation the relaxed test yielded a step smaller than unity
         HighsInt newactive_idx;
         AsmBasisStatus newactive_status;
-        ratiotest_pass2(this->newvarvals_, this->newconvals_, this->newconpivots_, newactive_idx, newactive_status);
+        ratiotest_pass2(newactive_idx, newactive_status);
         if ( this->alpha_relaxed_ < 0 ) this->alpha_ = 0.; // if we are not moving at all
         else { // TODO these checks can be removed
             this->alpha_ = this->alpha_relaxed_;
@@ -361,14 +313,14 @@ void AsmSolver::activate(const HighsInt& idx, const AsmBasisStatus& status){
     bool alreadyinbasis {false};
     HighsInt loc_remove {-1};
     if (idx < this->lp_.num_row_){
-        if ( this->isFreeInBasis(this->con_status_[idx]) ) alreadyinbasis = true;
+        if ( this->con_status_[idx] == AsmBasisStatus::kFreeInBasis ) alreadyinbasis = true;
         //
         if ( this->lp_.row_lower_[idx] == this->lp_.row_upper_[idx] ) this->con_status_[idx] = AsmBasisStatus::kEquality;
         else this->con_status_[idx] = status;
     }
     else {
         HighsInt var_idx = idx - this->lp_.num_row_;
-        if ( this->isFreeInBasis(this->var_status_[var_idx]) ) alreadyinbasis = true;
+        if ( this->var_status_[var_idx] == AsmBasisStatus::kFreeInBasis ) alreadyinbasis = true;
         //
         if ( this->lp_.col_lower_[var_idx] == this->lp_.col_upper_[var_idx] ) this->var_status_[var_idx] = AsmBasisStatus::kEquality;
         else this->var_status_[var_idx] = status;
@@ -406,15 +358,18 @@ void AsmSolver::activate(const HighsInt& idx, const AsmBasisStatus& status){
     return;
 }
 
-void AsmSolver::computeRelaxedBounds(const std::vector<double>& old_lower,
-                                     const std::vector<double>& old_upper,
-                                     std::vector<double>& new_lower,
-                                     std::vector<double>& new_upper){
-    new_lower = old_lower;
-    new_upper = old_upper;
-    for (size_t i {0}; i < new_lower.size(); i++){
-        new_lower[i] -= this->options_.factor_pivot_tolerance;
-        new_upper[i] += this->options_.factor_pivot_tolerance;
+void AsmSolver::buildRelaxedLp(){
+    this->lp_relaxed_.row_lower_.assign(this->lp_.num_row_, 0.);
+    this->lp_relaxed_.row_upper_.assign(this->lp_.num_row_, 0.);
+    for (HighsInt i {0}; i < this->lp_.num_row_; i++){ // relax all constraints (equalities too)
+        this->lp_relaxed_.row_lower_[i] = this->lp_.row_lower_[i] - this->options_.factor_pivot_tolerance;
+        this->lp_relaxed_.row_upper_[i] = this->lp_.row_upper_[i] + this->options_.factor_pivot_tolerance;
+    }
+    this->lp_relaxed_.col_lower_.assign(this->Q_.dim_, 0.);
+    this->lp_relaxed_.col_upper_.assign(this->Q_.dim_, 0.);
+    for (HighsInt i {0}; i < this->Q_.dim_; i++){ // relax all variables' bounds
+        this->lp_relaxed_.col_lower_[i] = this->lp_.col_lower_[i] - this->options_.factor_pivot_tolerance;
+        this->lp_relaxed_.col_upper_[i] = this->lp_.col_upper_[i] + this->options_.factor_pivot_tolerance;
     }
 }
 
@@ -556,16 +511,6 @@ AsmBasisStatus AsmSolver::HighsStatusToAsm(const HighsBasisStatus& status, const
     else if(status == HighsBasisStatus::kUpper) return AsmBasisStatus::kUpper;
     else if(status == HighsBasisStatus::kZero) return AsmBasisStatus::kFreeInBasis;
     else return AsmBasisStatus::kInactive;
-}
-
-bool AsmSolver::isInBasis(const AsmBasisStatus& status){
-    if (status == AsmBasisStatus::kInactive) return false; // note false return here
-    else return true;
-}
-
-bool AsmSolver::isFreeInBasis(const AsmBasisStatus& status){
-    if (status == AsmBasisStatus::kFreeInBasis) return true;
-    else return false;
 }
 
 double AsmSolver::norm(const std::vector<double>& vec){

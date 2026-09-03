@@ -50,7 +50,6 @@ class AsmSolver {
         HighsInt rangsp_dim_ {this->Q_.dim_};
         std::vector<double> chol_; // explicit hessian or its cholesky factor
         HFactor B_;
-        std::vector<HVector> ZT_; // explicit null space span
         std::vector<double> buffer_; // for operations with permutations
         // Real numbers vectors
         std::vector<double> loc_grad_; // current gradient g + Q x_k, where x_k = solution_.col_value
@@ -97,23 +96,14 @@ class AsmSolver {
         void setupFeasibilityLp();
         void setupQpBasis();
         void setupBasisMat(std::vector<HighsInt>& basis_idxs);
+        void buildRelaxedLp();
         // Main loop functions
         void deactivate();
-        void ratiotest_pass1(const std::vector<double>& newloc,
-                             const std::vector<double>& newconvals,
-                             const std::vector<double>& denoms);
-        void ratiotest_pass2(const std::vector<double>& newloc,
-                             const std::vector<double>& newconvals,
-                             const std::vector<double>& denoms,
-                             HighsInt& newactive_idx,
-                             AsmBasisStatus& newactive_status);
+        void ratiotest_pass1();
+        void ratiotest_pass2(HighsInt& newactive_idx, AsmBasisStatus& newactive_status);
         void takeStep();
         void activate(const HighsInt& idx, const AsmBasisStatus& status);
         // Object computations
-        void computeRelaxedBounds(const std::vector<double>& old_lower,
-                                  const std::vector<double>& old_upper,
-                                  std::vector<double>& new_lower,
-                                  std::vector<double>& new_upper);
         void computeLocGrad();
         void computeReducedVecs();
         void compute_varvals(const double& alpha, std::vector<double>& loc);
@@ -137,7 +127,5 @@ class AsmSolver {
         void addNullSpaceDim();
         void removeNullSpaceDim();
         AsmBasisStatus HighsStatusToAsm(const HighsBasisStatus& status, const HighsInt i, const bool variable);
-        bool isInBasis(const AsmBasisStatus& status);
-        bool isFreeInBasis(const AsmBasisStatus& status);
         double norm(const std::vector<double>& vec);
 };

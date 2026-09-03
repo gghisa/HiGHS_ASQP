@@ -12,28 +12,67 @@ HighsInt AsmSolver::locL(const HighsInt& i, const HighsInt& j) {
     return i*(i+1)/2 + j; // assumes indices are given for lower triangular matrix
 }
 
-void AsmSolver::recomputeExplicit(){ // TODO pivoting?
-    this->ZT_.assign(this->nullsp_dim_, HVector()); // TODO is it necessary to also recompute ZT_?
+void AsmSolver::HUpdate(HighsInt loc_idxdrop, HighsInt idx_new){
+    HighsInt hint { 99999 }; // same number as Micheal in Basis::updatebasis
+    // build HVector to add to basis
+    if (idx_new < this->lp_.num_row_){ // extract constraint and build HVec
+        std::vector<double> select(this->lp_.num_row_);
+        select[idx_new] = 1.;
+        this->lp_.a_matrix_.productTranspose(this->buffer_, select);
+    } else {
+        this->buffer_.assign(this->Q_.dim_, 0.);
+        this->buffer_[idx_new - this->lp_.num_row_] = 1.;
+    }
+    HVector newcol;
+    stdvec2hvec(this->buffer_, newcol);
+    this->B_.ftranCall(newcol, 1.);
+    // old col vector may not correspond to what was deactivated when it became free in basis
+    // since we are replaing arbitrary vectors with arbitrary unit vectors
+    HVector oldcol;
+    this->buffer_.assign(this->Q_.dim_, 0.);
+    this->buffer_[loc_idxdrop] = 1.;
+    stdvec2hvec(this->buffer_, oldcol);
+    this->B_.btranCall(oldcol, 1.);
+    // update basis matrix
+    this->B_.update(&newcol, &oldcol, &loc_idxdrop, &hint);
+    return;
+}
+
+HVector AsmSolver::stdvec2hvec(const std::vector<double>& vec, HVector& hvec){
+    hvec.setup(vec.size());
+    for (size_t i {0}; i < vec.size(); i++){
+        if (vec[i] != 0){
+            hvec.index[hvec.count] = i;
+            hvec.count += 1;
+        }
+    }
+    hvec.array = vec;
+    hvec.packFlag = true;
+    return hvec;
+}
+
+void AsmSolver::recomputeExplicit(){
+    std::vector<HVector> ZT(this->nullsp_dim_); // TODO anything we can do to salvage information?
     HighsInt chol_size = this->nullsp_dim_ * (this->nullsp_dim_ + 1) / 2;
     this->chol_.assign(chol_size, 0.);
     for (HighsInt i {0}; i < this->nullsp_dim_; i++){ // get Z^T
         // create unit HVector
-        this->ZT_[i].setup(this->Q_.dim_);
-        this->ZT_[i].index[0] = this->basis_perm_[this->rangsp_dim_ + i];
-        this->ZT_[i].array[ this->ZT_[i].index[0] ] = 1.;
-        this->ZT_[i].count = 1;
-        this->ZT_[i].packFlag = true;
+        ZT[i].setup(this->Q_.dim_);
+        ZT[i].index[0] = this->basis_perm_[this->rangsp_dim_ + i];
+        ZT[i].array[ ZT[i].index[0] ] = 1.;
+        ZT[i].count = 1;
+        ZT[i].packFlag = true;
         // extract column of Z
-        this->B_.btranCall(this->ZT_[i], 1.); // solves returning a column of Z, which we store as a row of Z^T
+        this->B_.btranCall(ZT[i], 1.); // solves returning a column of Z, which we store as a row of Z^T
     }
     for (HighsInt i {0}; i < this->nullsp_dim_; i++){// loop over the rows of Z^T
-        this->Q_.product(this->ZT_[i].array, this->buffer_); // compute row of Z^T Q
+        this->Q_.product(ZT[i].array, this->buffer_); // compute row of Z^T Q
         for (HighsInt j {0}; j <= i; j++){ // loop through columns of Z, up to the current row of Z^T, to only compute lower triangle of red_hessian_
             // TODO could this be done with HFtran to compute a full column of the reduced Hessian, without the need to store Z^T?
             // in which case, do not use this->buffer_ anymore
             double sum {0.};
             for (HighsInt k {0}; k < this->Q_.dim_; k++){ // inner produce of row of Z^T Q with column of Z
-                sum += this->buffer_[k] * this->ZT_[j].array[k]; // factorization row by row according to Cholesky—Banachiewicz
+                sum += this->buffer_[k] * ZT[j].array[k]; // factorization row by row according to Cholesky—Banachiewicz
             }
             this->chol_[ locL(i,j) ] = sum; // should be ordered such that chol_ is row-wise of M
         }
@@ -96,18 +135,18 @@ void AsmSolver::LLTsolve(std::vector<double>& vec){
 
 void AsmSolver::extend(const HighsInt& loc_deactivated, const HighsInt& idx_deactivated){
     // get new nullspace column, creating unit HVector
-    this->ZT_.emplace_back(); // create new z_col (first get unit HVector)
-    this->ZT_.back().setup(this->Q_.dim_);
-    this->ZT_.back().index[0] = loc_deactivated;
-    this->ZT_.back().array[ this->ZT_.back().index[0] ] = 1.;
-    this->ZT_.back().count = 1;
-    this->ZT_.back().packFlag = true;
-    this->B_.btranCall(this->ZT_.back(), 1.); // compute z_col inplace
+    HVector Ztemp;// create new z_col (first get unit HVector)
+    Ztemp.setup(this->Q_.dim_);
+    Ztemp.index[0] = loc_deactivated;
+    Ztemp.array[ Ztemp.index[0] ] = 1.;
+    Ztemp.count = 1;
+    Ztemp.packFlag = true;
+    this->B_.btranCall(Ztemp, 1.); // compute z_col inplace
     double lambda {0.}; // new diagonal element for cholesky factor
     if (this->nullsp_dim_ > 0){ // nullspace dimension updated after calling extend()
         // solve L l = Z^T ( Q z_col ) = Z^T sol
         std::vector<double> sol(this->Q_.dim_);
-        this->Q_.product(this->ZT_.back().array, sol);
+        this->Q_.product(Ztemp.array, sol);
         HFtran(sol); // B^{-1} ( sol )
         // select Z^T ( sol ), which is the bottom part of the solution vector above
         sol.erase(sol.begin(), sol.end() - this->nullsp_dim_); // TODO is the other part useful?
@@ -119,7 +158,7 @@ void AsmSolver::extend(const HighsInt& loc_deactivated, const HighsInt& idx_deac
             lambda -= sol[i] * sol[i];
         }
     }
-    lambda += 2 * computeQuadObjective(this->ZT_.back().array);
+    lambda += 2 * computeQuadObjective(Ztemp.array);
     if (lambda <= this->options_.factor_pivot_tolerance) throw std::domain_error("Reduced matrix is either semi- or indefinite!");
     this->chol_.push_back( std::sqrt(lambda) );
     if ( idx_deactivated < this->lp_.num_row_ && false){
@@ -127,15 +166,15 @@ void AsmSolver::extend(const HighsInt& loc_deactivated, const HighsInt& idx_deac
         // by changing the newly freed vector (that now pads A in B) with a unit vector
         HighsInt hint { 99999 }; // same number as Micheal in Basis::updatebasis
         HighsInt iRow = loc_deactivated; // because function argument loc_deactivated is constant
-        HVector& yp = this->ZT_.back();
+        HVector& Ztemp = Ztemp;
         HVector newcol;
-        // find largest element modulus in yp
+        // find largest element modulus in Ztemp
         double max_abs {0.};
         HighsInt max_idx {-1};
-        for (HighsInt i {0}; i < yp.count; i++){ // yp is a sparse vector
-            if ( std::abs( yp.array[yp.index[i]] ) > std::abs( max_abs ) ) {
-                max_abs = yp.array[yp.index[i]];
-                max_idx = yp.index[i];
+        for (HighsInt i {0}; i < Ztemp.count; i++){ // Ztemp is a sparse vector
+            if ( std::abs( Ztemp.array[Ztemp.index[i]] ) > std::abs( max_abs ) ) {
+                max_abs = Ztemp.array[Ztemp.index[i]];
+                max_idx = Ztemp.index[i];
             }
         }
         // build ep by pointing to the vector that is to be replaced with the unit column
@@ -144,7 +183,7 @@ void AsmSolver::extend(const HighsInt& loc_deactivated, const HighsInt& idx_deac
         stdvec2hvec(this->buffer_, newcol);
         this->B_.ftranCall(newcol, 1.);
         // update basis matrix
-        this->B_.update(&newcol, &yp, &iRow, &hint);
+        this->B_.update(&newcol, &Ztemp, &iRow, &hint);
         // then update reduced hessian factor
         // first reorder elements of newcol (vector d in Fletcher) with the permutation in which vectors in Z sit
         for (HighsInt i { this->rangsp_dim_ - 1 }; i < this->Q_.dim_ - 1; i++){ // elements i < this->rangsp_dim_ - 1 in buffer_ are rubbish
@@ -243,7 +282,6 @@ void AsmSolver::leftGivens(const HighsInt& j){
 void AsmSolver::reduce(const HighsInt& loc_activated){
     if ( loc_activated == this->nullsp_dim_){
         this->chol_.resize(this->chol_.size() - this->nullsp_dim_); // drop last row of L
-        this->ZT_.pop_back(); // drop last row of Z^T (last column of Z)
         this->removeNullSpaceDim();
         return;
     }
@@ -260,7 +298,6 @@ void AsmSolver::reduce(const HighsInt& loc_activated){
     HighsInt size_L1 = (loc_activated - 1) * loc_activated / 2; // size of lower diagonal matrix above removed row
     this->chol_.erase(this->chol_.begin() + size_L1, this->chol_.begin() + size_L1 + loc_activated + 1);
     //
-    this->ZT_.erase(this->ZT_.begin() + loc_activated);
     removeNullSpaceDim();
     return;
 }
