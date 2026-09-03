@@ -133,7 +133,9 @@ void AsmSolver::setupQpBasis(){
     this->basis_idxs_.insert(this->basis_idxs_.end(),
                              free_idxs.begin(), free_idxs.end());
     std::vector<HighsInt> ordered_basis = this->basis_idxs_; // store buffer
-    this->Vi_.assign(this->nullsp_dim_, -1); // TODO pad A with unit vectors to start with
+    // free indices at the start are necessarily variables, so they are unit vectors for sure
+    this->Vi_.assign(this->nullsp_dim_, -1);
+    for (HighsInt i {0}; i < this->nullsp_dim_; i++) this->Vi_[i] = free_idxs[i] - this->lp_.num_row_;
     this->setupBasisMat(ordered_basis); // setup HFactor
     // since basis indices may have been shuffled so that free indices may not trail active ones anymore,
     // set permutation order to match the index sets (A,V) structure

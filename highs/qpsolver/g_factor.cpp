@@ -147,7 +147,7 @@ void AsmSolver::extend(const HighsInt& loc_deactivated, const HighsInt& idx_deac
                 max_idx = Ztemp.index[i];
             }
         }
-        // build ep by pointing to the vector that is to be replaced with the unit column
+        // build ep as the unit column replacing the deactivated constraint
         this->buffer_.assign(this->Q_.dim_,0.);
         this->buffer_[max_idx] = 1.;
         stdvec2hvec(this->buffer_, newcol);
@@ -157,8 +157,8 @@ void AsmSolver::extend(const HighsInt& loc_deactivated, const HighsInt& idx_deac
         this->Vi_.back() = max_idx;
         // then update reduced hessian factor
         // first reorder elements of newcol (vector d in Fletcher) with the permutation in which vectors in Z sit
-        for (HighsInt i { this->rangsp_dim_ - 1 }; i < this->Q_.dim_ - 1; i++){ // elements i < this->rangsp_dim_ - 1 in buffer_ are rubbish
-            this->buffer_[ i ] = - newcol.array[ this->basis_perm_[i] ] / max_abs;
+        for (HighsInt i { this->rangsp_dim_ }; i < this->Q_.dim_; i++){ // elements i < this->rangsp_dim_ - 1 in buffer_ are rubbish
+            this->buffer_[ i - 1 ] = - newcol.array[ this->basis_perm_[i] ] / max_abs;
         }
         this->buffer_.back() = max_abs;
         // now elements d_[p+1 to n] in (24) of 10.1007/s101070050113 are the last n - (p+1) elements of buffer
@@ -173,7 +173,7 @@ void AsmSolver::extend(const HighsInt& loc_deactivated, const HighsInt& idx_deac
             }
             this->chol_[ locL(dim, dim) ] *= this->buffer_.back(); // last element in the spike is only scaled
             // remove right spike
-            for (HighsInt i {0}; i < this->nullsp_dim_; i++) rightGivensSpike(i);
+            for (HighsInt i {0}; i < dim; i++) rightGivensSpike(i);
         } else { // otherwise chol_ is a singleton that only needs scaling
             this->chol_.back() /= this->buffer_.back();
         }
@@ -196,20 +196,20 @@ void AsmSolver::rightGivensSpike(const HighsInt& i){
         cos = a / hyp;
         sin = b / hyp;
     }
-    double temp_ki;
-    double temp_kj;
-    // change each row element in the two columns affected (i and last one) on and below row i up to second to last row
-    for (HighsInt k {this->nullsp_dim_}; k > i; k--){ // TODO this is wrong!
-        temp_ki = this->chol_[ locL(k, i) ];
-        temp_kj = this->chol_[ locL(k, j) ];
-        // modify element in column i
-        this->chol_[ locL(k, i) ] = cos * temp_ki + sin * temp_kj;
-        // modify element in last column, while zeroing out spike element in the last column
-        this->chol_[ locL(k, j) ] = - sin * temp_ki + cos * temp_kj;
-    }
     // diagonal element in row whose last element is being zeroed out
     // note element (j,i) is in fact (i,j) of the spike column, but stored in the last row of L
     this->chol_[ locL(i, i) ] = cos * this->chol_[ locL(i, i) ] + sin * this->chol_[ locL(j, i) ];
+    double temp_ki;
+    double temp_kj;
+    // change each row element in the two columns affected (i and last one) on and below row i up to second to last row
+    for (HighsInt k {i + 1}; k < j; k++){
+        temp_ki = this->chol_[ locL(k, i) ];
+        temp_kj = this->chol_[ locL(j, k) ]; // element (k,j) is stored in (j,k)
+        // modify element in column i
+        this->chol_[ locL(k, i) ] = cos * temp_ki + sin * temp_kj;
+        // modify element in last column, while zeroing out spike element in the last column
+        this->chol_[ locL(j, k) ] = - sin * temp_ki + cos * temp_kj; // element (k, j) stored in (j, k)
+    }
     // element that was zero
     this->chol_[ locL(j, i) ] = sin * this->chol_[ locL(j, j) ];
     // bottom right element
