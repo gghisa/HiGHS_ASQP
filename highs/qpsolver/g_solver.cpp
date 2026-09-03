@@ -232,7 +232,6 @@ void AsmSolver::ratio1(const double tol, const double denom, const double lower,
 
 void AsmSolver::ratiotest_pass1(){
     this->alpha_relaxed_ = 1.; // we want to minimise it
-    this->alpha_ = 1.;
     const double tol = this->options_.factor_pivot_tolerance;
     for (HighsInt i {0}; i < this->Q_.dim_; i++) // loop through variables
         this->ratio1(tol, this->step_[i], this->lp_relaxed_.col_lower_[i], this->lp_relaxed_.col_upper_[i],
@@ -285,23 +284,19 @@ void AsmSolver::takeStep(){
     this->lp_.a_matrix_.product(this->newconvals_, this->newvarvals_); // a_i^T x_{k+1}
     this->lp_.a_matrix_.product(this->newconpivots_, this->step_); // a_i^T \s
     ratiotest_pass1(); // ratio test on relaxed instance
-    if (this->alpha_relaxed_ < 1.){ //implies there is an activation the relaxed test yielded a step smaller than unity
+    if ( this->alpha_relaxed_ < 1.){ // TODO time saving if step is null?
+        // if we meet a constraint
         HighsInt newactive_idx;
         AsmBasisStatus newactive_status;
         ratiotest_pass2(newactive_idx, newactive_status);
-        if ( this->alpha_relaxed_ < 0 ) this->alpha_ = 0.; // if we are not moving at all
-        else { // TODO these checks can be removed
-            this->alpha_ = this->alpha_relaxed_;
-            this->compute_varvals(this->alpha_, this->solution_.col_value);
-            this->updateObjective();
-            this->lp_.a_matrix_.product(this->solution_.row_value, this->solution_.col_value); // a_i^T x_{k+1}
-        }
+        this->compute_varvals(this->alpha_relaxed_, this->solution_.col_value);
+        this->lp_.a_matrix_.product(this->solution_.row_value, this->solution_.col_value); // a_i^T x_{k+1}
         this->activate(newactive_idx, newactive_status);
     } else { // if no constraint activated and we take the full step
         this->solution_.row_value = this->newconvals_; // don't recompute new constraint values
         this->solution_.col_value = this->newvarvals_; // nor variables' values either
-        this->updateObjective();
     }
+    this->updateObjective();
     this->computeReducedVecs(); // red grad needs updating with new position
     this->step_taken_ = true;
     this->info_.qp_iteration_count++;
@@ -309,9 +304,11 @@ void AsmSolver::takeStep(){
 }
 
 void AsmSolver::activate(const HighsInt& idx, const AsmBasisStatus& status){
-    // handle status update
+    // we keep track of constraints free in basis for book-keeping purposes, even though
+    // the V part of B is made up of arbitrary unit vectors
     bool alreadyinbasis {false};
     HighsInt loc_remove {-1};
+    // handle status update
     if (idx < this->lp_.num_row_){
         if ( this->con_status_[idx] == AsmBasisStatus::kFreeInBasis ) alreadyinbasis = true;
         //
@@ -325,7 +322,11 @@ void AsmSolver::activate(const HighsInt& idx, const AsmBasisStatus& status){
         if ( this->lp_.col_lower_[var_idx] == this->lp_.col_upper_[var_idx] ) this->var_status_[var_idx] = AsmBasisStatus::kEquality;
         else this->var_status_[var_idx] = status;
     }
-    // TODO find good rationale to select which constraint to drop
+    // now that statuses have been taken care of
+
+
+
+
     if (alreadyinbasis){
         std::cout<<"Already in basis! Not happening often...\n";
         // send element in location i to the end of active constraints

@@ -151,22 +151,17 @@ void AsmSolver::extend(const HighsInt& loc_deactivated, const HighsInt& idx_deac
         // select Z^T ( sol ), which is the bottom part of the solution vector above
         sol.erase(sol.begin(), sol.end() - this->nullsp_dim_); // TODO is the other part useful?
         Lsolve(sol);
-        this->chol_.insert(this->chol_.end(),
-                           sol.begin(),
-                           sol.end());
-        for (HighsInt i {0}; i < this->nullsp_dim_; i++){
-            lambda -= sol[i] * sol[i];
-        }
+        this->chol_.insert(this->chol_.end(), sol.begin(), sol.end());
+        for (HighsInt i {0}; i < this->nullsp_dim_; i++) lambda -= sol[i] * sol[i];
     }
     lambda += 2 * computeQuadObjective(Ztemp.array);
     if (lambda <= this->options_.factor_pivot_tolerance) throw std::domain_error("Reduced matrix is either semi- or indefinite!");
     this->chol_.push_back( std::sqrt(lambda) );
-    if ( idx_deactivated < this->lp_.num_row_ && false){
+    if ( idx_deactivated < this->lp_.num_row_ ){
         // after adding a vector to Z, for numerical reasons we update the L and the factorisation of B
         // by changing the newly freed vector (that now pads A in B) with a unit vector
         HighsInt hint { 99999 }; // same number as Micheal in Basis::updatebasis
         HighsInt iRow = loc_deactivated; // because function argument loc_deactivated is constant
-        HVector& Ztemp = Ztemp;
         HVector newcol;
         // find largest element modulus in Ztemp
         double max_abs {0.};

@@ -62,8 +62,7 @@ class AsmSolver {
         std::vector<double> newconvals_;
         std::vector<double> newconpivots_;
         // Numbers
-        double alpha_ {1.}; // step size for ratio test
-        double alpha_relaxed_ {1.};
+        double alpha_relaxed_ {1.}; // step size for ratio test
         HighsInt n_iter_ {0};
         // Truth values
         bool step_taken_ {false};
