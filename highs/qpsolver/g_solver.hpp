@@ -51,6 +51,7 @@ class AsmSolver {
         std::vector<double> chol_; // explicit hessian or its cholesky factor
         HFactor B_;
         std::vector<double> buffer_; // for operations with permutations
+        std::vector<HighsInt> Vi_; // vector of indices of the unit vectors padding A in B
         // Real numbers vectors
         std::vector<double> loc_grad_; // current gradient g + Q x_k, where x_k = solution_.col_value
         std::vector<double> red_grad_; // current reduced gradient Z^T (g + Q x_k)
@@ -76,7 +77,6 @@ class AsmSolver {
         // HFactor functions
         void HBtran(std::vector<double>& vec);
         void HFtran(std::vector<double>& vec);
-        void HUpdate(HighsInt loc_idxdrop, HighsInt idx_new);
         HVector stdvec2hvec(const std::vector<double>& vec, HVector& hvec);
         // Reduced Hessian operations
         HighsInt locL(const HighsInt& i, const HighsInt& j);

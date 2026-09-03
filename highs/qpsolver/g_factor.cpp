@@ -12,32 +12,6 @@ HighsInt AsmSolver::locL(const HighsInt& i, const HighsInt& j) {
     return i*(i+1)/2 + j; // assumes indices are given for lower triangular matrix
 }
 
-void AsmSolver::HUpdate(HighsInt loc_idxdrop, HighsInt idx_new){
-    HighsInt hint { 99999 }; // same number as Micheal in Basis::updatebasis
-    // build HVector to add to basis
-    if (idx_new < this->lp_.num_row_){ // extract constraint and build HVec
-        std::vector<double> select(this->lp_.num_row_);
-        select[idx_new] = 1.;
-        this->lp_.a_matrix_.productTranspose(this->buffer_, select);
-    } else {
-        this->buffer_.assign(this->Q_.dim_, 0.);
-        this->buffer_[idx_new - this->lp_.num_row_] = 1.;
-    }
-    HVector newcol;
-    stdvec2hvec(this->buffer_, newcol);
-    this->B_.ftranCall(newcol, 1.);
-    // old col vector may not correspond to what was deactivated when it became free in basis
-    // since we are replaing arbitrary vectors with arbitrary unit vectors
-    HVector oldcol;
-    this->buffer_.assign(this->Q_.dim_, 0.);
-    this->buffer_[loc_idxdrop] = 1.;
-    stdvec2hvec(this->buffer_, oldcol);
-    this->B_.btranCall(oldcol, 1.);
-    // update basis matrix
-    this->B_.update(&newcol, &oldcol, &loc_idxdrop, &hint);
-    return;
-}
-
 HVector AsmSolver::stdvec2hvec(const std::vector<double>& vec, HVector& hvec){
     hvec.setup(vec.size());
     for (size_t i {0}; i < vec.size(); i++){
@@ -135,6 +109,7 @@ void AsmSolver::LLTsolve(std::vector<double>& vec){
 
 void AsmSolver::extend(const HighsInt& loc_deactivated, const HighsInt& idx_deactivated){
     // get new nullspace column, creating unit HVector
+    this->Vi_.push_back(idx_deactivated - this->lp_.num_row_); // if deactivated element is a constraint this will be changed later
     HVector Ztemp;// create new z_col (first get unit HVector)
     Ztemp.setup(this->Q_.dim_);
     Ztemp.index[0] = loc_deactivated;
@@ -179,6 +154,7 @@ void AsmSolver::extend(const HighsInt& loc_deactivated, const HighsInt& idx_deac
         this->B_.ftranCall(newcol, 1.);
         // update basis matrix
         this->B_.update(&newcol, &Ztemp, &iRow, &hint);
+        this->Vi_.back() = max_idx;
         // then update reduced hessian factor
         // first reorder elements of newcol (vector d in Fletcher) with the permutation in which vectors in Z sit
         for (HighsInt i { this->rangsp_dim_ - 1 }; i < this->Q_.dim_ - 1; i++){ // elements i < this->rangsp_dim_ - 1 in buffer_ are rubbish
@@ -187,12 +163,12 @@ void AsmSolver::extend(const HighsInt& loc_deactivated, const HighsInt& idx_deac
         this->buffer_.back() = max_abs;
         // now elements d_[p+1 to n] in (24) of 10.1007/s101070050113 are the last n - (p+1) elements of buffer
         if ( this->nullsp_dim_ > 0 ){ // if nullspace wasn't empty before deactivation rotations have a reason to be used
+            HighsInt dim = this->nullsp_dim_;
             // apply givens rotation from the left to zero out all but the rightmost element in the last row of the enhanced L
             // use their memory space to store the spike column that appears in the rightmost column of L
-            for (HighsInt j {this->nullsp_dim_}; j > -1; j--) leftGivens(j);
+            for (HighsInt j {dim - 1}; j > -1; j--) leftGivens(j);
             // multiply spike column with eta colum
-            HighsInt dim = this->nullsp_dim_ + 1;
-            for (HighsInt i {0}; i < this->nullsp_dim_; i++){
+            for (HighsInt i {0}; i < dim; i++){
                 this->chol_[ locL(dim, i) ] += this->chol_[ locL(dim, dim) ] * this->buffer_[ this->rangsp_dim_ + i ];
             }
             this->chol_[ locL(dim, dim) ] *= this->buffer_.back(); // last element in the spike is only scaled
@@ -210,12 +186,12 @@ void AsmSolver::rightGivensSpike(const HighsInt& i){
     // intended to remove the spike on the last, right-most, column
     // argument i referes to the row whose last-column element is to be zeroed out
     // the spike is stored in the last row of L, so change is made in place
-    HighsInt j = this->nullsp_dim_ + 1; // at this point the size of the nullspace hasnt been updated yet, but L is enhanced already
+    HighsInt j = this->nullsp_dim_; // at this point the size of the nullspace hasnt been updated yet, but L is enhanced already
     double cos {0.};
     double sin {1.};
     double a = this->chol_[ locL(i, i) ]; // element i in the row whose last element has to be zeroed out
     if ( std::abs(a) >= this->options_.factor_pivot_tolerance){
-        double b = this->chol_[ locL(i, j) ]; // element to zero out
+        double b = this->chol_[ locL(j, i) ]; // element to zero out (last column but stored in last row)
         double hyp = std::sqrt( a*a + b*b ); // guaranteed to be > 0
         cos = a / hyp;
         sin = b / hyp;
@@ -223,7 +199,7 @@ void AsmSolver::rightGivensSpike(const HighsInt& i){
     double temp_ki;
     double temp_kj;
     // change each row element in the two columns affected (i and last one) on and below row i up to second to last row
-    for (HighsInt k {this->nullsp_dim_}; k > i; k--){
+    for (HighsInt k {this->nullsp_dim_}; k > i; k--){ // TODO this is wrong!
         temp_ki = this->chol_[ locL(k, i) ];
         temp_kj = this->chol_[ locL(k, j) ];
         // modify element in column i
@@ -245,7 +221,7 @@ void AsmSolver::leftGivens(const HighsInt& j){
     // intended for spike creation and reduction
     // argument j refers to column of L whose last-row element is to be zeroed out,
     // to create a non-zero entry in row j of the last column of L
-    HighsInt i = this->nullsp_dim_ + 1; // at this point the size of the nullspace hasnt been updated yet, but L is enhanced already
+    HighsInt i = this->nullsp_dim_; // at this point the size of the nullspace hasnt been updated yet, but L is enhanced already
     double cos {0.};
     double sin {1.};
     double a = this->chol_[ locL(j, j) ]; // diagonal element in the column whose bottom element has to be zeroed out
@@ -275,12 +251,11 @@ void AsmSolver::leftGivens(const HighsInt& j){
 }
 
 void AsmSolver::reduce(const HighsInt& loc_activated){
-    if ( loc_activated == this->nullsp_dim_){
+    if ( loc_activated == this->nullsp_dim_ - 1){
         this->chol_.resize(this->chol_.size() - this->nullsp_dim_); // drop last row of L
         this->removeNullSpaceDim();
         return;
     }
-    // if activated vector was free in basis, we must remove that row and column from Z^T, no arbitrary choice
     // TODO givens rotations are also needed when dealing with indefinite matrix
     // we remove row loc_activated, so we need to zero out the super-diagonal elements
     // from row loc_activated+1 till the end
