@@ -160,7 +160,7 @@ void AsmSolver::extend(const HighsInt& loc_deactivated, const HighsInt& idx_deac
         for (HighsInt i { this->rangsp_dim_ }; i < this->Q_.dim_; i++){ // elements i < this->rangsp_dim_ - 1 in buffer_ are rubbish
             this->buffer_[ i - 1 ] = - newcol.array[ this->basis_perm_[i] ] / max_abs;
         }
-        this->buffer_.back() = max_abs;
+        this->buffer_.back() = 1 / max_abs;
         // now elements d_[p+1 to n] in (24) of 10.1007/s101070050113 are the last n - (p+1) elements of buffer
         if ( this->nullsp_dim_ > 0 ){ // if nullspace wasn't empty before deactivation rotations have a reason to be used
             HighsInt dim = this->nullsp_dim_;
@@ -169,13 +169,13 @@ void AsmSolver::extend(const HighsInt& loc_deactivated, const HighsInt& idx_deac
             for (HighsInt i {dim - 1}; i > -1; i--) addSpikeElement(i);
             // multiply spike column with eta colum
             for (HighsInt i {0}; i < dim; i++){
-                this->chol_[ locL(dim, i) ] += this->chol_[ locL(dim, dim) ] * this->buffer_[ this->rangsp_dim_ + i ];
+                this->chol_[ locL(dim, i) ] += this->chol_[ locL(dim, dim) ] * this->buffer_[ this->rangsp_dim_ -1 + i ];
             }
             this->chol_[ locL(dim, dim) ] *= this->buffer_.back(); // last element in the spike is only scaled
             // remove right spike
             for (HighsInt i {0}; i < dim; i++) removeSpikeElement(i);
         } else { // otherwise chol_ is a singleton that only needs scaling
-            this->chol_.back() /= this->buffer_.back();
+            this->chol_.back() *= this->buffer_.back();
         }
     }
     return;
