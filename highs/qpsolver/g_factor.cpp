@@ -166,14 +166,14 @@ void AsmSolver::extend(const HighsInt& loc_deactivated, const HighsInt& idx_deac
             HighsInt dim = this->nullsp_dim_;
             // apply givens rotation from the left to zero out all but the rightmost element in the last row of the enhanced L
             // use their memory space to store the spike column that appears in the rightmost column of L
-            for (HighsInt i {dim - 1}; i > -1; i--) addSpikeElement(i);
+            addSpike();
             // multiply spike column with eta colum
             for (HighsInt i {0}; i < dim; i++){
                 this->chol_[ locL(dim, i) ] += this->chol_[ locL(dim, dim) ] * this->buffer_[ this->rangsp_dim_ -1 + i ];
             }
             this->chol_[ locL(dim, dim) ] *= this->buffer_.back(); // last element in the spike is only scaled
             // remove right spike
-            for (HighsInt i {0}; i < dim; i++) removeSpikeElement(i);
+            removeSpike();
         } else { // otherwise chol_ is a singleton that only needs scaling
             this->chol_.back() *= this->buffer_.back();
         }
@@ -181,75 +181,79 @@ void AsmSolver::extend(const HighsInt& loc_deactivated, const HighsInt& idx_deac
     return;
 }
 
-void AsmSolver::addSpikeElement(const HighsInt& i){
+void AsmSolver::addSpike(){
     // Givens rotation on L from the right
     // intended to add the spike on the last, right-most, column
     // subdiagonal sine is negative
-    // argument i referes to the column whose last-row element is to be zeroed out
-    // the spike is stored in the last row of L, so change is made in place
     HighsInt j = this->nullsp_dim_; // at this point the size of the nullspace hasnt been updated yet, but L is enhanced already
-    double cos {0.};
-    double sin {1.};
-    double a = this->chol_[ locL(j, j) ]; // diagonal element in the row whose last element has to be zeroed out (last row)
-    if ( std::abs(a) >= this->options_.factor_pivot_tolerance){
-        double b = this->chol_[ locL(j, i) ]; // element of the last row to be zeroed out
-        double hyp = std::sqrt( a*a + b*b ); // guaranteed to be > 0
-        cos = a / hyp;
-        sin = b / hyp;
+    for (HighsInt i {j - 1}; i > -1; i--){
+        // argument i referes to the column whose last-row element is to be zeroed out
+        // the spike is stored in the last row of L, so change is made in place
+        double cos {0.};
+        double sin {1.};
+        double a = this->chol_[ locL(j, j) ]; // diagonal element in the row whose last element has to be zeroed out (last row)
+        if ( std::abs(a) >= this->options_.factor_pivot_tolerance){
+            double b = this->chol_[ locL(j, i) ]; // element of the last row to be zeroed out
+            double hyp = std::sqrt( a*a + b*b ); // guaranteed to be > 0
+            cos = a / hyp;
+            sin = b / hyp;
+        }
+        // update bottom right element first
+        this->chol_[ locL(j, j) ] = sin * this->chol_[ locL(j, i) ] + cos * this->chol_[ locL(j, j) ];
+        // note element (j,i) is in fact (i,j) of the spike column, but stored in the last row of L
+        this->chol_[ locL(j, i) ] = sin * this->chol_[ locL(i, i) ]; // create spike element where element is implicitly zeroed out
+        double temp_ki;
+        double temp_kj;
+        // change each row element in the two columns affected (i and last one) on and below row i up to second to last row
+        for (HighsInt k {j - 1}; k > i; k--){
+            temp_ki = this->chol_[ locL(k, i) ];
+            temp_kj = this->chol_[ locL(j, k) ]; // element (k,j) is stored in (j,k)
+            // modify element in column i
+            this->chol_[ locL(k, i) ] = cos * temp_ki - sin * temp_kj;
+            // modify element in last column, while zeroing out spike element in the last column
+            this->chol_[ locL(j, k) ] = sin * temp_ki + cos * temp_kj; // element (k, j) stored in (j, k)
+        }
+        // diagonal element in row where spike element appears
+        this->chol_[ locL(i, i) ] *= cos;
     }
-    // update bottom right element first
-    this->chol_[ locL(j, j) ] = sin * this->chol_[ locL(j, i) ] + cos * this->chol_[ locL(j, j) ];
-    // note element (j,i) is in fact (i,j) of the spike column, but stored in the last row of L
-    this->chol_[ locL(j, i) ] = sin * this->chol_[ locL(i, i) ]; // create spike element where element is implicitly zeroed out
-    double temp_ki;
-    double temp_kj;
-    // change each row element in the two columns affected (i and last one) on and below row i up to second to last row
-    for (HighsInt k {j - 1}; k > i; k--){
-        temp_ki = this->chol_[ locL(k, i) ];
-        temp_kj = this->chol_[ locL(j, k) ]; // element (k,j) is stored in (j,k)
-        // modify element in column i
-        this->chol_[ locL(k, i) ] = cos * temp_ki - sin * temp_kj;
-        // modify element in last column, while zeroing out spike element in the last column
-        this->chol_[ locL(j, k) ] = sin * temp_ki + cos * temp_kj; // element (k, j) stored in (j, k)
-    }
-    // diagonal element in row where spike element appears
-    this->chol_[ locL(i, i) ] *= cos;
 }
 
-void AsmSolver::removeSpikeElement(const HighsInt& i){
+void AsmSolver::removeSpike(){
     // Givens rotation on L from the right
     // intended to remove the spike on the last, right-most, column
     // subdiagonal sine is positive
-    // argument i referes to the row whose last-column element is to be zeroed out
-    // the spike is stored in the last row of L, so change is made in place
     HighsInt j = this->nullsp_dim_; // at this point the size of the nullspace hasnt been updated yet, but L is enhanced already
-    double cos {0.};
-    double sin {1.};
-    double a = this->chol_[ locL(i, i) ]; // element i in the row whose last element has to be zeroed out
-    if ( std::abs(a) >= this->options_.factor_pivot_tolerance){
-        double b = this->chol_[ locL(j, i) ]; // element to zero out (last row)
-        double hyp = std::sqrt( a*a + b*b ); // guaranteed to be > 0
-        cos = a / hyp;
-        sin = b / hyp;
+    for (HighsInt i {0}; i < j; i++){
+        // argument i referes to the row whose last-column element is to be zeroed out
+        // the spike is stored in the last row of L, so change is made in place
+        double cos {0.};
+        double sin {1.};
+        double a = this->chol_[ locL(i, i) ]; // element i in the row whose last element has to be zeroed out
+        if ( std::abs(a) >= this->options_.factor_pivot_tolerance){
+            double b = this->chol_[ locL(j, i) ]; // element to zero out (last row)
+            double hyp = std::sqrt( a*a + b*b ); // guaranteed to be > 0
+            cos = a / hyp;
+            sin = b / hyp;
+        }
+        // diagonal element in row whose last element is being zeroed out
+        // note element (j,i) is in fact (i,j) of the spike column, but stored in the last row of L
+        this->chol_[ locL(i, i) ] = cos * this->chol_[ locL(i, i) ] + sin * this->chol_[ locL(j, i) ];
+        double temp_ki;
+        double temp_kj;
+        // change each row element in the two columns affected (i and last one) on and below row i up to second to last row
+        for (HighsInt k {i + 1}; k < j; k++){
+            temp_ki = this->chol_[ locL(k, i) ];
+            temp_kj = this->chol_[ locL(j, k) ]; // element (k,j) is stored in (j,k)
+            // modify element in column i
+            this->chol_[ locL(k, i) ] = cos * temp_ki + sin * temp_kj;
+            // modify element in last column, while zeroing out spike element in the last column
+            this->chol_[ locL(j, k) ] = - sin * temp_ki + cos * temp_kj; // element (k, j) stored in (j, k)
+        }
+        // element that was zero
+        this->chol_[ locL(j, i) ] = sin * this->chol_[ locL(j, j) ];
+        // bottom right element
+        this->chol_[ locL(j, j) ] *= cos;
     }
-    // diagonal element in row whose last element is being zeroed out
-    // note element (j,i) is in fact (i,j) of the spike column, but stored in the last row of L
-    this->chol_[ locL(i, i) ] = cos * this->chol_[ locL(i, i) ] + sin * this->chol_[ locL(j, i) ];
-    double temp_ki;
-    double temp_kj;
-    // change each row element in the two columns affected (i and last one) on and below row i up to second to last row
-    for (HighsInt k {i + 1}; k < j; k++){
-        temp_ki = this->chol_[ locL(k, i) ];
-        temp_kj = this->chol_[ locL(j, k) ]; // element (k,j) is stored in (j,k)
-        // modify element in column i
-        this->chol_[ locL(k, i) ] = cos * temp_ki + sin * temp_kj;
-        // modify element in last column, while zeroing out spike element in the last column
-        this->chol_[ locL(j, k) ] = - sin * temp_ki + cos * temp_kj; // element (k, j) stored in (j, k)
-    }
-    // element that was zero
-    this->chol_[ locL(j, i) ] = sin * this->chol_[ locL(j, j) ];
-    // bottom right element
-    this->chol_[ locL(j, j) ] *= cos;
 }
 
 void AsmSolver::reduce(const HighsInt& loc_activated){
