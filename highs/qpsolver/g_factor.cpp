@@ -156,14 +156,14 @@ void AsmSolver::extend(const HighsInt& loc_deactivated, const HighsInt& idx_deac
         this->B_.update(&newcol, &Ztemp, &iRow, &hint);
         this->Vi_.back() = max_idx;
         // then update reduced hessian factor
-        // first reorder elements of newcol (vector d in Fletcher) with the permutation in which vectors in Z sit
-        for (HighsInt i { this->rangsp_dim_ }; i < this->Q_.dim_; i++){ // elements i < this->rangsp_dim_ - 1 in buffer_ are rubbish
-            this->buffer_[ i - 1 ] = - newcol.array[ this->basis_perm_[i] ] / max_abs;
-        }
-        this->buffer_.back() = 1 / max_abs;
-        // now elements d_[p+1 to n] in (24) of 10.1007/s101070050113 are the last n - (p+1) elements of buffer
-        if ( this->nullsp_dim_ > 0 ){ // if nullspace wasn't empty before deactivation rotations have a reason to be used
+       if ( this->nullsp_dim_ > 0 ){ // if nullspace wasn't empty before deactivation rotations have a reason to be used
             HighsInt dim = this->nullsp_dim_;
+             // first reorder elements of newcol (vector d in Fletcher) with the permutation in which vectors in Z sit
+            for (HighsInt i { this->rangsp_dim_ }; i < this->Q_.dim_; i++){ // elements i < this->rangsp_dim_ - 1 in buffer_ are rubbish
+                this->buffer_[ i - 1 ] = - newcol.array[ this->basis_perm_[i] ] / max_abs;
+            }
+            this->buffer_.back() = 1 / max_abs;
+            // now elements d_[p+1 to n] in (24) of 10.1007/s101070050113 are the last n - (p+1) elements of buffer
             // apply givens rotation from the left to zero out all but the rightmost element in the last row of the enhanced L
             // use their memory space to store the spike column that appears in the rightmost column of L
             addSpike();
@@ -175,7 +175,7 @@ void AsmSolver::extend(const HighsInt& loc_deactivated, const HighsInt& idx_deac
             // remove right spike
             removeSpike();
         } else { // otherwise chol_ is a singleton that only needs scaling
-            this->chol_.back() *= this->buffer_.back();
+            this->chol_.back() /= max_abs;
         }
     }
     return;
