@@ -88,9 +88,9 @@ class AsmSolver {
         void extend(const HighsInt& loc_deactivated, const HighsInt& idx_deactivated);
         void reduceInBasis(const HighsInt& loc_activated);
         void reduceOutsideBasis(const HighsInt& idx);
-        void rightGivensHess(const HighsInt& i);
-        void addSpike(const HighsInt& start);
-        void removeSpike();
+        void rightGivensHess(const HighsInt& start);
+        void addSpike(const HighsInt& start, const HighsInt& idx_last_col);
+        void removeSpike(const HighsInt& idx_last_col);
         // Feasibility phase functions
         void feasibility();
         void setupFeasibilityLp();

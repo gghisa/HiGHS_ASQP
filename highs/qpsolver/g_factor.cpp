@@ -166,14 +166,14 @@ void AsmSolver::extend(const HighsInt& loc_deactivated, const HighsInt& idx_deac
             // now elements d_[p+1 to n] in (24) of 10.1007/s101070050113 are the last n - (p+1) elements of buffer
             // apply givens rotation from the left to zero out all but the rightmost element in the last row of the enhanced L
             // use their memory space to store the spike column that appears in the rightmost column of L
-            addSpike(this->nullsp_dim_ - 1); // add spike from the second to last row
+            addSpike(this->nullsp_dim_ - 1, this->nullsp_dim_); // add spike from the second to last row
             // multiply spike column with eta colum
             for (HighsInt i {0}; i < dim; i++){
                 this->chol_[ locL(dim, i) ] += this->chol_[ locL(dim, dim) ] * this->buffer_[ this->rangsp_dim_ -1 + i ];
             }
             this->chol_[ locL(dim, dim) ] *= this->buffer_.back(); // last element in the spike is only scaled
             // remove right spike
-            removeSpike();
+            removeSpike(this->nullsp_dim_);
         } else { // otherwise chol_ is a singleton that only needs scaling
             this->chol_.back() /= max_abs;
         }
@@ -181,11 +181,11 @@ void AsmSolver::extend(const HighsInt& loc_deactivated, const HighsInt& idx_deac
     return;
 }
 
-void AsmSolver::addSpike(const HighsInt& start){
+void AsmSolver::addSpike(const HighsInt& start, const HighsInt& idx_last_col){
     // Givens rotation on L from the right
     // intended to add the spike on the last, right-most, column
     // subdiagonal sine is negative
-    HighsInt j = this->nullsp_dim_; // at this point the size of the nullspace hasnt been updated yet, but L is enhanced already
+    HighsInt j = idx_last_col; // at this point the size of the nullspace hasnt been updated yet, but L is enhanced already
     for (HighsInt i {start}; i > -1; i--){
         // argument i referes to the column whose last-row element is to be zeroed out
         // the spike is stored in the last row of L, so change is made in place
@@ -218,11 +218,11 @@ void AsmSolver::addSpike(const HighsInt& start){
     }
 }
 
-void AsmSolver::removeSpike(){
+void AsmSolver::removeSpike(const HighsInt& idx_last_col){
     // Givens rotation on L from the right
     // intended to remove the spike on the last, right-most, column
     // subdiagonal sine is positive
-    HighsInt j = this->nullsp_dim_; // at this point the size of the nullspace hasnt been updated yet, but L is enhanced already
+    HighsInt j = idx_last_col; // at this point the size of the nullspace hasnt been updated yet, but L is enhanced already
     for (HighsInt i {0}; i < j; i++){
         // argument i referes to the row whose last-column element is to be zeroed out
         // the spike is stored in the last row of L, so change is made in place
@@ -263,9 +263,10 @@ void AsmSolver::reduceInBasis(const HighsInt& loc_activated){ // only called whe
         return;
     }
     // TODO givens rotations are also needed when dealing with indefinite matrix
-    // we remove row loc_activated, so we need to zero out the super-diagonal elements
+    // we remove row loc_activated (a posteriori, below, for indexing reasons)
+    // so we need to zero out the super-diagonal elements
     // from row loc_activated+1 till the end
-    for (HighsInt i {loc_activated + 1}; i < this->nullsp_dim_; i++) rightGivensHess(i);
+    rightGivensHess(loc_activated + 1);
     // then we need to erase all of the zeroes, first erase all super-diagonal elements that were zeroed out
     for (HighsInt i {this->nullsp_dim_ - 1}; i > loc_activated; i--){
         this->chol_.erase( this->chol_.begin() + locL(i,i) );
@@ -278,26 +279,28 @@ void AsmSolver::reduceInBasis(const HighsInt& loc_activated){ // only called whe
     return;
 }
 
-void AsmSolver::rightGivensHess(const HighsInt& i){
+void AsmSolver::rightGivensHess(const HighsInt& start){
     // Givens rotations on L from the right that affect columns
     // intended for removing a row/column from L when an arbitrary vector is removed
-    // argument i refers to element (i,i) in L that is to be zeroed out
-    double cos {0.};
-    double sin {1.};
-    double a = this->chol_[ locL(i, i - 1) ];
-    if ( std::abs(a) >= this->options_.factor_pivot_tolerance){
-        double b = this->chol_[ locL(i, i) ]; // element to zero out
-        double hyp = std::sqrt( a*a + b*b ); // guaranteed to be > 0
-        cos = a / hyp;
-        sin = b / hyp;
-    }
-    // change elements in column i and then i+1, so loop through rows beneath the diagonal
-    for (HighsInt j {i}; j < this->nullsp_dim_; j++){
-        double temp = cos * this->chol_[ locL(j,i-1) ] + sin * this->chol_[ locL(j, i) ];
-        // TODO we are accessing a row-wise matrix by column, could be better
-        //  when i == j the element (i, i+1) is zeroed out and then deleted so no need to change it
-        if (j != i) this->chol_[ locL(j,i) ] = - sin * this->chol_[ locL(j,i-1) ] + cos * this->chol_[ locL(j, i) ];
-        this->chol_[ locL(j,i-1) ] = temp; // in-place operation requires overwriting element when all computations are done
+    for (HighsInt i {start}; i < this->nullsp_dim_; i++){
+        // argument i refers to element (i,i) in L that is to be zeroed out
+        double cos {0.};
+        double sin {1.};
+        double a = this->chol_[ locL(i, i - 1) ];
+        if ( std::abs(a) >= this->options_.factor_pivot_tolerance ){
+            double b = this->chol_[ locL(i, i) ]; // element to zero out
+            double hyp = std::sqrt( a*a + b*b ); // guaranteed to be > 0
+            cos = a / hyp;
+            sin = b / hyp;
+        }
+        // change elements in column i and then i+1, so loop through rows beneath the diagonal
+        for (HighsInt j {i}; j < this->nullsp_dim_; j++){
+            double temp = cos * this->chol_[ locL(j,i-1) ] + sin * this->chol_[ locL(j, i) ];
+            // TODO we are accessing a row-wise matrix by column, could be better
+            //  when i == j the element (i, i+1) is zeroed out and then deleted so no need to change it
+            if (j != i) this->chol_[ locL(j,i) ] = - sin * this->chol_[ locL(j,i-1) ] + cos * this->chol_[ locL(j, i) ];
+            this->chol_[ locL(j,i-1) ] = temp; // in-place operation requires overwriting element when all computations are done
+        }
     }
 }
 
@@ -342,12 +345,10 @@ void AsmSolver::reduceOutsideBasis(const HighsInt& idx){
     // update indices
     this->basis_idxs_[loc_remove] = idx; // replace old index with new one in basis
     // send new index to end of active, by moving everything between end of rangsp and locremove down by 1
-    std::rotate(this->basis_idxs_.begin() + this->rangsp_dim_,
-                this->basis_idxs_.begin() + loc_remove,
-                this->basis_idxs_.begin() + loc_remove + 1);
-    std::rotate(this->basis_perm_.begin() + this->rangsp_dim_,
-                this->basis_perm_.begin() + loc_remove,
-                this->basis_perm_.begin() + loc_remove + 1);
+    auto it = this->basis_idxs_.begin();
+    std::rotate(it + this->rangsp_dim_, it + loc_remove, it + loc_remove + 1);
+    it = this->basis_perm_.begin();
+    std::rotate(it + this->rangsp_dim_, it + loc_remove, it + loc_remove + 1);
     if (this->nullsp_dim_ > 1){
         loc_remove -= this->rangsp_dim_; // normalise location of removal to size of nullspace
         // update L factorisation according to (28) in Fletcher
@@ -369,15 +370,14 @@ void AsmSolver::reduceOutsideBasis(const HighsInt& idx){
         }
         this->chol_ = std::move(new_chol);
         // then add spike elements until full
-        addSpike(this->nullsp_dim_ - loc_remove);
+        addSpike(this->nullsp_dim_ - loc_remove, dim);
         // then multiply out with (nullsp_dim_ - 1, nullsp_dim_)-size eta matrix
         // upper (nullsp_dim_ - 1, nullsp_dim_ - 1)-size triangle is unchanged
         for(HighsInt j {0}; j < dim; j++){
             this->chol_[ locL(dim, j) ] = this->chol_[ locL(j, j) ] + this->chol_[ locL(dim, j) ] * this->buffer_[this->rangsp_dim_ + j];
         }
         this->chol_.back() = 0; // last element disappears
-        removeSpike(); // finally remove spike
-        for (HighsInt i {0}; i < this->nullsp_dim_; i++) rightGivensHess(i);
+        removeSpike(dim); // finally remove spike
         this->chol_.resize(this->chol_.size() - this->nullsp_dim_); // drop last row of L
     } else this->chol_.resize(0);
     this->Vi_.erase( this->Vi_.begin() + loc_remove ); // remove reference to element in padding
