@@ -323,72 +323,24 @@ void AsmSolver::activate(const HighsInt& idx, const AsmBasisStatus& status){
     // 1. if we are activating a unit vector, we check if it is already in V. If yes, just update perm and idxs, else update factorisations
     // 2. if we are activating a constraint, update factorisations
     // by update factorisations we mean updating B and L, the latter by choosing wisely which element to drop.
-    bool alreadyinpadding {false};
     if ( idx >= this->lp_.num_row_){ // if we are activating a variable's bound
         for (loc_remove = 0; loc_remove < this->nullsp_dim_; loc_remove++){
-            if ( this->Vi_[loc_remove] == varidx ){
-                // unit vector already in basis
-                alreadyinpadding = true;
+            if ( this->Vi_[loc_remove] == varidx ){ // unit vector already in basis
                 HighsInt loc_actual = this->rangsp_dim_ + loc_remove;
                 this->basis_idxs_[loc_actual] = idx; // update index
                 auto it = this->basis_idxs_.begin();
                 std::rotate(it + this->rangsp_dim_, it + loc_actual, it + loc_actual + 1);
                 it = this->basis_perm_.begin();
                 std::rotate(it + this->rangsp_dim_, it + loc_actual, it + loc_actual + 1);
-                break;
+                // update factorization if the already-in-basis
+                this->reduceInBasis(loc_remove);
+                this->Vi_.erase( this->Vi_.begin() + loc_remove ); // remove reference to element in padding
+                return;
             }
         }
     }
-    if ( !alreadyinpadding ){ // if we are activating a constraint or the variable bound we are activating is not already in V
-        // then choose which constraint to drop from V
-        // first extract constraint and build HVec
-        if (idx < this->lp_.num_row_){
-            std::vector<double> select(this->lp_.num_row_);
-            select[idx] = 1.;
-            this->lp_.a_matrix_.productTranspose(this->buffer_, select);
-        } else {
-            this->buffer_.assign(this->Q_.dim_, 0.);
-            this->buffer_[varidx] = 1.;
-        }
-        HVector newcol;
-        stdvec2hvec(this->buffer_, newcol);
-        this->B_.ftranCall(newcol, 1.);
-        // now select which index to drop by finding largest element modulus in newcol (Z^T a_q)
-        double max_abs {0.};
-        loc_remove = this->Q_.dim_ - 1; // default remove last element in V if procedure is undecisive
-        for (HighsInt i {0}; i < newcol.count; i++){ // Ztemp is a sparse vector
-            if ( newcol.index[i] >= this->rangsp_dim_ &&  std::abs( newcol.array[newcol.index[i]] ) > std::abs( max_abs ) ) {
-                // only look at the trailing elements of the vector and 
-                max_abs = newcol.array[newcol.index[i]];
-                loc_remove = newcol.index[i];
-            }
-        }
-        // build oldcol
-        HighsInt iRow = this->basis_perm_[loc_remove];
-        HighsInt hint { 99999 };
-        HVector oldcol;
-        this->buffer_.assign(this->Q_.dim_, 0.);
-        this->buffer_[ iRow ] = 1.;
-        stdvec2hvec(this->buffer_, oldcol);
-        this->B_.btranCall(oldcol, 1.);
-        // update basis matrix
-        this->B_.update(&newcol, &oldcol, &iRow, &hint);
-        // change dropped constraint to inactive
-        if (this->basis_idxs_[loc_remove] < this->lp_.num_row_) this->con_status_[this->basis_idxs_[loc_remove]] = AsmBasisStatus::kInactive;
-        else this->var_status_[this->basis_idxs_[loc_remove] - this->lp_.num_row_] = AsmBasisStatus::kInactive;
-        // update indices
-        this->basis_idxs_[loc_remove] = idx; // replace old index with new one in basis
-        // send new index to end of active, by moving everything between end of rangsp and locremove down by 1
-        std::rotate(this->basis_idxs_.begin() + this->rangsp_dim_,
-                    this->basis_idxs_.begin() + loc_remove,
-                    this->basis_idxs_.begin() + loc_remove + 1);
-        std::rotate(this->basis_perm_.begin() + this->rangsp_dim_,
-                    this->basis_perm_.begin() + loc_remove,
-                    this->basis_perm_.begin() + loc_remove + 1); 
-    }
-    // update factorization if the already-in-basis row was the last one or if we arbitrarily chose to drop the last one
-    this->Vi_.erase( this->Vi_.begin() + loc_remove - this->rangsp_dim_ ); // remove reference to element in padding
-    this->reduce(loc_remove - this->rangsp_dim_);
+    // if we are activating a constraint or the variable bound we are activating is not already in V
+    this->reduceOutsideBasis(idx);
     return;
 }
 
