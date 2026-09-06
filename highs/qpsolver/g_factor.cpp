@@ -367,7 +367,7 @@ void AsmSolver::reduceOutsideBasis(const HighsInt& idx){
             std::copy(itc + locL(loc_remove, 0), itc + locL(loc_remove, loc_remove), itn + locL(dim, 0));
             // then elements from permuted column that go in the last column (but last row in memeory)
             for (HighsInt i {loc_remove}; i < dim; i++){
-                new_chol[ locL(dim, loc_remove + i) ] = this->chol_[ locL(loc_remove + 1, loc_remove) ];
+                new_chol[ locL(dim, i) ] = this->chol_[ locL(i + 1, loc_remove) ];
             }
             // then final element
             new_chol.back() = this->chol_[ locL(loc_remove, loc_remove) ];
