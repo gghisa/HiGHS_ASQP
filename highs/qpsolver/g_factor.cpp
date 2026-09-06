@@ -272,9 +272,9 @@ void AsmSolver::reduceInBasis(const HighsInt& loc_activated){ // only called whe
         this->chol_.erase( this->chol_.begin() + locL(i,i) );
     }
     // then delete exactly loc_activated elements which is the number of elements in row loc_activated
-    HighsInt size_L1 = (loc_activated - 1) * loc_activated / 2; // size of lower diagonal matrix above removed row
+    HighsInt size_L1 = ((loc_activated - 1) * loc_activated) / 2; // size of lower diagonal matrix above removed row
     this->chol_.erase(this->chol_.begin() + size_L1, this->chol_.begin() + size_L1 + loc_activated + 1);
-    //
+    // TODO is this size correct?
     removeNullSpaceDim();
     return;
 }
@@ -345,7 +345,7 @@ void AsmSolver::reduceOutsideBasis(const HighsInt& idx){
     // update indices
     this->basis_idxs_[loc_remove] = idx; // replace old index with new one in basis
     // send new index to end of active, by moving everything between end of rangsp and locremove down by 1
-    auto it = this->basis_idxs_.begin();
+    std::vector<HighsInt>::iterator it = this->basis_idxs_.begin();
     std::rotate(it + this->rangsp_dim_, it + loc_remove, it + loc_remove + 1);
     it = this->basis_perm_.begin();
     std::rotate(it + this->rangsp_dim_, it + loc_remove, it + loc_remove + 1);
@@ -356,18 +356,27 @@ void AsmSolver::reduceOutsideBasis(const HighsInt& idx){
         for (HighsInt i { this->rangsp_dim_ }; i < this->Q_.dim_; i++){ // elements i < this->rangsp_dim_ - 1 in buffer_ are rubbish
             this->buffer_[i] = - newcol.array[ this->basis_perm_[i] ] / max_abs;
         }
-        // then explicitly permute L according to P^T L P (from Claude.ai)
+        // then explicitly permute L according to P^T L P
         HighsInt dim = this->nullsp_dim_ - 1;
         std::vector<double> new_chol(this->chol_.size());
-        for (HighsInt i = 0; i < this->nullsp_dim_; ++i) {
-            HighsInt ni = (i < loc_remove) ? i : (i == loc_remove ? dim : i - 1);
-            for (HighsInt j = 0; j <= i; ++j) {
-                HighsInt nj = (j < loc_remove) ? j : (j == loc_remove ? dim : j - 1);
-                if (ni >= nj) new_chol[ locL(ni, nj) ] = this->chol_[ locL(i, j) ];
-                else // only occurs when j == p < i: spike value, store at symmetric slot
-                    new_chol[ locL(nj, ni) ] = this->chol_[ locL(i, j) ];
-            }
+        // upper triangle above permuted row stays the same
+        std::vector<double>::iterator itc = this->chol_.begin();
+        std::vector<double>::iterator itn = new_chol.begin();
+        std::copy(itc, itc + (loc_remove * (loc_remove+1))/2, itn);
+        // copy lower left rectangle and lower right triangle, line by line
+        for (HighsInt i {loc_remove + 1}; i < this->nullsp_dim_; i++){
+            HighsInt uppertr_size = (i * (i-1))/2;
+            std::copy(itc + locL(i,0), itc + locL(i,loc_remove), itn + uppertr_size );
+            std::copy(itc + locL(i, loc_remove+1), itc + locL(i, i)+1, itn + uppertr_size + loc_remove);
         }
+        // elements in permuted row that effectively go in the last row
+        std::copy(itc + locL(loc_remove, 0), itc + locL(loc_remove, loc_remove), itc + locL(dim, 0));
+        // then elements from permuted column that go in the last column (but last row in memeory)
+        for (HighsInt i {loc_remove}; i < dim; i++){
+            new_chol[ locL(dim, loc_remove + i) ] = this->chol_[ locL(loc_remove + 1, loc_remove) ];
+        }
+        // then final element
+        new_chol.back() = this->chol_[ locL(loc_remove, loc_remove) ];
         this->chol_ = std::move(new_chol);
         // then add spike elements until full
         addSpike(this->nullsp_dim_ - loc_remove, dim);
@@ -376,7 +385,6 @@ void AsmSolver::reduceOutsideBasis(const HighsInt& idx){
         for(HighsInt j {0}; j < dim; j++){
             this->chol_[ locL(dim, j) ] = this->chol_[ locL(j, j) ] + this->chol_[ locL(dim, j) ] * this->buffer_[this->rangsp_dim_ + j];
         }
-        this->chol_.back() = 0; // last element disappears
         removeSpike(dim); // finally remove spike
         this->chol_.resize(this->chol_.size() - this->nullsp_dim_); // drop last row of L
     } else this->chol_.resize(0);
