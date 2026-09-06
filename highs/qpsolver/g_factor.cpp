@@ -186,7 +186,7 @@ void AsmSolver::addSpike(const HighsInt& start, const HighsInt& idx_last_col){
     // subdiagonal sine is negative
     HighsInt j = idx_last_col; // at this point the size of the nullspace hasnt been updated yet, but L is enhanced already
     for (HighsInt i {start}; i > -1; i--){
-        // argument i referes to the column whose last-row element is to be zeroed out
+        // argument i refers to the column whose last-row element is to be zeroed out
         // the spike is stored in the last row of L, so change is made in place
         double cos {0.};
         double sin {1.};
@@ -352,7 +352,7 @@ void AsmSolver::reduceOutsideBasis(const HighsInt& idx){
         // if we remove the last row no need to permute anything
         if ( loc_remove < dim ) permute(loc_remove, dim);
         // then add spike elements until full
-        if (loc_remove > 0) addSpike(this->nullsp_dim_ - loc_remove, dim); // permuting first row already gives full spike
+        if (loc_remove > 0) addSpike(loc_remove - 1, dim); // permuting first row already gives full spike
         // then multiply out with (nullsp_dim_ - 1, nullsp_dim_)-size eta matrix
         // upper (nullsp_dim_ - 1, nullsp_dim_ - 1)-size triangle is unchanged
         for(HighsInt j {0}; j < dim; j++){
