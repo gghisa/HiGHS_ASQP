@@ -350,12 +350,15 @@ void AsmSolver::reduceOutsideBasis(const HighsInt& idx){
     it = this->basis_perm_.begin();
     std::rotate(it + this->rangsp_dim_, it + loc_remove, it + loc_remove + 1);
     if (this->nullsp_dim_ > 1){
-        loc_remove -= this->rangsp_dim_; // normalise location of removal to size of nullspace
         // update L factorisation according to (28) in Fletcher
         // first store -d_k/d_p coefficients at the end of buffer_
-        for (HighsInt i { this->rangsp_dim_ }; i < this->Q_.dim_; i++){ // elements i < this->rangsp_dim_ - 1 in buffer_ are rubbish
+        for (HighsInt i { this->rangsp_dim_ }; i < loc_remove; i++){ // elements i < this->rangsp_dim_ - 1 in buffer_ are rubbish
+            this->buffer_[i + 1] = - newcol.array[ this->basis_perm_[i] ] / max_abs;
+        }
+        for (HighsInt i { loc_remove + 1 }; i < this->Q_.dim_; i++){ // skip pivot element
             this->buffer_[i] = - newcol.array[ this->basis_perm_[i] ] / max_abs;
         }
+        loc_remove -= this->rangsp_dim_; // normalise location of removal to size of nullspace
         // then explicitly permute L according to P^T L P
         HighsInt dim = this->nullsp_dim_ - 1;
         std::vector<double> new_chol(this->chol_.size());
@@ -383,7 +386,7 @@ void AsmSolver::reduceOutsideBasis(const HighsInt& idx){
         // then multiply out with (nullsp_dim_ - 1, nullsp_dim_)-size eta matrix
         // upper (nullsp_dim_ - 1, nullsp_dim_ - 1)-size triangle is unchanged
         for(HighsInt j {0}; j < dim; j++){
-            this->chol_[ locL(dim, j) ] = this->chol_[ locL(j, j) ] + this->chol_[ locL(dim, j) ] * this->buffer_[this->rangsp_dim_ + j];
+            this->chol_[ locL(dim, j) ] += this->chol_.back() * this->buffer_[this->rangsp_dim_ + j + 1];
         }
         removeSpike(dim); // finally remove spike
         this->chol_.resize(this->chol_.size() - this->nullsp_dim_); // drop last row of L
