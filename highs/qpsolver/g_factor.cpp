@@ -339,9 +339,6 @@ void AsmSolver::reduceOutsideBasis(const HighsInt& idx){
     this->B_.btranCall(oldcol, 1.);
     // update basis matrix
     this->B_.update(&newcol, &oldcol, &iRow, &hint);
-    // change dropped constraint to inactive
-    if (this->basis_idxs_[loc_remove] < this->lp_.num_row_) this->con_status_[this->basis_idxs_[loc_remove]] = AsmBasisStatus::kInactive;
-    else this->var_status_[this->basis_idxs_[loc_remove] - this->lp_.num_row_] = AsmBasisStatus::kInactive;
     if (this->nullsp_dim_ > 1){
         // update L factorisation according to (28) in Fletcher
         // first store -d_k/d_p coefficients at the end of buffer_
@@ -354,28 +351,30 @@ void AsmSolver::reduceOutsideBasis(const HighsInt& idx){
         loc_remove -= this->rangsp_dim_; // normalise location of removal to size of nullspace
         // then explicitly permute L according to P^T L P
         HighsInt dim = this->nullsp_dim_ - 1;
-        std::vector<double> new_chol(this->chol_.size());
-        // upper triangle above permuted row stays the same
-        std::vector<double>::iterator itc = this->chol_.begin();
-        std::vector<double>::iterator itn = new_chol.begin();
-        std::copy(itc, itc + (loc_remove * (loc_remove+1))/2, itn);
-        // copy lower left rectangle and lower right triangle, line by line
-        for (HighsInt i {loc_remove + 1}; i < this->nullsp_dim_; i++){
-            HighsInt uppertr_size = (i * (i-1))/2;
-            std::copy(itc + locL(i,0), itc + locL(i,loc_remove), itn + uppertr_size );
-            std::copy(itc + locL(i, loc_remove+1), itc + locL(i, i)+1, itn + uppertr_size + loc_remove);
+        if ( loc_remove < dim ){ // if we remove the last row no need to permute anything
+            std::vector<double> new_chol(this->chol_.size());
+            // upper triangle above permuted row stays the same
+            std::vector<double>::iterator itc = this->chol_.begin();
+            std::vector<double>::iterator itn = new_chol.begin();
+            std::copy(itc, itc + (loc_remove * (loc_remove+1))/2, itn);
+            // copy lower left rectangle and lower right triangle, line by line
+            for (HighsInt i {loc_remove + 1}; i < this->nullsp_dim_; i++){
+                HighsInt uppertr_size = (i * (i-1))/2;
+                std::copy(itc + locL(i,0), itc + locL(i,loc_remove), itn + uppertr_size );
+                std::copy(itc + locL(i, loc_remove+1), itc + locL(i, i)+1, itn + uppertr_size + loc_remove);
+            }
+            // elements in permuted row that effectively go in the last row
+            std::copy(itc + locL(loc_remove, 0), itc + locL(loc_remove, loc_remove), itn + locL(dim, 0));
+            // then elements from permuted column that go in the last column (but last row in memeory)
+            for (HighsInt i {loc_remove}; i < dim; i++){
+                new_chol[ locL(dim, loc_remove + i) ] = this->chol_[ locL(loc_remove + 1, loc_remove) ];
+            }
+            // then final element
+            new_chol.back() = this->chol_[ locL(loc_remove, loc_remove) ];
+            this->chol_ = std::move(new_chol);
         }
-        // elements in permuted row that effectively go in the last row
-        std::copy(itc + locL(loc_remove, 0), itc + locL(loc_remove, loc_remove), itn + locL(dim, 0));
-        // then elements from permuted column that go in the last column (but last row in memeory)
-        for (HighsInt i {loc_remove}; i < dim; i++){
-            new_chol[ locL(dim, loc_remove + i) ] = this->chol_[ locL(loc_remove + 1, loc_remove) ];
-        }
-        // then final element
-        new_chol.back() = this->chol_[ locL(loc_remove, loc_remove) ];
-        this->chol_ = std::move(new_chol);
         // then add spike elements until full
-        addSpike(this->nullsp_dim_ - loc_remove, dim);
+        if (loc_remove > 0) addSpike(this->nullsp_dim_ - loc_remove, dim); // permuting first row already gives full spike
         // then multiply out with (nullsp_dim_ - 1, nullsp_dim_)-size eta matrix
         // upper (nullsp_dim_ - 1, nullsp_dim_ - 1)-size triangle is unchanged
         for(HighsInt j {0}; j < dim; j++){
@@ -383,7 +382,11 @@ void AsmSolver::reduceOutsideBasis(const HighsInt& idx){
         }
         removeSpike(dim); // finally remove spike
         this->chol_.resize(this->chol_.size() - this->nullsp_dim_); // drop last row of L
+        loc_remove += this->rangsp_dim_; // restore for index update
     } else this->chol_.resize(0);
+    // change dropped constraint to inactive
+    if (this->basis_idxs_[loc_remove] < this->lp_.num_row_) this->con_status_[this->basis_idxs_[loc_remove]] = AsmBasisStatus::kInactive;
+    else this->var_status_[this->basis_idxs_[loc_remove] - this->lp_.num_row_] = AsmBasisStatus::kInactive;
     // update indices
     this->basis_idxs_[loc_remove] = idx; // replace old index with new one in basis
     // send new index to end of active, by moving everything between end of rangsp and locremove down by 1
