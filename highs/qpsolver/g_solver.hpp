@@ -65,12 +65,12 @@ class AsmSolver {
         // Numbers
         HighsInt Bhint_ { 99999 }; // same number as Micheal in Basis::updatebasis
         double alpha_relaxed_ {1.}; // step size for ratio test
-        HighsInt n_iter_ {0};
-        // Truth values
-        bool step_taken_ {false};
+        HighsInt num_basis_updates_ {0};
+        HighsInt reinversion_freq_ {100};
         // permutation has to be used when FTRAN and BTRAN are called
         std::vector<HighsInt> basis_idxs_; // ordered active and free indices in basiss
         std::vector<HighsInt> basis_perm_; // ordered active and free indices permutation in basis
+        std::vector<HighsInt> HFactor_basis_;
         std::vector<AsmBasisStatus> var_status_;
         std::vector<AsmBasisStatus> con_status_;
         std::vector<HighsInt> degenerate_idxs_;
@@ -81,8 +81,7 @@ class AsmSolver {
         HVector stdvec2hvec(const std::vector<double>& vec, HVector& hvec);
         // Reduced Hessian operations
         HighsInt locL(const HighsInt& i, const HighsInt& j);
-        void recomputeExplicit();
-        void refactorize();
+        void recompute();
         void Lsolve(std::vector<double>& vec);
         void LTsolve(std::vector<double>& vec);
         void LLTsolve(std::vector<double>& vec);
@@ -125,7 +124,7 @@ class AsmSolver {
         static void ratio2(double& max_pivot, const double denom, const double lower, const double upper,
                            const double oldval, const double newval, const double alpha,
                            const HighsInt idx, HighsInt& newactive_idx, AsmBasisStatus& newactive_status);
-        void stepSanity();
+        void reinvertBasis();
         void addNullSpaceDim();
         void removeNullSpaceDim();
         AsmBasisStatus HighsStatusToAsm(const HighsBasisStatus& status, const HighsInt i, const bool variable);

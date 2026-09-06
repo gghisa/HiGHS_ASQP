@@ -25,7 +25,7 @@ HVector AsmSolver::stdvec2hvec(const std::vector<double>& vec, HVector& hvec){
     return hvec;
 }
 
-void AsmSolver::recomputeExplicit(){
+void AsmSolver::recompute(){
     std::vector<HVector> ZT(this->nullsp_dim_); // TODO anything we can do to salvage information?
     HighsInt chol_size = this->nullsp_dim_ * (this->nullsp_dim_ + 1) / 2;
     this->chol_.assign(chol_size, 0.);
@@ -51,10 +51,6 @@ void AsmSolver::recomputeExplicit(){
             this->chol_[ locL(i,j) ] = sum; // should be ordered such that chol_ is row-wise of M
         }
     }
-    return;
-}
-
-void AsmSolver::refactorize(){
     // perform cholesky factorization in place
     for (HighsInt i {0}; i<this->nullsp_dim_; i++){
         for (HighsInt j {0}; j <= i; j++){
@@ -153,6 +149,7 @@ void AsmSolver::extend(const HighsInt& loc_deactivated, const HighsInt& idx_deac
         this->B_.ftranCall(newcol, 1.);
         // update basis matrix
         this->B_.update(&newcol, &Ztemp, &iRow, &this->Bhint_);
+        this->num_basis_updates_++;
         this->Vi_.back() = max_idx;
         // then update reduced hessian factor
         if ( this->nullsp_dim_ > 0 ){ // if nullspace wasn't empty before deactivation rotations have a reason to be used
@@ -337,6 +334,7 @@ void AsmSolver::reduceOutsideBasis(const HighsInt& idx){
     this->B_.btranCall(oldcol, 1.);
     // update basis matrix
     this->B_.update(&newcol, &oldcol, &iRow, &this->Bhint_);
+    this->num_basis_updates_++;
     if (this->nullsp_dim_ > 1){
         // update L factorisation according to (28) in Fletcher
         // first store -d_k/d_p coefficients at the end of buffer_

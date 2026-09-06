@@ -33,6 +33,7 @@ AsmSolver::AsmSolver(const HighsOptions& options,
                      newconvals_(lp.num_row_),
                      newconpivots_(lp.num_row_),
                      basis_perm_(hessian.dim_), // no init of basis_idxs_ as it is built with push_back()
+                     HFactor_basis_(hessian.dim_),
                      var_status_(hessian.dim_),
                      con_status_(lp.num_row_){
     // change hessian to square for better memory access
@@ -132,24 +133,23 @@ void AsmSolver::setupQpBasis(){
     // merge indices
     this->basis_idxs_.insert(this->basis_idxs_.end(),
                              free_idxs.begin(), free_idxs.end());
-    std::vector<HighsInt> ordered_basis = this->basis_idxs_; // store buffer
+    this->HFactor_basis_ = this->basis_idxs_; // store buffer
     // free indices at the start are necessarily variables, so they are unit vectors for sure
     this->Vi_.assign(this->nullsp_dim_, -1);
     for (HighsInt i {0}; i < this->nullsp_dim_; i++) this->Vi_[i] = free_idxs[i] - this->lp_.num_row_;
-    this->setupBasisMat(ordered_basis); // setup HFactor
+    this->setupBasisMat(this->HFactor_basis_); // setup HFactor
     // since basis indices may have been shuffled so that free indices may not trail active ones anymore,
     // set permutation order to match the index sets (A,V) structure
     for (HighsInt i {0}; i < this->Q_.dim_; i++){
         for (HighsInt j {0}; j < this->Q_.dim_; j++){
-            if ( this->basis_idxs_[i] == ordered_basis[j] ){
+            if ( this->basis_idxs_[i] == this->HFactor_basis_[j] ){
                 this->basis_perm_[i] = j;
                 break;
             }
         }
     }
     // build Reduced Hessian
-    this->recomputeExplicit();
-    this->refactorize();
+    this->recompute();
     this->computeReducedVecs(); // compute initial reduced gradient and pricing
     return;
 }
@@ -172,6 +172,7 @@ HighsStatus AsmSolver::run(){
     if ( this->model_status_ == HighsModelStatus::kOptimal ){
         this->model_status_ = HighsModelStatus::kNotset;
         while ( true ) { // ASM iterations
+            // if ( this->num_basis_updates_ > this->reinversion_freq_) reinvertBasis();
             if ( this->norm(this->red_grad_) < this->options_.primal_feasibility_tolerance ){ // TODO primal residual tolerance?
                 if ( this->maximalsteptaken() ) break;
                 this->deactivate();
@@ -219,7 +220,6 @@ void AsmSolver::deactivate(){ // loop through prices to find a constraint to dea
         it = this->basis_perm_.begin() + bestloc;
         std::rotate(it, it + 1, this->basis_perm_.end());
         this->addNullSpaceDim();
-        this->step_taken_ = false; // since problem has been modified TODO remove
     } else this->model_status_ = HighsModelStatus::kOptimal; // set to optimal to break the major loop
     return;
 }
@@ -301,7 +301,6 @@ void AsmSolver::takeStep(){
     }
     this->updateObjective();
     this->computeReducedVecs(); // red grad needs updating with new position
-    this->step_taken_ = true;
     this->info_.qp_iteration_count++;
     return;
 }
@@ -441,7 +440,7 @@ bool AsmSolver::timelimit(){// time limit
 };
 
 bool AsmSolver::maximalsteptaken(){// optimality condition
-        if (this->nullsp_dim_ == this->Q_.dim_ && this->step_taken_){ // cannot deactivate anything anymore, nullspace is maximal already
+        if (this->nullsp_dim_ == this->Q_.dim_){ // cannot deactivate anything anymore, nullspace is maximal already
             this->model_status_ = HighsModelStatus::kOptimal;
             this->status_ = HighsStatus::kOk;
         return true;
@@ -466,12 +465,10 @@ bool AsmSolver::isoptimal(){ // break loop if optimality check is positive durin
     return false;
 }
 
-void AsmSolver::stepSanity(){
-    if (this->step_taken_){
-        this->recomputeExplicit();
-        this->refactorize();
-        this->step_taken_ = false;
-    }
+void AsmSolver::reinvertBasis(){
+    this->B_.build(); // TODO are indexes changed?
+    this->recompute();
+    this->num_basis_updates_ = 0;
     return;
 }
 
