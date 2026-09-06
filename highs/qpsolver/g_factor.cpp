@@ -342,13 +342,6 @@ void AsmSolver::reduceOutsideBasis(const HighsInt& idx){
     // change dropped constraint to inactive
     if (this->basis_idxs_[loc_remove] < this->lp_.num_row_) this->con_status_[this->basis_idxs_[loc_remove]] = AsmBasisStatus::kInactive;
     else this->var_status_[this->basis_idxs_[loc_remove] - this->lp_.num_row_] = AsmBasisStatus::kInactive;
-    // update indices
-    this->basis_idxs_[loc_remove] = idx; // replace old index with new one in basis
-    // send new index to end of active, by moving everything between end of rangsp and locremove down by 1
-    std::vector<HighsInt>::iterator it = this->basis_idxs_.begin();
-    std::rotate(it + this->rangsp_dim_, it + loc_remove, it + loc_remove + 1);
-    it = this->basis_perm_.begin();
-    std::rotate(it + this->rangsp_dim_, it + loc_remove, it + loc_remove + 1);
     if (this->nullsp_dim_ > 1){
         // update L factorisation according to (28) in Fletcher
         // first store -d_k/d_p coefficients at the end of buffer_
@@ -391,6 +384,13 @@ void AsmSolver::reduceOutsideBasis(const HighsInt& idx){
         removeSpike(dim); // finally remove spike
         this->chol_.resize(this->chol_.size() - this->nullsp_dim_); // drop last row of L
     } else this->chol_.resize(0);
+    // update indices
+    this->basis_idxs_[loc_remove] = idx; // replace old index with new one in basis
+    // send new index to end of active, by moving everything between end of rangsp and locremove down by 1
+    std::vector<HighsInt>::iterator it = this->basis_idxs_.begin();
+    std::rotate(it + this->rangsp_dim_, it + loc_remove, it + loc_remove + 1);
+    it = this->basis_perm_.begin();
+    std::rotate(it + this->rangsp_dim_, it + loc_remove, it + loc_remove + 1);
     this->Vi_.erase( this->Vi_.begin() + loc_remove ); // remove reference to element in padding
     removeNullSpaceDim();
     return;
