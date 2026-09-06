@@ -135,7 +135,6 @@ void AsmSolver::extend(const HighsInt& loc_deactivated, const HighsInt& idx_deac
     if ( idx_deactivated < this->lp_.num_row_ ){
         // after adding a vector to Z, for numerical reasons we update the L and the factorisation of B
         // by changing the newly freed vector (that now pads A in B) with a unit vector
-        HighsInt hint { 99999 }; // same number as Micheal in Basis::updatebasis
         HighsInt iRow = loc_deactivated; // because function argument loc_deactivated is constant
         HVector newcol;
         // find largest element modulus in Ztemp
@@ -153,12 +152,12 @@ void AsmSolver::extend(const HighsInt& loc_deactivated, const HighsInt& idx_deac
         stdvec2hvec(this->buffer_, newcol);
         this->B_.ftranCall(newcol, 1.);
         // update basis matrix
-        this->B_.update(&newcol, &Ztemp, &iRow, &hint);
+        this->B_.update(&newcol, &Ztemp, &iRow, &this->Bhint_);
         this->Vi_.back() = max_idx;
         // then update reduced hessian factor
-       if ( this->nullsp_dim_ > 0 ){ // if nullspace wasn't empty before deactivation rotations have a reason to be used
+        if ( this->nullsp_dim_ > 0 ){ // if nullspace wasn't empty before deactivation rotations have a reason to be used
             HighsInt dim = this->nullsp_dim_;
-             // first reorder elements of newcol (vector d in Fletcher) with the permutation in which vectors in Z sit
+            // first reorder elements of newcol (vector d in Fletcher) with the permutation in which vectors in Z sit
             for (HighsInt i { this->rangsp_dim_ }; i < this->Q_.dim_; i++){ // elements i < this->rangsp_dim_ - 1 in buffer_ are rubbish
                 this->buffer_[ i - 1 ] = - newcol.array[ this->basis_perm_[i] ] / max_abs;
             }
@@ -331,14 +330,13 @@ void AsmSolver::reduceOutsideBasis(const HighsInt& idx){
     }
     // build oldcol
     HighsInt iRow = this->basis_perm_[loc_remove];
-    HighsInt hint { 99999 };
     HVector oldcol;
     this->buffer_.assign(this->Q_.dim_, 0.);
     this->buffer_[ iRow ] = 1.;
     stdvec2hvec(this->buffer_, oldcol);
     this->B_.btranCall(oldcol, 1.);
     // update basis matrix
-    this->B_.update(&newcol, &oldcol, &iRow, &hint);
+    this->B_.update(&newcol, &oldcol, &iRow, &this->Bhint_);
     if (this->nullsp_dim_ > 1){
         // update L factorisation according to (28) in Fletcher
         // first store -d_k/d_p coefficients at the end of buffer_
@@ -351,28 +349,8 @@ void AsmSolver::reduceOutsideBasis(const HighsInt& idx){
         loc_remove -= this->rangsp_dim_; // normalise location of removal to size of nullspace
         // then explicitly permute L according to P^T L P
         HighsInt dim = this->nullsp_dim_ - 1;
-        if ( loc_remove < dim ){ // if we remove the last row no need to permute anything
-            std::vector<double> new_chol(this->chol_.size());
-            // upper triangle above permuted row stays the same
-            std::vector<double>::iterator itc = this->chol_.begin();
-            std::vector<double>::iterator itn = new_chol.begin();
-            std::copy(itc, itc + (loc_remove * (loc_remove+1))/2, itn);
-            // copy lower left rectangle and lower right triangle, line by line
-            for (HighsInt i {loc_remove + 1}; i < this->nullsp_dim_; i++){
-                HighsInt uppertr_size = (i * (i-1))/2;
-                std::copy(itc + locL(i,0), itc + locL(i,loc_remove), itn + uppertr_size );
-                std::copy(itc + locL(i, loc_remove+1), itc + locL(i, i)+1, itn + uppertr_size + loc_remove);
-            }
-            // elements in permuted row that effectively go in the last row
-            std::copy(itc + locL(loc_remove, 0), itc + locL(loc_remove, loc_remove), itn + locL(dim, 0));
-            // then elements from permuted column that go in the last column (but last row in memeory)
-            for (HighsInt i {loc_remove}; i < dim; i++){
-                new_chol[ locL(dim, i) ] = this->chol_[ locL(i + 1, loc_remove) ];
-            }
-            // then final element
-            new_chol.back() = this->chol_[ locL(loc_remove, loc_remove) ];
-            this->chol_ = std::move(new_chol);
-        }
+        // if we remove the last row no need to permute anything
+        if ( loc_remove < dim ) permute(loc_remove, dim);
         // then add spike elements until full
         if (loc_remove > 0) addSpike(this->nullsp_dim_ - loc_remove, dim); // permuting first row already gives full spike
         // then multiply out with (nullsp_dim_ - 1, nullsp_dim_)-size eta matrix
@@ -397,4 +375,27 @@ void AsmSolver::reduceOutsideBasis(const HighsInt& idx){
     this->Vi_.erase( this->Vi_.begin() + loc_remove ); // remove reference to element in padding
     removeNullSpaceDim();
     return;
+}
+
+void AsmSolver::permute(const HighsInt& loc_remove, const HighsInt& dim){
+    std::vector<double> new_chol(this->chol_.size());
+    // upper triangle above permuted row stays the same
+    std::vector<double>::iterator itc = this->chol_.begin();
+    std::vector<double>::iterator itn = new_chol.begin();
+    std::copy(itc, itc + (loc_remove * (loc_remove+1))/2, itn);
+    // copy lower left rectangle and lower right triangle, line by line
+    for (HighsInt i {loc_remove + 1}; i < this->nullsp_dim_; i++){
+        HighsInt uppertr_size = (i * (i-1))/2;
+        std::copy(itc + locL(i,0), itc + locL(i,loc_remove), itn + uppertr_size );
+        std::copy(itc + locL(i, loc_remove+1), itc + locL(i, i)+1, itn + uppertr_size + loc_remove);
+    }
+    // elements in permuted row that effectively go in the last row
+    std::copy(itc + locL(loc_remove, 0), itc + locL(loc_remove, loc_remove), itn + locL(dim, 0));
+    // then elements from permuted column that go in the last column (but last row in memeory)
+    for (HighsInt i {loc_remove}; i < dim; i++){
+        new_chol[ locL(dim, i) ] = this->chol_[ locL(i + 1, loc_remove) ];
+    }
+    // then final element
+    new_chol.back() = this->chol_[ locL(loc_remove, loc_remove) ];
+    this->chol_ = std::move(new_chol);
 }

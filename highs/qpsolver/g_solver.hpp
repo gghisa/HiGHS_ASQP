@@ -63,6 +63,7 @@ class AsmSolver {
         std::vector<double> newconvals_;
         std::vector<double> newconpivots_;
         // Numbers
+        HighsInt Bhint_ { 99999 }; // same number as Micheal in Basis::updatebasis
         double alpha_relaxed_ {1.}; // step size for ratio test
         HighsInt n_iter_ {0};
         // Truth values
@@ -91,6 +92,7 @@ class AsmSolver {
         void rightGivensHess(const HighsInt& start);
         void addSpike(const HighsInt& start, const HighsInt& idx_last_col);
         void removeSpike(const HighsInt& idx_last_col);
+        void permute(const HighsInt& loc_remove, const HighsInt& dim);
         // Feasibility phase functions
         void feasibility();
         void setupFeasibilityLp();
