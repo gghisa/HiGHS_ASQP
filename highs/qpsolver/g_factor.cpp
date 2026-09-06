@@ -191,7 +191,7 @@ void AsmSolver::addSpike(const HighsInt& start, const HighsInt& idx_last_col){
         // the spike is stored in the last row of L, so change is made in place
         double cos {0.};
         double sin {1.};
-        double a = this->chol_[ locL(j, j) ]; // diagonal element in the row whose last element has to be zeroed out (last row)
+        double a = this->chol_[ locL(j, j) ]; // bottom right element
         if ( std::abs(a) >= this->options_.factor_pivot_tolerance){
             double b = this->chol_[ locL(j, i) ]; // element of the last row to be zeroed out
             double hyp = std::sqrt( a*a + b*b ); // guaranteed to be > 0
@@ -230,7 +230,7 @@ void AsmSolver::removeSpike(const HighsInt& idx_last_col){
         double sin {1.};
         double a = this->chol_[ locL(i, i) ]; // element i in the row whose last element has to be zeroed out
         if ( std::abs(a) >= this->options_.factor_pivot_tolerance){
-            double b = this->chol_[ locL(j, i) ]; // element to zero out (last row)
+            double b = this->chol_[ locL(j, i) ]; // element to zero out (in memory in the last row)
             double hyp = std::sqrt( a*a + b*b ); // guaranteed to be > 0
             cos = a / hyp;
             sin = b / hyp;
@@ -370,7 +370,7 @@ void AsmSolver::reduceOutsideBasis(const HighsInt& idx){
             std::copy(itc + locL(i, loc_remove+1), itc + locL(i, i)+1, itn + uppertr_size + loc_remove);
         }
         // elements in permuted row that effectively go in the last row
-        std::copy(itc + locL(loc_remove, 0), itc + locL(loc_remove, loc_remove), itc + locL(dim, 0));
+        std::copy(itc + locL(loc_remove, 0), itc + locL(loc_remove, loc_remove), itn + locL(dim, 0));
         // then elements from permuted column that go in the last column (but last row in memeory)
         for (HighsInt i {loc_remove}; i < dim; i++){
             new_chol[ locL(dim, loc_remove + i) ] = this->chol_[ locL(loc_remove + 1, loc_remove) ];
