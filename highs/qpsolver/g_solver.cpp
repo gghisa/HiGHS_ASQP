@@ -49,7 +49,10 @@ HighsModelStatus AsmSolver::getHighsModelStatus(){ // public function
 }
 
 void AsmSolver::HBtran(std::vector<double>& vec){
-    if ((HighsInt)this->buffer_.size() != this->Q_.dim_) throw std::length_error("Wrong buffer_ size!");
+    if ((HighsInt)this->buffer_.size() != this->Q_.dim_){
+        std::cout<<"Wrong buffer_ size!"<<std::flush;
+        throw std::length_error("Wrong buffer_ size!");
+    }
     // first apply P
     for (HighsInt i {0}; i < this->Q_.dim_; i++){
         this->buffer_[ this->basis_perm_[i] ] = vec[ i ];
@@ -60,7 +63,10 @@ void AsmSolver::HBtran(std::vector<double>& vec){
 }
 
 void AsmSolver::HFtran(std::vector<double>& vec){
-    if ((HighsInt)this->buffer_.size() != this->Q_.dim_) throw std::length_error("Wrong buffer_ size!");
+    if ((HighsInt)this->buffer_.size() != this->Q_.dim_){
+        std::cout<<"Wrong buffer_ size!"<<std::flush;
+        throw std::length_error("Wrong buffer_ size!");
+    }
     this->B_.ftranCall(vec); // first solve for B^{-1}
     // then apply P^T = P^{-1}
     for (HighsInt i {0}; i < this->Q_.dim_; i++){
@@ -129,7 +135,10 @@ void AsmSolver::setupQpBasis(){
     // set nullspace and range dimensions
     this->nullsp_dim_ = (HighsInt) free_idxs.size();
     this->rangsp_dim_ = (HighsInt) this->basis_idxs_.size();
-    if (this->rangsp_dim_ + this->nullsp_dim_ != this->Q_.dim_) throw std::logic_error("Active and Free constraints should add up to number of columns!");
+    if (this->rangsp_dim_ + this->nullsp_dim_ != this->Q_.dim_){
+        std::cout<<"Active and Free constraints should add up to number of columns!"<<std::flush;
+        throw std::logic_error("Active and Free constraints should add up to number of columns!");
+    }
     // merge indices
     this->basis_idxs_.insert(this->basis_idxs_.end(),
                              free_idxs.begin(), free_idxs.end());
@@ -236,7 +245,7 @@ void AsmSolver::ratio1(const double tol, const double denom, const double lower,
 
 void AsmSolver::ratiotest_pass1(){
     this->alpha_relaxed_ = 1.; // we want to minimise it
-    const double tol = this->options_.factor_pivot_tolerance;
+    const double tol = 10 * this->options_.factor_pivot_tolerance;
     for (HighsInt i {0}; i < this->Q_.dim_; i++) // loop through variables
         this->ratio1(tol, this->step_[i], this->lp_relaxed_.col_lower_[i], this->lp_relaxed_.col_upper_[i],
                      this->solution_.col_value[i], this->newvarvals_[i], this->alpha_relaxed_);
@@ -277,7 +286,10 @@ void AsmSolver::ratiotest_pass2(HighsInt& newactive_idx, AsmBasisStatus& newacti
         this->ratio2(max_pivot, this->newconpivots_[i], this->lp_.row_lower_[i], this->lp_.row_upper_[i],
                      this->solution_.row_value[i], this->newconvals_[i], this->alpha_relaxed_, this->alpha_,
                      i, newactive_idx, newactive_status);
-    if ( max_pivot <= this->options_.factor_pivot_tolerance) throw std::logic_error("Second pass not activating any constraint!");
+    if ( max_pivot <= this->options_.factor_pivot_tolerance){
+        std::cout<<"Second pass not activating any constraint!"<<std::flush;
+        throw std::logic_error("Second pass not activating any constraint!");
+    }
     if ( this->alpha_ < 0 ) this->alpha_ = 0.;
     return;
 }
@@ -352,17 +364,18 @@ void AsmSolver::activate(const HighsInt& idx, const AsmBasisStatus& status){
 }
 
 void AsmSolver::buildRelaxedLp(){
+    const double tol = 0.1 * this->options_.primal_feasibility_tolerance;
     this->lp_relaxed_.row_lower_.assign(this->lp_.num_row_, 0.);
     this->lp_relaxed_.row_upper_.assign(this->lp_.num_row_, 0.);
     for (HighsInt i {0}; i < this->lp_.num_row_; i++){ // relax all constraints (equalities too)
-        this->lp_relaxed_.row_lower_[i] = this->lp_.row_lower_[i] - this->options_.factor_pivot_tolerance;
-        this->lp_relaxed_.row_upper_[i] = this->lp_.row_upper_[i] + this->options_.factor_pivot_tolerance;
+        this->lp_relaxed_.row_lower_[i] = this->lp_.row_lower_[i] - tol;
+        this->lp_relaxed_.row_upper_[i] = this->lp_.row_upper_[i] + tol;
     }
     this->lp_relaxed_.col_lower_.assign(this->Q_.dim_, 0.);
     this->lp_relaxed_.col_upper_.assign(this->Q_.dim_, 0.);
     for (HighsInt i {0}; i < this->Q_.dim_; i++){ // relax all variables' bounds
-        this->lp_relaxed_.col_lower_[i] = this->lp_.col_lower_[i] - this->options_.factor_pivot_tolerance;
-        this->lp_relaxed_.col_upper_[i] = this->lp_.col_upper_[i] + this->options_.factor_pivot_tolerance;
+        this->lp_relaxed_.col_lower_[i] = this->lp_.col_lower_[i] - tol;
+        this->lp_relaxed_.col_upper_[i] = this->lp_.col_upper_[i] + tol;
     }
 }
 

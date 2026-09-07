@@ -8,7 +8,10 @@
 #include "qpsolver/g_solver.hpp"
 
 HighsInt AsmSolver::locL(const HighsInt& i, const HighsInt& j) {
-    if ( j > i ) throw std::domain_error("Column index should not be larger than row index!");
+    if ( j > i ){
+        std::cout<<"Column index should not be larger than row index!"<<std::flush;
+        throw std::domain_error("Column index should not be larger than row index!");
+    }
     return i*(i+1)/2 + j; // assumes indices are given for lower triangular matrix
 }
 
@@ -73,7 +76,10 @@ void AsmSolver::recompute(){
 }
 
 void AsmSolver::Lsolve(std::vector<double>& vec){
-    if ( (HighsInt)vec.size() != this->nullsp_dim_) throw std::logic_error("Fw solve requires a vector the size of the nullspace!");
+    if ( (HighsInt)vec.size() != this->nullsp_dim_){
+        std::cout<<"Fw solve requires a vector the size of the nullspace!"<<std::flush;
+        throw std::logic_error("Fw solve requires a vector the size of the nullspace!");
+    }
     // solve Ly = b with forward substitution
     for (HighsInt i {0}; i < this->nullsp_dim_; i++){
         for (HighsInt j {0}; j < i; j++){
@@ -85,7 +91,10 @@ void AsmSolver::Lsolve(std::vector<double>& vec){
 }
 
 void AsmSolver::LTsolve(std::vector<double>& vec){
-    if ( (HighsInt)vec.size() != this->nullsp_dim_) throw std::logic_error("Bw solve requires a vector the size of the nullspace!");
+    if ( (HighsInt)vec.size() != this->nullsp_dim_){
+        std::cout<<"Bw solve requires a vector the size of the nullspace!"<<std::flush;
+        throw std::logic_error("Bw solve requires a vector the size of the nullspace!");
+    }
     // solve L^T z = y with backward substitution
     HighsInt limit = this->nullsp_dim_ - 1;
     for (HighsInt i {limit}; i > -1; i--){
@@ -124,7 +133,10 @@ void AsmSolver::extend(const HighsInt& loc_deactivated, const HighsInt& idx_deac
         for (HighsInt i {0}; i < this->nullsp_dim_; i++) lambda -= sol[i] * sol[i];
     }
     lambda += 2 * computeQuadObjective(Ztemp.array);
-    if (lambda <= this->options_.factor_pivot_tolerance) throw std::domain_error("Reduced matrix is either semi- or indefinite!");
+    if (lambda <= this->options_.factor_pivot_tolerance){
+        std::cout<<"Reduced matrix is either semi- or indefinite!"<<std::flush;
+        throw std::domain_error("Reduced matrix is either semi- or indefinite!");
+    }
     this->chol_.push_back( std::sqrt(lambda) );
     if ( idx_deactivated < this->lp_.num_row_ ){
         // after adding a vector to Z, for numerical reasons we update the L and the factorisation of B

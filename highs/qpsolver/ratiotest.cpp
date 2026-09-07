@@ -68,13 +68,13 @@ static RatiotestResult ratiotest_twopass(Runtime& runtime, const QpVector& p,
   RatiotestResult result = res1;
 
   double max_pivot = 0;
-  if (res1.limitingconstraint != -1) {
-    if ((int)result.limitingconstraint < runtime.instance.num_con) {
-      max_pivot = rowmove.value[result.limitingconstraint];
-    } else {
-      max_pivot = p.value[result.limitingconstraint - runtime.instance.num_con];
-    }
-  }
+  //if (res1.limitingconstraint != -1) {
+  //  if ((int)result.limitingconstraint < runtime.instance.num_con) {
+  //    max_pivot = rowmove.value[result.limitingconstraint];
+  //  } else {
+  //    max_pivot = p.value[result.limitingconstraint - runtime.instance.num_con];
+  //  }
+  //}
 
   for (HighsInt i = 0; i < runtime.instance.num_con; i++) {
     double step_i = step(runtime.rowactivity.value[i], rowmove.value[i],
