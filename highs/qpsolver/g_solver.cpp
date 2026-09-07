@@ -183,7 +183,7 @@ HighsStatus AsmSolver::run(){
             }
         }
         // outside loop but run only if feasibility is successful:
-        std::cout<<this->objective_<<" iterations: "<<this->info_.qp_iteration_count<<"\n";
+        std::cout<<this->objective_<<" iterations: "<<this->info_.qp_iteration_count<<" time: "<<this->timer_.read()<<"\n";
     }
     // TODO record runtime?
     return this->getHighsStatus();
@@ -231,6 +231,7 @@ void AsmSolver::ratio1(const double tol, const double denom, const double lower,
     else if ( denom > tol && upper < newval ) bound = upper;
     else return;
     alpha = std::min( alpha, ( bound - oldval ) / denom );
+    return;
 }
 
 void AsmSolver::ratiotest_pass1(){
@@ -246,30 +247,38 @@ void AsmSolver::ratiotest_pass1(){
 }
 
 void AsmSolver::ratio2(double& max_pivot, const double denom, const double lower, const double upper,
-                       const double oldval, const double newval, const double alpha,
+                       const double oldval, const double newval, const double alphamax, double& alpha,
                        const HighsInt idx, HighsInt& newactive_idx, AsmBasisStatus& newactive_status){
-    if ( denom < - max_pivot && ( lower - oldval ) / denom < alpha ){
-            newactive_idx = idx;
-            newactive_status = AsmBasisStatus::kLower;
-            max_pivot = - denom;
-    } else if ( denom > max_pivot && ( upper - oldval ) / denom < alpha ){
-            newactive_idx = idx;
-            newactive_status = AsmBasisStatus::kUpper;
-            max_pivot = denom;
+    double bound;
+    if ( denom < - max_pivot ) bound = lower;
+    else if ( denom > max_pivot ) bound = upper;
+    else return;
+    double alpha_here = ( bound - oldval ) / denom;
+    if ( denom < - max_pivot && alpha_here < alphamax ){
+        newactive_idx = idx;
+        newactive_status = AsmBasisStatus::kLower;
+        max_pivot = - denom;
+        alpha = alpha_here;
+    } else if ( denom > max_pivot && alpha_here < alphamax ){
+        newactive_idx = idx;
+        newactive_status = AsmBasisStatus::kUpper;
+        max_pivot = denom;
+        alpha = alpha_here;
     }
 }
 
 void AsmSolver::ratiotest_pass2(HighsInt& newactive_idx, AsmBasisStatus& newactive_status){
-    double max_pivot = std::max( this->options_.factor_pivot_tolerance, 0. ); // to ensure no division by 0 in ratio2
+    double max_pivot = 0; // to ensure no division by 0 in ratio2
     for (HighsInt i {0}; i < this->Q_.dim_; i++) // loop through variables
         this->ratio2(max_pivot, this->step_[i], this->lp_.col_lower_[i], this->lp_.col_upper_[i],
-                     this->solution_.col_value[i], this->newvarvals_[i], this->alpha_relaxed_,
+                     this->solution_.col_value[i], this->newvarvals_[i], this->alpha_relaxed_, this->alpha_,
                      i + this->lp_.num_row_, newactive_idx, newactive_status);
     for (HighsInt i {0}; i < this->lp_.num_row_; i++) // loop through constraints
         this->ratio2(max_pivot, this->newconpivots_[i], this->lp_.row_lower_[i], this->lp_.row_upper_[i],
-                     this->solution_.row_value[i], this->newconvals_[i], this->alpha_relaxed_,
+                     this->solution_.row_value[i], this->newconvals_[i], this->alpha_relaxed_, this->alpha_,
                      i, newactive_idx, newactive_status);
     if ( max_pivot <= this->options_.factor_pivot_tolerance) throw std::logic_error("Second pass not activating any constraint!");
+    if ( this->alpha_ < 0 ) this->alpha_ = 0.;
     return;
 }
 
@@ -291,7 +300,7 @@ void AsmSolver::takeStep(){
         HighsInt newactive_idx;
         AsmBasisStatus newactive_status;
         ratiotest_pass2(newactive_idx, newactive_status);
-        this->compute_varvals(this->alpha_relaxed_, this->solution_.col_value);
+        this->compute_varvals(this->alpha_, this->solution_.col_value);
         this->lp_.a_matrix_.product(this->solution_.row_value, this->solution_.col_value); // a_i^T x_{k+1}
         this->activate(newactive_idx, newactive_status);
     } else { // if no constraint activated and we take the full step

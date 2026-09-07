@@ -64,7 +64,8 @@ class AsmSolver {
         std::vector<double> newconpivots_;
         // Numbers
         HighsInt Bhint_ { 99999 }; // same number as Micheal in Basis::updatebasis
-        double alpha_relaxed_ {1.}; // step size for ratio test
+        double alpha_relaxed_ {1.}; // step size for relaxed (first pass) ratio test
+        double alpha_ {1.}; // step size for second pass ratio test
         HighsInt num_basis_updates_ {0};
         HighsInt reinversion_freq_ {100};
         // permutation has to be used when FTRAN and BTRAN are called
@@ -122,7 +123,7 @@ class AsmSolver {
         static void ratio1(const double tol, const double denom, const double lower, const double upper,
                            const double oldval, const double newval, double& alpha); // static from Claude.ai
         static void ratio2(double& max_pivot, const double denom, const double lower, const double upper,
-                           const double oldval, const double newval, const double alpha,
+                           const double oldval, const double newval, const double alphamax, double& alpha,
                            const HighsInt idx, HighsInt& newactive_idx, AsmBasisStatus& newactive_status);
         void reinvertBasis();
         void addNullSpaceDim();
