@@ -106,12 +106,10 @@ void AsmSolver::LLTsolve(std::vector<double>& vec){
 void AsmSolver::extend(const HighsInt& loc_deactivated, const HighsInt& idx_deactivated){
     // get new nullspace column, creating unit HVector
     this->Vi_.push_back(idx_deactivated - this->lp_.num_row_); // if deactivated element is a constraint this will be changed later
-    HVector Ztemp;// create new z_col (first get unit HVector)
-    Ztemp.setup(this->Q_.dim_);
-    Ztemp.index[0] = loc_deactivated;
-    Ztemp.array[ Ztemp.index[0] ] = 1.;
-    Ztemp.count = 1;
-    Ztemp.packFlag = true;
+    HVector Ztemp;
+    this->buffer_.assign(this->Q_.dim_, 0.);
+    this->buffer_[loc_deactivated] = 1.;
+    stdvec2hvec(this->buffer_, Ztemp);// create new z_col (first get unit HVector)
     this->B_.btranCall(Ztemp, 1.); // compute z_col inplace
     double lambda {0.}; // new diagonal element for cholesky factor
     if (this->nullsp_dim_ > 0){ // nullspace dimension updated after calling extend()
