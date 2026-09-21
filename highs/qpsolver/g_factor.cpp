@@ -28,7 +28,7 @@ HVector AsmSolver::stdvec2hvec(const std::vector<double>& vec, HVector& hvec){
     return hvec;
 }
 
-void AsmSolver::recompute(){
+void AsmSolver::recomputeRedHessian(){
     std::vector<HVector> ZT(this->nullsp_dim_); // TODO anything we can do to salvage information?
     HighsInt chol_size = this->nullsp_dim_ * (this->nullsp_dim_ + 1) / 2;
     this->chol_.assign(chol_size, 0.);

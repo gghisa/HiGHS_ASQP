@@ -82,7 +82,7 @@ class AsmSolver {
         HVector stdvec2hvec(const std::vector<double>& vec, HVector& hvec);
         // Reduced Hessian operations
         HighsInt locL(const HighsInt& i, const HighsInt& j);
-        void recompute();
+        void recomputeRedHessian();
         void Lsolve(std::vector<double>& vec);
         void LTsolve(std::vector<double>& vec);
         void LLTsolve(std::vector<double>& vec);
@@ -100,7 +100,10 @@ class AsmSolver {
         void setupBasisMat(std::vector<HighsInt>& basis_idxs);
         void buildRelaxedLp();
         // Main loop functions
+        void minorloop();
         void deactivate();
+        void relaxAndSearch();
+        void solveEP();
         void ratiotest_pass1();
         void ratiotest_pass2(HighsInt& newactive_idx, AsmBasisStatus& newactive_status);
         void takeStep();
@@ -109,14 +112,13 @@ class AsmSolver {
         void computeLocGrad();
         void computeReducedVecs();
         void compute_varvals(const double& alpha, std::vector<double>& loc);
-        void computeFullStep(const std::vector<double>& delta, std::vector<double>& step);
         double computeQuadObjective(const std::vector<double>& vec);
         void updateObjective();
         void signPrices();
         // Main loop breaks
         bool iterlimit();
         bool timelimit();
-        bool maximalsteptaken();
+        bool maximalStepNotTaken();
         bool nullsizelimit();
         bool isoptimal();
         // Helper functions
