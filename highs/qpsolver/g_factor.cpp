@@ -407,3 +407,26 @@ void AsmSolver::permute(const HighsInt& loc_remove, const HighsInt& dim){
     new_chol.back() = this->chol_[ locL(loc_remove, loc_remove) ];
     this->chol_ = std::move(new_chol);
 }
+
+void AsmSolver::replace(const HighsInt& loc_deactivated, const HighsInt& idx_deactivated, const HighsInt& idx_activated){
+    HVector newcol;
+    HVector oldcol;
+    HighsInt iRow = loc_deactivated;
+    if ( idx_activated < this->lp_.num_row_ ){
+        std::vector<double> ep( this->lp_.num_row_ );
+        ep[idx_activated] = 1.;
+        this->lp_.a_matrix_.productTranspose(this->buffer_, ep);
+    } else {
+        this->buffer_.assign(this->Q_.dim_, 0.);
+        this->buffer_[idx_activated - this->lp_.num_row_] = 1.;
+    }
+    stdvec2hvec(this->buffer_, newcol);
+    this->B_.ftranCall(newcol, 1.);
+    // 
+    this->buffer_.assign(this->Q_.dim_, 0.);
+    this->buffer_[iRow] = 1.;
+    stdvec2hvec(this->buffer_, oldcol);
+    this->B_.btranCall(oldcol, 1.);
+    // update basis matrix
+    this->B_.update(&newcol, &oldcol, &iRow, &this->Bhint_);
+}

@@ -11,12 +11,12 @@ HighsStatus AsmSolver::run(){
     this->feasibility();
     if ( this->model_status_ == HighsModelStatus::kOptimal ){
         this->model_status_ = HighsModelStatus::kNotset;
-        this->minorloop(); // in case nullspace is non-empty to start with
+        if ( norm(this->red_grad_) > this->options_.primal_feasibility_tolerance ) this->minorloop(); // in case nullspace is non-empty to start with
         while ( this->maximalStepNotTaken() && !( this->iterlimit() || this->timelimit() || this->nullsizelimit() ) ) { // major iterations
             this->relaxAndSearch();
             if ( this->isoptimal() ) break;
+            this->minorloop();
             // if ( this->num_basis_updates_ > this->reinversion_freq_) reinvertBasis();
-            if (this->alpha_relaxed_ < 1.) this->minorloop();
             std::cout<<this->objective_<<" - "<< this->nullsp_dim_<<"\n"<<std::flush;
         }
         // outside loop but run only if feasibility is successful:
@@ -25,65 +25,91 @@ HighsStatus AsmSolver::run(){
     return this->getHighsStatus();
 }
 
-void AsmSolver::relaxAndSearch(){ // loop through prices to find a constraint to deactivate
-    signPrices();
-    HighsInt bestidx {-1}, bestloc {-1};
+void AsmSolver::findBestPrice(HighsInt& bestidx, double& bestmultiplier, HighsInt& bestloc){
     double bestprice = - this->options_.dual_feasibility_tolerance;
+    double price {0.}, sign {0.}, bestpricesign {0.}; // TODO messy initialisations and temp variables
     for (HighsInt i {0}; i < this->rangsp_dim_; i++){ // loop through active constraints only
-        if ( this->pricing_[i] < bestprice ){
-            bestprice = this->pricing_[i];
-            bestidx = this->basis_idxs_[i];
+        HighsInt idx = this->basis_idxs_[i];
+        // sign Dantzig prices on the go
+        if (idx < this->lp_.num_row_) sign = static_cast<double>( this->con_status_[idx] );
+        else sign = static_cast<double>( this->var_status_[idx - this->lp_.num_row_] );
+        price = sign * this->pricing_[i];
+        if ( price < bestprice ){
+            bestpricesign = sign;
+            bestprice = price;
+            bestidx = idx; // TODO use idx
             bestloc = i;
         }
     }
+    bestmultiplier = bestpricesign * bestprice;
+    return;
+}
+
+void AsmSolver::computeSearchDir(const HighsInt& bestloc, const double& bestmultiplier){
+    double alpha_min = 0.; // use first as buffer for y_p^T Q y_p
+    // extract yp
+    this->step_.assign(this->Q_.dim_, 0.);
+    this->step_[ this->basis_perm_[bestloc] ] = 1.;
+    this->B_.btranCall(this->step_); // y_p
+    std::vector<double> vec(this->Q_.dim_);
+    this->Q_.product(this->step_, vec); // Q y_p
+    for (HighsInt i {0}; i < this->Q_.dim_; i++) alpha_min += this->step_[i] * vec[i]; // compute y_p^T Q y_p for later
+    // compute direction
+    if ( this->nullsp_dim_ > 0 ){
+        this->HFtran(vec); // B^{-1} Q y_p
+        std::vector<double> redbuffer(vec.end() - this->nullsp_dim_, vec.end()); // Z^T Q y_p
+        LLTsolve(redbuffer); // M^{-1} Z^T Q y_p
+        std::fill(vec.begin(), vec.end() - this->nullsp_dim_, 0.); // [ 0 | ? ]
+        std::copy(redbuffer.begin(), redbuffer.end(), vec.end() - this->nullsp_dim_); // [ 0 | M^{-1} Z^T Q y_p ]
+        this->HBtran(vec); // B^{-T} [ 0 | M^{-1} Z^T Q y_p ] = Z M^{-1} Z^T Q y_p
+        for (HighsInt i {0}; i < this->Q_.dim_; i++) this->step_[i] -= vec[i]; // y_p ( I - Z M^{-1} Z^T Q y_p )
+    }
+    // compute step
+    if ( std::abs(alpha_min) < this->options_.factor_pivot_tolerance ) std::cout<<"Zero search direction"; // TODO
+    if ( alpha_min < - this->options_.factor_pivot_tolerance ) std::cout<<"Negative curvature search direction"; // TODO
+    alpha_min = - bestmultiplier / alpha_min;
+    for (HighsInt i {0}; i < this->Q_.dim_; i++){
+        this->step_[i] *= alpha_min;
+        this->newvarvals_[i] = this->solution_.col_value[i] + this->step_[i];
+    }
+}
+
+void AsmSolver::relaxAndSearch(){ // loop through prices to find a constraint to deactivate
+    HighsInt bestidx {-1}, bestloc;
+    double bestmultiplier;
+    this->findBestPrice(bestidx, bestmultiplier, bestloc);
     if ( bestidx == -1 ) this->model_status_ = HighsModelStatus::kOptimal; // set to optimal to break the major loop
     else {
-        // this->extend( this->basis_perm_[bestloc], bestidx ); // update factorization(s)
-        // send deactivated constraint to the end of free-in-basis constraints
-        //std::vector<HighsInt>::iterator it = this->basis_idxs_.begin() + bestloc;
-        //std::rotate(it, it + 1, this->basis_idxs_.end());
-        //it = this->basis_perm_.begin() + bestloc;
-        //std::rotate(it, it + 1, this->basis_perm_.end());
-        //this->addNullSpaceDim();
-        double alpha_min = 0.; // use first as buffer for y_p^T Q y_p
-        // extract yp
-        this->step_.assign(0, this->Q_.dim_);
-        this->step_[ this->basis_perm_[bestloc] ] = 1.;
-        this->B_.btranCall(this->step_);
-        // compute direction
-        if ( this->nullsp_dim_ > 0 ){
-            std::vector<double> vec(this->Q_.dim_);
-            this->Q_.product(this->step_, vec); // Q y_p
-            for (HighsInt i {0}; i < this->Q_.dim_; i++) alpha_min += this->step_[i] * vec[i]; // compute y_p^T Q y_p for later
-            this->HFtran(vec); // B^{-1} Q y_p
-            std::vector<double> redbuffer(vec.end() - this->nullsp_dim_, vec.end()); // Z^T Q y_p
-            LLTsolve(redbuffer); // M^{-1} Z^T Q y_p
-            std::fill(vec.begin(), vec.end() - this->nullsp_dim_, 0.); // [ 0 | ? ]
-            std::copy(redbuffer.begin(), redbuffer.end(), vec.end() - this->nullsp_dim_); // [ 0 | M^{-1} Z^T Q y_p ]
-            this->HBtran(vec); // B^{-T} [ 0 | M^{-1} Z^T Q y_p ] = M^{-1} Z^T Q y_p
-            for (HighsInt i {0}; i < this->Q_.dim_; i++) this->step_[i] -= vec[i]; // y_p ( I - M^{-1} Z^T Q y_p )
-        }
-        // compute step
-        if ( std::abs(alpha_min) < this->options_.factor_pivot_tolerance ) std::cout<<"Zero search direction"; // TODO
-        if ( alpha_min < - this->options_.factor_pivot_tolerance ) std::cout<<"Negative curvature search direction"; // TODO
-        alpha_min = - bestprice / alpha_min;
-        for (HighsInt i {0}; i < this->Q_.dim_; i++){
-            this->newvarvals_[i] = this->solution_.col_value[i] + alpha_min * this->step_[i];
-        }
-        // finally return price to original value to update reduced gradient, then update status
-        if (bestidx < this->lp_.num_row_){ 
-            bestprice *= static_cast<double>( this->con_status_[bestidx] );
-            this->con_status_[bestidx] = AsmBasisStatus::kFreeInBasis;
+        this->computeSearchDir(bestloc, bestmultiplier);
+        HighsInt newactiveidx {-1} ;
+        AsmBasisStatus newactivestatus;
+        AsmBasisStatus relaxed_newstatus;
+        this->ratiotest(newactiveidx, newactivestatus);
+        if ( newactiveidx > - 1){
+            relaxed_newstatus = AsmBasisStatus::kInactive;
+            // replace relaxed with new one, only update B factors not M's
+            this->replace( bestloc, bestidx, newactiveidx);
+            // update basis indices
+            this->basis_idxs_[ bestloc ] = newactiveidx;
+            // update statuses
+            if ( newactiveidx < this->lp_.num_row_ ) this->con_status_[newactiveidx] = newactivestatus;
+            else this->var_status_[newactiveidx - this->lp_.num_row_] = newactivestatus;
         } else {
-            HighsInt var_idx = bestidx - this->lp_.num_row_;
-            bestprice *= static_cast<double>( this->var_status_[var_idx] );
-            this->var_status_[var_idx] = AsmBasisStatus::kFreeInBasis;
+            relaxed_newstatus = AsmBasisStatus::kFreeInBasis;
+            this->extend( this->basis_perm_[bestloc], bestidx ); // update factorization(s)
+            // send deactivated constraint to the end of free-in-basis constraints
+            std::vector<HighsInt>::iterator it = this->basis_idxs_.begin() + bestloc;
+            std::rotate(it, it + 1, this->basis_idxs_.end());
+            it = this->basis_perm_.begin() + bestloc;
+            std::rotate(it, it + 1, this->basis_perm_.end());
+            this->addNullSpaceDim();
         }
-        // make redgrad and pricing ready for basis factorization and potential update
-        this->red_grad_.push_back(bestprice);
-        this->pricing_.erase(this->pricing_.begin() + bestloc);
-        //
-        takeStep();
+        // finally update status
+        if (bestidx < this->lp_.num_row_) this->con_status_[bestidx] = relaxed_newstatus;
+        else this->var_status_[bestidx - this->lp_.num_row_] = relaxed_newstatus;
+        this->updateObjective();
+        this->computeReducedVecs(); // TODO recomputing local gradient may not be necessary
+        this->info_.qp_iteration_count++;
     }
     return;
 }
@@ -157,45 +183,42 @@ void AsmSolver::solveEP(){ // solve Equality Problem
     this->LLTsolve(this->delta_);
     // then compute full space step
     std::fill(this->step_.begin(), this->step_.end() - this->delta_.size(), 0.);
-    std::copy(this->delta_.begin(), this->delta_.end(), this->buffer_.end() - this->delta_.size());
+    std::copy(this->delta_.begin(), this->delta_.end(), this->step_.end() - this->delta_.size());
     this->HBtran(this->step_);
     // and update newvarvals
     for (HighsInt i {0}; i < this->Q_.dim_; i++){
-            this->newvarvals_[i] = this->solution_.col_value[i] + this->step_[i];
+        this->newvarvals_[i] = this->solution_.col_value[i] + this->step_[i];
     }
 }
 
-void AsmSolver::takeStep(){
-    // ratio test vectors
+void AsmSolver::ratiotest(HighsInt& newactive_idx, AsmBasisStatus& newactive_status){
     // assumes this->newvarvals are already computed (due to differences between major and minor loop)
     this->lp_.a_matrix_.product(this->newconvals_, this->newvarvals_); // a_i^T x_{k+1}
     this->lp_.a_matrix_.product(this->newconpivots_, this->step_); // a_i^T \s
     ratiotest_pass1(); // ratio test on relaxed instance
     if ( this->alpha_relaxed_ < 1.){ // TODO time saving if step is null?
         // if we meet a constraint
-        HighsInt newactive_idx;
-        AsmBasisStatus newactive_status;
         ratiotest_pass2(newactive_idx, newactive_status);
         this->compute_varvals(this->alpha_, this->solution_.col_value);
         this->lp_.a_matrix_.product(this->solution_.row_value, this->solution_.col_value); // a_i^T x_{k+1}
-        this->activate(newactive_idx, newactive_status);
-    } else { // if no constraint activated and we take the full step
+    } else {
         this->solution_.row_value = this->newconvals_; // don't recompute new constraint values
         this->solution_.col_value = this->newvarvals_; // nor variables' values either
     }
-    this->updateObjective();
-    this->computeReducedVecs(); // red grad needs updating with new position
-    this->info_.qp_iteration_count++;
     return;
 }
 
 void AsmSolver::minorloop(){
-    double OPCS { false };
-    while ( !OPCS ){
-        solveEP();
-        takeStep();
-        if ( this->alpha_relaxed_ < 1 ) extend(900000, 900000); // TODO
-        else OPCS = true;
+    while ( norm(this->red_grad_) > this->options_.primal_feasibility_tolerance ){ // if nullsp is empty then norm returns 0
+        this->solveEP();
+        HighsInt newactiveidx {-1};
+        AsmBasisStatus newactivestatus;
+        this->ratiotest(newactiveidx, newactivestatus);
+        if ( newactiveidx > -1 ) this->activate(newactiveidx, newactivestatus);
+        this->updateObjective();
+        this->computeReducedVecs(); // red grad needs updating with new position
+        this->info_.qp_iteration_count++;
+        std::cout<<this->objective_<<" - "<< this->nullsp_dim_<<"\n"<<std::flush;
     }
     return;
 }

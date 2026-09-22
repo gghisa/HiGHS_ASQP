@@ -206,8 +206,7 @@ void AsmSolver::computeReducedVecs(){ // solve B x = (g + Q x_k) to compute Dant
     this->HFtran(this->pricing_); // compute B x = g_k, TODO other types of pricing
     this->red_grad_.assign( std::make_move_iterator(this->pricing_.begin() + this->rangsp_dim_),
                             std::make_move_iterator(this->pricing_.end()));
-    this->pricing_.resize(this->rangsp_dim_);    
-    this->signPrices();
+    this->pricing_.resize(this->rangsp_dim_);
     return;
 }
 
@@ -233,18 +232,6 @@ double AsmSolver::computeQuadObjective(const std::vector<double>& vec){ // TODO 
 void AsmSolver::updateObjective(){
     this->objective_ = this->lp_.objectiveValue(this->solution_.col_value);
     this->objective_ += computeQuadObjective(this->solution_.col_value);
-    return;
-}
-
-void AsmSolver::signPrices(){
-    for (HighsInt i {0}; i < this->rangsp_dim_; i++){
-        HighsInt idx = this->basis_idxs_[i];
-        if (idx < this->lp_.num_row_) this->pricing_[i] *= static_cast<double>( this->con_status_[idx] );
-        else {
-            idx -= this->lp_.num_row_;
-            this->pricing_[i] *= static_cast<double>( this->var_status_[idx] );
-        }
-    }
     return;
 }
 

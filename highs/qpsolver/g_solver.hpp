@@ -101,20 +101,20 @@ class AsmSolver {
         void buildRelaxedLp();
         // Main loop functions
         void minorloop();
-        void deactivate();
         void relaxAndSearch();
         void solveEP();
         void ratiotest_pass1();
         void ratiotest_pass2(HighsInt& newactive_idx, AsmBasisStatus& newactive_status);
-        void takeStep();
+        void ratiotest(HighsInt& newactive_idx, AsmBasisStatus& newactive_status);
         void activate(const HighsInt& idx, const AsmBasisStatus& status);
+        void replace(const HighsInt& liloc, const HighsInt& idx_deactivated, const HighsInt& idx_activated);
         // Object computations
+        void computeSearchDir(const HighsInt& bestloc, const double& bestmultiplier);
         void computeLocGrad();
         void computeReducedVecs();
         void compute_varvals(const double& alpha, std::vector<double>& loc);
         double computeQuadObjective(const std::vector<double>& vec);
         void updateObjective();
-        void signPrices();
         // Main loop breaks
         bool iterlimit();
         bool timelimit();
@@ -122,6 +122,7 @@ class AsmSolver {
         bool nullsizelimit();
         bool isoptimal();
         // Helper functions
+        void findBestPrice(HighsInt& bestidx, double& bestmultiplier, HighsInt& bestloc);
         static void ratio1(const double tol, const double denom, const double lower, const double upper,
                            const double oldval, const double newval, double& alpha); // static from Claude.ai
         static void ratio2(double& max_pivot, const double denom, const double lower, const double upper,
