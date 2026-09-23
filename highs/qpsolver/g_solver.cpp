@@ -17,7 +17,6 @@ HighsStatus AsmSolver::run(){
             if ( this->isoptimal() ) break;
             this->minorloop();
             // if ( this->num_basis_updates_ > this->reinversion_freq_) reinvertBasis();
-            std::cout<<this->objective_<<" - "<< this->nullsp_dim_<<"\n"<<std::flush;
         }
         // outside loop but run only if feasibility is successful:
         std::cout<<this->objective_<<" iterations: "<<this->info_.qp_iteration_count<<" time: "<<this->timer_.read()<<"\n";
@@ -80,36 +79,33 @@ void AsmSolver::relaxAndSearch(){ // loop through prices to find a constraint to
     this->findBestPrice(bestidx, bestmultiplier, bestloc);
     if ( bestidx == -1 ) this->model_status_ = HighsModelStatus::kOptimal; // set to optimal to break the major loop
     else {
+        // update status of relaxed constraint
+        if (bestidx < this->lp_.num_row_) this->con_status_[bestidx] = AsmBasisStatus::kFreeInBasis;
+        else this->var_status_[bestidx - this->lp_.num_row_] = AsmBasisStatus::kFreeInBasis;
+        //
         this->computeSearchDir(bestloc, bestmultiplier);
-        HighsInt newactiveidx {-1} ;
+        HighsInt newactiveidx {-1};
         AsmBasisStatus newactivestatus;
-        AsmBasisStatus relaxed_newstatus;
         this->ratiotest(newactiveidx, newactivestatus);
         if ( newactiveidx > - 1){
-            relaxed_newstatus = AsmBasisStatus::kInactive;
-            // replace relaxed with new one, only update B factors not M's
-            this->replace( bestloc, bestidx, newactiveidx);
-            // update basis indices
-            this->basis_idxs_[ bestloc ] = newactiveidx;
-            // update statuses
-            if ( newactiveidx < this->lp_.num_row_ ) this->con_status_[newactiveidx] = newactivestatus;
+            // replace relaxed with new one, update B factors only if we are going from vertex to vertex
+            if ( this->nullsp_dim_ == 0){
+                this->replace( this->basis_perm_[bestloc], bestidx, newactiveidx );
+                this->basis_idxs_[ bestloc ] = newactiveidx; // update basis indices
+            } else { // update factorisations of both B and M
+                this->extend( bestloc, bestidx ); // takes care of basis_idxs_ too
+                this->activate( newactiveidx, newactivestatus ); // takes care of basis_idxs_ too
+            }
+            // update status of new active constraint
+            if (newactiveidx < this->lp_.num_row_) this->con_status_[newactiveidx] = newactivestatus;
             else this->var_status_[newactiveidx - this->lp_.num_row_] = newactivestatus;
         } else {
-            relaxed_newstatus = AsmBasisStatus::kFreeInBasis;
-            this->extend( this->basis_perm_[bestloc], bestidx ); // update factorization(s)
-            // send deactivated constraint to the end of free-in-basis constraints
-            std::vector<HighsInt>::iterator it = this->basis_idxs_.begin() + bestloc;
-            std::rotate(it, it + 1, this->basis_idxs_.end());
-            it = this->basis_perm_.begin() + bestloc;
-            std::rotate(it, it + 1, this->basis_perm_.end());
-            this->addNullSpaceDim();
+            this->extend( bestloc, bestidx ); // update factorization(s)
         }
-        // finally update status
-        if (bestidx < this->lp_.num_row_) this->con_status_[bestidx] = relaxed_newstatus;
-        else this->var_status_[bestidx - this->lp_.num_row_] = relaxed_newstatus;
         this->updateObjective();
         this->computeReducedVecs(); // TODO recomputing local gradient may not be necessary
         this->info_.qp_iteration_count++;
+        std::cout<<this->objective_<<" - "<< this->nullsp_dim_<<"\n"<<std::flush;
     }
     return;
 }

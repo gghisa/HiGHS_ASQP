@@ -112,7 +112,8 @@ void AsmSolver::LLTsolve(std::vector<double>& vec){
     return;
 }
 
-void AsmSolver::extend(const HighsInt& loc_deactivated, const HighsInt& idx_deactivated){
+void AsmSolver::extend(const HighsInt& iloc_deactivated, const HighsInt& idx_deactivated){
+    HighsInt loc_deactivated = this->basis_perm_[ iloc_deactivated ];
     // get new nullspace column, creating unit HVector
     this->Vi_.push_back(idx_deactivated - this->lp_.num_row_); // if deactivated element is a constraint this will be changed later
     HVector Ztemp;
@@ -141,7 +142,6 @@ void AsmSolver::extend(const HighsInt& loc_deactivated, const HighsInt& idx_deac
     if ( idx_deactivated < this->lp_.num_row_ ){
         // after adding a vector to Z, for numerical reasons we update the L and the factorisation of B
         // by changing the newly freed vector (that now pads A in B) with a unit vector
-        HighsInt iRow = loc_deactivated; // because function argument loc_deactivated is constant
         HVector newcol;
         // find largest element modulus in Ztemp
         double max_abs {0.};
@@ -158,7 +158,7 @@ void AsmSolver::extend(const HighsInt& loc_deactivated, const HighsInt& idx_deac
         stdvec2hvec(this->buffer_, newcol);
         this->B_.ftranCall(newcol, 1.);
         // update basis matrix
-        this->B_.update(&newcol, &Ztemp, &iRow, &this->Bhint_);
+        this->B_.update(&newcol, &Ztemp, &loc_deactivated, &this->Bhint_);
         this->num_basis_updates_++;
         this->Vi_.back() = max_idx;
         // then update reduced hessian factor
@@ -184,6 +184,12 @@ void AsmSolver::extend(const HighsInt& loc_deactivated, const HighsInt& idx_deac
             this->chol_.back() /= max_abs;
         }
     }
+    // send deactivated constraint to the end of free-in-basis constraints
+    std::vector<HighsInt>::iterator it = this->basis_idxs_.begin() + iloc_deactivated;
+    std::rotate(it, it + 1, this->basis_idxs_.end());
+    it = this->basis_perm_.begin() + iloc_deactivated;
+    std::rotate(it, it + 1, this->basis_perm_.end());
+    this->addNullSpaceDim();
     return;
 }
 
@@ -262,7 +268,7 @@ void AsmSolver::removeSpike(const HighsInt& idx_last_col){
     }
 }
 
-void AsmSolver::reduceInBasis(const HighsInt& loc_activated){ // only called when element moved to A was in the padding v
+void AsmSolver::reduceInBasis(const HighsInt& loc_activated){ // only called when element moved to A was in the padding V
     if ( loc_activated == this->nullsp_dim_ - 1 ){ // if index of activated corresponds to index of last row in L
         this->chol_.resize(this->chol_.size() - this->nullsp_dim_); // drop last row of L
         this->removeNullSpaceDim();
