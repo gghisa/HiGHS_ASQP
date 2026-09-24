@@ -13,9 +13,9 @@ HighsStatus AsmSolver::run(){
         this->model_status_ = HighsModelStatus::kNotset;
         if ( norm(this->red_grad_) > this->options_.primal_feasibility_tolerance ) this->minorloop(); // in case nullspace is non-empty to start with
         while ( this->maximalStepNotTaken() && !( this->iterlimit() || this->timelimit() || this->nullsizelimit() ) ) { // major iterations
-            this->relaxAndSearch();
-            if ( this->isoptimal() ) break;
-            this->minorloop();
+            this->relaxAndSearch(); // increase size of nullspace
+            if ( this->isOptimal() ) break;
+            this->minorloop(); // find optimum in the nullspace
             // if ( this->num_basis_updates_ > this->reinversion_freq_) reinvertBasis();
         }
         // outside loop but run only if feasibility is successful:
@@ -36,7 +36,7 @@ void AsmSolver::findBestPrice(HighsInt& bestidx, double& bestmultiplier, HighsIn
         if ( price < bestprice ){
             bestpricesign = sign;
             bestprice = price;
-            bestidx = idx; // TODO use idx
+            bestidx = idx;
             bestloc = i;
         }
     }
@@ -61,10 +61,10 @@ void AsmSolver::computeSearchDir(const HighsInt& bestloc, const double& bestmult
         std::fill(vec.begin(), vec.end() - this->nullsp_dim_, 0.); // [ 0 | ? ]
         std::copy(redbuffer.begin(), redbuffer.end(), vec.end() - this->nullsp_dim_); // [ 0 | M^{-1} Z^T Q y_p ]
         this->HBtran(vec); // B^{-T} [ 0 | M^{-1} Z^T Q y_p ] = Z M^{-1} Z^T Q y_p
-        for (HighsInt i {0}; i < this->Q_.dim_; i++) this->step_[i] -= vec[i]; // y_p ( I - Z M^{-1} Z^T Q y_p )
+        for (HighsInt i {0}; i < this->Q_.dim_; i++) this->step_[i] -= vec[i]; // ( I - Z M^{-1} Z^T Q ) y_p
     }
     // compute step
-    if ( std::abs(alpha_min) < this->options_.factor_pivot_tolerance ) std::cout<<"Zero search direction"; // TODO
+    if ( std::abs(alpha_min) <= this->options_.factor_pivot_tolerance ) std::cout<<"Zero search direction"; // TODO
     if ( alpha_min < - this->options_.factor_pivot_tolerance ) std::cout<<"Negative curvature search direction"; // TODO
     alpha_min = - bestmultiplier / alpha_min;
     for (HighsInt i {0}; i < this->Q_.dim_; i++){
@@ -87,9 +87,8 @@ void AsmSolver::relaxAndSearch(){ // loop through prices to find a constraint to
         HighsInt newactiveidx {-1};
         AsmBasisStatus newactivestatus;
         this->ratiotest(newactiveidx, newactivestatus);
-        if ( newactiveidx > - 1){
-            // replace relaxed with new one, update B factors only if we are going from vertex to vertex
-            if ( this->nullsp_dim_ == 0){
+        if ( newactiveidx > - 1){ // if a constraint is activated
+            if ( this->nullsp_dim_ == 0){ // replace relaxed with new one, update B factors only if we are going from vertex to vertex
                 this->replace( this->basis_perm_[bestloc], bestidx, newactiveidx );
                 this->basis_idxs_[ bestloc ] = newactiveidx; // update basis indices
             } else { // update factorisations of both B and M
@@ -97,11 +96,8 @@ void AsmSolver::relaxAndSearch(){ // loop through prices to find a constraint to
                 this->activate( newactiveidx, newactivestatus ); // takes care of basis_idxs_ too
             }
             // update status of new active constraint
-            if (newactiveidx < this->lp_.num_row_) this->con_status_[newactiveidx] = newactivestatus;
-            else this->var_status_[newactiveidx - this->lp_.num_row_] = newactivestatus;
-        } else {
-            this->extend( bestloc, bestidx ); // update factorization(s)
-        }
+            changeStatus(newactiveidx, newactivestatus);
+        } else this->extend( bestloc, bestidx ); // takes care of basis_idxs_ too
         this->updateObjective();
         this->computeReducedVecs(); // TODO recomputing local gradient may not be necessary
         this->info_.qp_iteration_count++;
@@ -110,11 +106,12 @@ void AsmSolver::relaxAndSearch(){ // loop through prices to find a constraint to
     return;
 }
 
+
 void AsmSolver::ratio1(const double tol, const double denom, const double lower,
                        const double upper, const double oldval, const double newval, double& alpha){
     double bound;
-    if (denom < - tol && lower > newval ) bound = lower;
-    else if ( denom > tol && upper < newval ) bound = upper;
+    if (denom < - tol ) bound = lower;
+    else if ( denom > tol ) bound = upper;
     else return;
     alpha = std::min( alpha, ( bound - oldval ) / denom );
     return;
@@ -133,41 +130,38 @@ void AsmSolver::ratiotest_pass1(){
 }
 
 void AsmSolver::ratio2(double& max_pivot, const double denom, const double lower, const double upper,
-                       const double oldval, const double newval, const double alphamax, double& alpha,
+                       const double oldval, const double alphamax, double& alpha,
                        const HighsInt idx, HighsInt& newactive_idx, AsmBasisStatus& newactive_status){
     double bound;
-    if ( denom < - max_pivot ) bound = lower;
-    else if ( denom > max_pivot ) bound = upper;
+    if ( denom <= - std::abs( max_pivot ) ) bound = lower;
+    else if ( denom >= std::abs( max_pivot ) ) bound = upper;
     else return;
     double alpha_here = ( bound - oldval ) / denom;
-    if ( denom < - max_pivot && alpha_here < alphamax ){
+    if ( alpha_here <= alphamax ){
         newactive_idx = idx;
-        newactive_status = AsmBasisStatus::kLower;
-        max_pivot = - denom;
+        max_pivot = std::abs( denom );
         alpha = alpha_here;
-    } else if ( denom > max_pivot && alpha_here < alphamax ){
-        newactive_idx = idx;
-        newactive_status = AsmBasisStatus::kUpper;
-        max_pivot = denom;
-        alpha = alpha_here;
+        if ( lower == upper ) newactive_status = AsmBasisStatus::kEquality;
+        else if ( denom < 0 ) newactive_status = AsmBasisStatus::kLower;
+        else newactive_status = AsmBasisStatus::kUpper;
     }
 }
 
 void AsmSolver::ratiotest_pass2(HighsInt& newactive_idx, AsmBasisStatus& newactive_status){
-    double max_pivot = 0; // to ensure no division by 0 in ratio2
+    double max_pivot = 0;
     for (HighsInt i {0}; i < this->Q_.dim_; i++) // loop through variables
         this->ratio2(max_pivot, this->step_[i], this->lp_.col_lower_[i], this->lp_.col_upper_[i],
-                     this->solution_.col_value[i], this->newvarvals_[i], this->alpha_relaxed_, this->alpha_,
+                     this->solution_.col_value[i], this->alpha_relaxed_, this->alpha_,
                      i + this->lp_.num_row_, newactive_idx, newactive_status);
     for (HighsInt i {0}; i < this->lp_.num_row_; i++) // loop through constraints
         this->ratio2(max_pivot, this->newconpivots_[i], this->lp_.row_lower_[i], this->lp_.row_upper_[i],
-                     this->solution_.row_value[i], this->newconvals_[i], this->alpha_relaxed_, this->alpha_,
+                     this->solution_.row_value[i], this->alpha_relaxed_, this->alpha_,
                      i, newactive_idx, newactive_status);
-    if ( max_pivot <= this->options_.factor_pivot_tolerance){
+    if ( max_pivot <= this->options_.factor_pivot_tolerance ){
         std::cout<<"Second pass not activating any constraint!"<<std::flush;
         throw std::logic_error("Second pass not activating any constraint!");
     }
-    if ( this->alpha_ < 0 ) this->alpha_ = 0.;
+    this->alpha_ = std::max( this->alpha_, 0. );
     return;
 }
 
@@ -224,15 +218,8 @@ void AsmSolver::activate(const HighsInt& idx, const AsmBasisStatus& status){
     // the V part of B is made up of arbitrary unit vectors
     HighsInt loc_remove {-1};
     HighsInt varidx = idx - this->lp_.num_row_; // possibly unused, otherwise reused many times
-    // handle status update
-    if (idx < this->lp_.num_row_){
-        if ( this->lp_.row_lower_[idx] == this->lp_.row_upper_[idx] ) this->con_status_[idx] = AsmBasisStatus::kEquality;
-        else this->con_status_[idx] = status;
-    } else {
-        if ( this->lp_.col_lower_[varidx] == this->lp_.col_upper_[varidx] ) this->var_status_[varidx] = AsmBasisStatus::kEquality;
-        else this->var_status_[varidx] = status;
-    }
-    // now that statuses have been taken care of, we have to choose what to do
+    changeStatus(idx, status); // handle status update
+    // now  we have to choose what to do
     // 1. if we are activating a unit vector, we check if it is already in V. If yes, just update perm and idxs, else update factorisations
     // 2. if we are activating a constraint, update factorisations
     // by update factorisations we mean updating B and L, the latter by choosing wisely which element to drop.
@@ -240,12 +227,15 @@ void AsmSolver::activate(const HighsInt& idx, const AsmBasisStatus& status){
         for (loc_remove = 0; loc_remove < this->nullsp_dim_; loc_remove++){
             if ( this->Vi_[loc_remove] == varidx ){ // unit vector already in basis
                 HighsInt loc_actual = this->rangsp_dim_ + loc_remove;
-                this->basis_idxs_[loc_actual] = idx; // update index
+                // the unit vector in the padding took the place of some other constraint, whose status needs to be updated
+                changeStatus(this->basis_idxs_[loc_actual], AsmBasisStatus::kInactive);
+                // update index
+                this->basis_idxs_[loc_actual] = idx;
                 auto it = this->basis_idxs_.begin();
                 std::rotate(it + this->rangsp_dim_, it + loc_actual, it + loc_actual + 1);
                 it = this->basis_perm_.begin();
                 std::rotate(it + this->rangsp_dim_, it + loc_actual, it + loc_actual + 1);
-                // update factorization if the already-in-basis
+                // update factorization if the unit vector that is activated is already-in-basis
                 this->reduceInBasis(loc_remove);
                 this->Vi_.erase( this->Vi_.begin() + loc_remove ); // remove reference to element in padding
                 return;
@@ -253,6 +243,6 @@ void AsmSolver::activate(const HighsInt& idx, const AsmBasisStatus& status){
         }
     }
     // if we are activating a constraint or the variable bound we are activating is not already in V
-    this->reduceOutsideBasis(idx);
+    this->reduceOutsideBasis(idx); // takes care of status update
     return;
 }

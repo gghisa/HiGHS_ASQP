@@ -15,7 +15,7 @@ HighsInt AsmSolver::locL(const HighsInt& i, const HighsInt& j) {
     return i*(i+1)/2 + j; // assumes indices are given for lower triangular matrix
 }
 
-HVector AsmSolver::stdvec2hvec(const std::vector<double>& vec, HVector& hvec){
+void AsmSolver::stdvec2hvec(const std::vector<double>& vec, HVector& hvec){
     hvec.setup(vec.size());
     for (size_t i {0}; i < vec.size(); i++){
         if (vec[i] != 0){
@@ -25,7 +25,7 @@ HVector AsmSolver::stdvec2hvec(const std::vector<double>& vec, HVector& hvec){
     }
     hvec.array = vec;
     hvec.packFlag = true;
-    return hvec;
+    return;
 }
 
 void AsmSolver::recomputeRedHessian(){
@@ -320,15 +320,8 @@ void AsmSolver::reduceOutsideBasis(const HighsInt& idx){
     // argument is index of new constraint to activate
     // then choose which constraint to drop from V
     // first extract constraint and build HVec
-    if (idx < this->lp_.num_row_){
-        std::vector<double> select(this->lp_.num_row_);
-        select[idx] = 1.;
-        this->lp_.a_matrix_.productTranspose(this->buffer_, select);
-    } else {
-        this->buffer_.assign(this->Q_.dim_, 0.);
-        this->buffer_[idx - this->lp_.num_row_] = 1.;
-    }
     HVector newcol;
+    buildConstraint(idx, newcol);
     stdvec2hvec(this->buffer_, newcol);
     this->B_.ftranCall(newcol, 1.);
     double max_abs {0.};
@@ -351,7 +344,8 @@ void AsmSolver::reduceOutsideBasis(const HighsInt& idx){
     // update basis matrix
     this->B_.update(&newcol, &oldcol, &iRow, &this->Bhint_);
     this->num_basis_updates_++;
-    if (this->nullsp_dim_ > 1){
+    if (this->nullsp_dim_ == 1) this->chol_.resize(0);
+    else {
         // update L factorisation according to (28) in Fletcher
         // first store -d_k/d_p coefficients at the end of buffer_
         for (HighsInt i { this->rangsp_dim_ }; i < loc_remove; i++){ // elements i < this->rangsp_dim_ - 1 in buffer_ are rubbish
@@ -370,15 +364,14 @@ void AsmSolver::reduceOutsideBasis(const HighsInt& idx){
         // then multiply out with (nullsp_dim_ - 1, nullsp_dim_)-size eta matrix
         // upper (nullsp_dim_ - 1, nullsp_dim_ - 1)-size triangle is unchanged
         for(HighsInt j {0}; j < dim; j++){
-            this->chol_[ locL(dim, j) ] += this->chol_.back() * this->buffer_[this->rangsp_dim_ + j + 1];
+            this->chol_[ locL(dim, j) ] += this->chol_.back() * this->buffer_[this->rangsp_dim_ + 1 + j];
         }
         removeSpike(dim); // finally remove spike
         this->chol_.resize(this->chol_.size() - this->nullsp_dim_); // drop last row of L
         loc_remove += this->rangsp_dim_; // restore for index update
-    } else this->chol_.resize(0);
+    }
     // change dropped constraint to inactive
-    if (this->basis_idxs_[loc_remove] < this->lp_.num_row_) this->con_status_[this->basis_idxs_[loc_remove]] = AsmBasisStatus::kInactive;
-    else this->var_status_[this->basis_idxs_[loc_remove] - this->lp_.num_row_] = AsmBasisStatus::kInactive;
+    changeStatus( this->basis_idxs_[loc_remove], AsmBasisStatus::kInactive );
     // update indices
     this->basis_idxs_[loc_remove] = idx; // replace old index with new one in basis
     // send new index to end of active, by moving everything between end of rangsp and locremove down by 1
@@ -418,15 +411,7 @@ void AsmSolver::replace(const HighsInt& loc_deactivated, const HighsInt& idx_dea
     HVector newcol;
     HVector oldcol;
     HighsInt iRow = loc_deactivated;
-    if ( idx_activated < this->lp_.num_row_ ){
-        std::vector<double> ep( this->lp_.num_row_ );
-        ep[idx_activated] = 1.;
-        this->lp_.a_matrix_.productTranspose(this->buffer_, ep);
-    } else {
-        this->buffer_.assign(this->Q_.dim_, 0.);
-        this->buffer_[idx_activated - this->lp_.num_row_] = 1.;
-    }
-    stdvec2hvec(this->buffer_, newcol);
+    buildConstraint(idx_activated, newcol);
     this->B_.ftranCall(newcol, 1.);
     // 
     this->buffer_.assign(this->Q_.dim_, 0.);

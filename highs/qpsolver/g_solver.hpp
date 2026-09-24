@@ -79,7 +79,7 @@ class AsmSolver {
         // HFactor functions
         void HBtran(std::vector<double>& vec);
         void HFtran(std::vector<double>& vec);
-        HVector stdvec2hvec(const std::vector<double>& vec, HVector& hvec);
+        void stdvec2hvec(const std::vector<double>& vec, HVector& hvec);
         // Reduced Hessian operations
         HighsInt locL(const HighsInt& i, const HighsInt& j);
         void recomputeRedHessian();
@@ -120,13 +120,15 @@ class AsmSolver {
         bool timelimit();
         bool maximalStepNotTaken();
         bool nullsizelimit();
-        bool isoptimal();
+        bool isOptimal();
         // Helper functions
+        void buildConstraint(const HighsInt& idx, HVector& hvec);
+        void changeStatus(const HighsInt& idx, const AsmBasisStatus& newstatus);
         void findBestPrice(HighsInt& bestidx, double& bestmultiplier, HighsInt& bestloc);
         static void ratio1(const double tol, const double denom, const double lower, const double upper,
                            const double oldval, const double newval, double& alpha); // static from Claude.ai
         static void ratio2(double& max_pivot, const double denom, const double lower, const double upper,
-                           const double oldval, const double newval, const double alphamax, double& alpha,
+                           const double oldval, const double alphamax, double& alpha,
                            const HighsInt idx, HighsInt& newactive_idx, AsmBasisStatus& newactive_status);
         void reinvertBasis();
         void addNullSpaceDim();

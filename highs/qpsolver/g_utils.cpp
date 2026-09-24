@@ -271,7 +271,7 @@ bool AsmSolver::nullsizelimit(){// nullspace size limit
     return false;
 };
 
-bool AsmSolver::isoptimal(){ // break loop if optimality check is positive during deactivation
+bool AsmSolver::isOptimal(){ // break loop if optimality check is positive during deactivation
     if ( this->model_status_ == HighsModelStatus::kOptimal ){
         this->status_ = HighsStatus::kOk;
         return true;
@@ -316,4 +316,23 @@ double AsmSolver::norm(const std::vector<double>& vec){
         sum += vec[i] * vec[i];
     }
     return std::sqrt(sum);
+}
+
+void AsmSolver::changeStatus(const HighsInt& idx, const AsmBasisStatus& newstatus){
+    if (idx < this->lp_.num_row_) this->con_status_[idx] = newstatus;
+    else this->var_status_[idx - this->lp_.num_row_] = newstatus;
+}
+
+
+void AsmSolver::buildConstraint(const HighsInt& idx, HVector& hvec){
+    if (idx < this->lp_.num_row_){
+        std::vector<double> select(this->lp_.num_row_);
+        select[idx] = 1.;
+        this->lp_.a_matrix_.productTranspose(this->buffer_, select);
+    } else {
+        this->buffer_.assign(this->Q_.dim_, 0.);
+        this->buffer_[idx - this->lp_.num_row_] = 1.;
+    }
+    stdvec2hvec(this->buffer_, hvec);
+    return;
 }
