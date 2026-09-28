@@ -208,7 +208,6 @@ void AsmSolver::activate(const HighsInt& idx, const AsmBasisStatus& status){
     // the V part of B is made up of arbitrary unit vectors
     HighsInt loc_remove {-1};
     HighsInt varidx = idx - this->lp_.num_row_; // possibly unused, otherwise reused many times
-    this->changeStatus(idx, status); // handle status update for activation
     // now  we have to choose what to do
     // 1. if we are activating a unit vector, we check if it is already in V. If yes, just update perm and idxs, else update factorisations
     // 2. if we are activating a constraint, update factorisations
@@ -221,6 +220,7 @@ void AsmSolver::activate(const HighsInt& idx, const AsmBasisStatus& status){
                 this->changeStatus(this->basis_idxs_[loc_actual], AsmBasisStatus::kInactive);
                 // update index
                 this->basis_idxs_[loc_actual] = idx;
+                this->changeStatus(idx, status); // handle status update for activation
                 sendToEndOfActive(loc_actual);
                 // update factorization if the unit vector that is activated is already-in-basis
                 this->reduceInBasis(loc_remove);
@@ -231,5 +231,6 @@ void AsmSolver::activate(const HighsInt& idx, const AsmBasisStatus& status){
     }
     // if we are activating a constraint or the variable bound we are activating is not already in V
     this->reduceOutsideBasis(idx); // takes care of status update
+    this->changeStatus(idx, status); // handle status update for activation
     return;
 }
