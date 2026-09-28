@@ -85,7 +85,7 @@ class AsmSolver {
         void Lsolve(std::vector<double>& vec);
         void LTsolve(std::vector<double>& vec);
         void LLTsolve(std::vector<double>& vec);
-        void extend(const HighsInt& loc_deactivated, const HighsInt& idx_deactivated);
+        void extend(const HighsInt& loc_deactivated);
         void reduceInBasis(const HighsInt& loc_activated);
         void reduceOutsideBasis(const HighsInt& idx);
         void rightGivensHess(const HighsInt& start);
@@ -106,7 +106,7 @@ class AsmSolver {
         void ratiotest_pass2(HighsInt& newactive_idx, AsmBasisStatus& newactive_status);
         void ratiotest(HighsInt& newactive_idx, AsmBasisStatus& newactive_status);
         void activate(const HighsInt& idx, const AsmBasisStatus& status);
-        void replace(const HighsInt& liloc, const HighsInt& idx_deactivated, const HighsInt& idx_activated);
+        void replace(const HighsInt& iloc_deactivated, const HighsInt& idx_activated, const AsmBasisStatus& newactivestatus);
         // Object computations
         void computeSearchDir(const HighsInt& bestloc, const double& bestmultiplier);
         void computeLocGrad();

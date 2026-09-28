@@ -77,25 +77,18 @@ void AsmSolver::relaxAndSearch(){ // loop through prices to find a constraint to
     this->findBestPrice(bestidx, bestmultiplier, bestloc);
     if ( bestidx == -1 ) this->model_status_ = HighsModelStatus::kOptimal; // set to optimal to break the major loop
     else {
-        // update status of relaxed constraint
-        if (bestidx < this->lp_.num_row_) this->con_status_[bestidx] = AsmBasisStatus::kFreeInBasis;
-        else this->var_status_[bestidx - this->lp_.num_row_] = AsmBasisStatus::kFreeInBasis;
-        //
         this->computeSearchDir(bestloc, bestmultiplier);
         HighsInt newactiveidx {-1};
         AsmBasisStatus newactivestatus;
         this->ratiotest(newactiveidx, newactivestatus);
         if ( newactiveidx > - 1){ // if a constraint is activated
             if ( this->nullsp_dim_ == 0){ // replace relaxed with new one, update B factors only if we are going from vertex to vertex
-                this->replace( this->basis_perm_[bestloc], bestidx, newactiveidx );
-                this->basis_idxs_[ bestloc ] = newactiveidx; // update basis indices
+                this->replace( bestloc, newactiveidx, newactivestatus ); // takes care of idxs and status
             } else { // update factorisations of both B and M
-                this->extend( bestloc, bestidx ); // takes care of basis_idxs_ too
+                this->extend( bestloc ); // takes care of basis_idxs_ too
                 this->activate( newactiveidx, newactivestatus ); // takes care of basis_idxs_ too
             }
-            // update status of new active constraint
-            changeStatus(newactiveidx, newactivestatus);
-        } else this->extend( bestloc, bestidx ); // takes care of basis_idxs_ too
+        } else this->extend( bestloc ); // takes care of basis_idxs_ too
         this->updateObjective();
         this->computeReducedVecs(); // TODO recomputing local gradient may not be necessary
         this->info_.qp_iteration_count++;
@@ -214,7 +207,7 @@ void AsmSolver::activate(const HighsInt& idx, const AsmBasisStatus& status){
     // the V part of B is made up of arbitrary unit vectors
     HighsInt loc_remove {-1};
     HighsInt varidx = idx - this->lp_.num_row_; // possibly unused, otherwise reused many times
-    changeStatus(idx, status); // handle status update
+    this->changeStatus(idx, status); // handle status update for activation
     // now  we have to choose what to do
     // 1. if we are activating a unit vector, we check if it is already in V. If yes, just update perm and idxs, else update factorisations
     // 2. if we are activating a constraint, update factorisations
@@ -224,7 +217,7 @@ void AsmSolver::activate(const HighsInt& idx, const AsmBasisStatus& status){
             if ( this->Vi_[loc_remove] == varidx ){ // unit vector already in basis
                 HighsInt loc_actual = this->rangsp_dim_ + loc_remove;
                 // the unit vector in the padding took the place of some other constraint, whose status needs to be updated
-                changeStatus(this->basis_idxs_[loc_actual], AsmBasisStatus::kInactive);
+                this->changeStatus(this->basis_idxs_[loc_actual], AsmBasisStatus::kInactive);
                 // update index
                 this->basis_idxs_[loc_actual] = idx;
                 auto it = this->basis_idxs_.begin();

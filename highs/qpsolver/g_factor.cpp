@@ -126,7 +126,8 @@ void AsmSolver::LLTsolve(std::vector<double>& vec){
     return;
 }
 
-void AsmSolver::extend(const HighsInt& iloc_deactivated, const HighsInt& idx_deactivated){
+void AsmSolver::extend(const HighsInt& iloc_deactivated){
+    const HighsInt idx_deactivated = this->basis_idxs_[ iloc_deactivated ];
     HighsInt loc_deactivated = this->basis_perm_[ iloc_deactivated ];
     // get new nullspace column, creating unit HVector
     this->Vi_.push_back(idx_deactivated - this->lp_.num_row_); // if deactivated element is a constraint this will be changed later
@@ -151,7 +152,7 @@ void AsmSolver::extend(const HighsInt& iloc_deactivated, const HighsInt& idx_dea
         throw std::domain_error("Reduced matrix is either semi- or indefinite!");
     }
     this->chol_.push_back( std::sqrt(lambda) );
-    if ( idx_deactivated < this->lp_.num_row_ ){
+    if ( idx_deactivated < this->lp_.num_row_ ) {
         // after adding a vector to Z, for numerical reasons we update the L and the factorisation of B
         // by changing the newly freed vector (that now pads A in B) with a unit vector
         HVector newcol;
@@ -196,6 +197,8 @@ void AsmSolver::extend(const HighsInt& iloc_deactivated, const HighsInt& idx_dea
             this->chol_.back() /= max_abs;
         }
     }
+    // update status
+    this->changeStatus(idx_deactivated, AsmBasisStatus::kFreeInBasis);
     // send deactivated constraint to the end of free-in-basis constraints
     std::vector<HighsInt>::iterator it = this->basis_idxs_.begin() + iloc_deactivated;
     std::rotate(it, it + 1, this->basis_idxs_.end());
@@ -383,7 +386,7 @@ void AsmSolver::reduceOutsideBasis(const HighsInt& idx){
         loc_remove += this->rangsp_dim_; // restore for index update
     }
     // change dropped constraint to inactive
-    changeStatus( this->basis_idxs_[loc_remove], AsmBasisStatus::kInactive );
+    this->changeStatus( this->basis_idxs_[loc_remove], AsmBasisStatus::kInactive );
     // update indices
     this->basis_idxs_[loc_remove] = idx; // replace old index with new one in basis
     // send new index to end of active, by moving everything between end of rangsp and locremove down by 1
@@ -419,10 +422,10 @@ void AsmSolver::permute(const HighsInt& loc_remove, const HighsInt& dim){
     this->chol_ = std::move(new_chol);
 }
 
-void AsmSolver::replace(const HighsInt& loc_deactivated, const HighsInt& idx_deactivated, const HighsInt& idx_activated){
+void AsmSolver::replace(const HighsInt& iloc_deactivated, const HighsInt& idx_activated, const AsmBasisStatus& newactivestatus){
     HVector newcol;
     HVector oldcol;
-    HighsInt iRow = loc_deactivated;
+    HighsInt iRow = this->basis_perm_[ iloc_deactivated ];
     buildConstraint(idx_activated, newcol);
     this->B_.ftranCall(newcol, 1.);
     // 
@@ -432,4 +435,8 @@ void AsmSolver::replace(const HighsInt& loc_deactivated, const HighsInt& idx_dea
     this->B_.btranCall(oldcol, 1.);
     // update basis matrix
     this->B_.update(&newcol, &oldcol, &iRow, &this->Bhint_);
+    // update statuses
+    this->changeStatus( this->basis_idxs_[ iloc_deactivated ], AsmBasisStatus::kInactive );
+    this->changeStatus( idx_activated, newactivestatus ); // update status of new active constraint
+    this->basis_idxs_[ iloc_deactivated ] = idx_activated; // update basis indices
 }
