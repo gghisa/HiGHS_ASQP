@@ -56,7 +56,6 @@ class AsmSolver {
         std::vector<double> loc_grad_; // current gradient g + Q x_k, where x_k = solution_.col_value
         std::vector<double> red_grad_; // current reduced gradient Z^T (g + Q x_k)
         std::vector<double> pricing_; // a value for each active constraint, based on which the choice of which to deactivate is made
-        std::vector<double> delta_; // reduced step, solution of M \delta = Z^T (g + Q x_k)
         std::vector<double> step_; // full step, result of Z \delta
         // vectors for forward stepping
         std::vector<double> newvarvals_;

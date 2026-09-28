@@ -75,33 +75,47 @@ void AsmSolver::recomputeRedHessian(){
     return;
 }
 
+// TODO from claude.ai
+// TO avoid checks from locL function
+// void AsmSolver::Lsolve(std::vector<double>& vec){
+//     double* v = vec.data() + this->rangsp_dim_;
+//     for (HighsInt i = 0; i < this->nullsp_dim_; i++){
+//         const double* row = &this->chol_[i*(i+1)/2];  // row i of L, contiguous
+//         double s = v[i];
+//         for (HighsInt j = 0; j < i; j++) s -= row[j] * v[j];
+//         v[i] = s / row[i];
+//     }
+// }
+// 
+// void AsmSolver::LTsolve(std::vector<double>& vec){
+//     double* v = vec.data() + this->rangsp_dim_;
+//     for (HighsInt i = this->nullsp_dim_ - 1; i >= 0; i--){
+//         const double* row = &this->chol_[i*(i+1)/2];
+//         v[i] /= row[i];
+//         const double vi = v[i];
+//         for (HighsInt j = 0; j < i; j++) v[j] -= row[j] * vi;
+//     }
+// }
+
 void AsmSolver::Lsolve(std::vector<double>& vec){
-    if ( (HighsInt)vec.size() != this->nullsp_dim_){
-        std::cout<<"Fw solve requires a vector the size of the nullspace!"<<std::flush;
-        throw std::logic_error("Fw solve requires a vector the size of the nullspace!");
-    }
     // solve Ly = b with forward substitution
     for (HighsInt i {0}; i < this->nullsp_dim_; i++){
         for (HighsInt j {0}; j < i; j++){
-            vec[i] -= this->chol_[ locL(i,j) ] * vec[j]; 
+            vec[i + this->rangsp_dim_] -= this->chol_[ locL(i,j) ] * vec[j + this->rangsp_dim_]; 
         }
-        vec[i] /= this->chol_[ locL(i,i) ];
+        vec[i + this->rangsp_dim_] /= this->chol_[ locL(i,i) ];
     }
     return;
 }
 
 void AsmSolver::LTsolve(std::vector<double>& vec){
-    if ( (HighsInt)vec.size() != this->nullsp_dim_){
-        std::cout<<"Bw solve requires a vector the size of the nullspace!"<<std::flush;
-        throw std::logic_error("Bw solve requires a vector the size of the nullspace!");
-    }
     // solve L^T z = y with backward substitution
     HighsInt limit = this->nullsp_dim_ - 1;
     for (HighsInt i {limit}; i > -1; i--){
         for (HighsInt j {limit}; j > i; j--){// perform operation in place
-            vec[i] -= this->chol_[ locL(j,i) ] * vec[j]; // note indices are swapped since we are accessing the upper triangular image of L
+            vec[i + this->rangsp_dim_] -= this->chol_[ locL(j,i) ] * vec[j + this->rangsp_dim_]; // note indices are swapped since we are accessing the upper triangular image of L
         }
-        vec[i] /= this->chol_[ locL(i,i) ];
+        vec[i +  this->rangsp_dim_] /= this->chol_[ locL(i,i) ];
     }
     return;
 }
@@ -126,12 +140,10 @@ void AsmSolver::extend(const HighsInt& iloc_deactivated, const HighsInt& idx_dea
         // solve L l = Z^T ( Q z_col ) = Z^T sol
         std::vector<double> sol(this->Q_.dim_);
         this->Q_.product(Ztemp.array, sol);
-        HFtran(sol); // B^{-1} ( sol )
-        // select Z^T ( sol ), which is the bottom part of the solution vector above
-        sol.erase(sol.begin(), sol.end() - this->nullsp_dim_); // TODO is the other part useful?
+        HFtran(sol); // B^{-1} ( sol ) ~ Z^T ( Q z_col ) in memory
         Lsolve(sol);
-        this->chol_.insert(this->chol_.end(), sol.begin(), sol.end());
-        for (HighsInt i {0}; i < this->nullsp_dim_; i++) lambda -= sol[i] * sol[i];
+        this->chol_.insert(this->chol_.end(), sol.begin() + this->rangsp_dim_, sol.end());
+        for (HighsInt i {this->rangsp_dim_}; i < this->Q_.dim_; i++) lambda -= sol[i] * sol[i];
     }
     lambda += 2 * computeQuadObjective(Ztemp.array);
     if (lambda <= this->options_.factor_pivot_tolerance){

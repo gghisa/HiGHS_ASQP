@@ -55,11 +55,9 @@ void AsmSolver::computeSearchDir(const HighsInt& bestloc, const double& bestmult
     for (HighsInt i {0}; i < this->Q_.dim_; i++) alpha_min += this->step_[i] * vec[i]; // compute y_p^T Q y_p for later
     // compute direction
     if ( this->nullsp_dim_ > 0 ){
-        this->HFtran(vec); // B^{-1} Q y_p
-        std::vector<double> redbuffer(vec.end() - this->nullsp_dim_, vec.end()); // Z^T Q y_p
-        LLTsolve(redbuffer); // M^{-1} Z^T Q y_p
-        std::fill(vec.begin(), vec.end() - this->nullsp_dim_, 0.); // [ 0 | ? ]
-        std::copy(redbuffer.begin(), redbuffer.end(), vec.end() - this->nullsp_dim_); // [ 0 | M^{-1} Z^T Q y_p ]
+        this->HFtran(vec); // B^{-1} Q y_p ~ Z^T Q y_p (in memory)
+        LLTsolve(vec); // M^{-1} Z^T Q y_p
+        std::fill(vec.begin(), vec.end() - this->nullsp_dim_, 0.); // [ 0 | M^{-1} Z^T Q y_p ]
         this->HBtran(vec); // B^{-T} [ 0 | M^{-1} Z^T Q y_p ] = Z M^{-1} Z^T Q y_p
         for (HighsInt i {0}; i < this->Q_.dim_; i++) this->step_[i] -= vec[i]; // ( I - Z M^{-1} Z^T Q ) y_p
     }
@@ -166,14 +164,12 @@ void AsmSolver::ratiotest_pass2(HighsInt& newactive_idx, AsmBasisStatus& newacti
 }
 
 void AsmSolver::solveEP(){ // solve Equality Problem
-    this->delta_.resize(this->red_grad_.size());
-    for (size_t i {0}; i < this->red_grad_.size(); i++){
-        this->delta_[i] = - this->red_grad_[i]; // TODO, is there a better place to flip sign?
+    for (HighsInt i {0}; i < this->nullsp_dim_; i++){
+        this->step_[this->rangsp_dim_ + i] = - this->red_grad_[i]; // TODO, is there a better place to flip sign?
     }
-    this->LLTsolve(this->delta_);
+    this->LLTsolve(this->step_);
     // then compute full space step
-    std::fill(this->step_.begin(), this->step_.end() - this->delta_.size(), 0.);
-    std::copy(this->delta_.begin(), this->delta_.end(), this->step_.end() - this->delta_.size());
+    std::fill(this->step_.begin(), this->step_.begin() + this->rangsp_dim_, 0.);
     this->HBtran(this->step_);
     // and update newvarvals
     for (HighsInt i {0}; i < this->Q_.dim_; i++){
