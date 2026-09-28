@@ -336,3 +336,10 @@ void AsmSolver::buildConstraint(const HighsInt& idx, HVector& hvec){
     stdvec2hvec(this->buffer_, hvec);
     return;
 }
+
+void AsmSolver::sendToEndOfActive(const HighsInt& loc){
+    std::vector<HighsInt>::iterator it = this->basis_idxs_.begin();
+    std::rotate(it + this->rangsp_dim_, it + loc, it + loc + 1);
+    it = this->basis_perm_.begin();
+    std::rotate(it + this->rangsp_dim_, it + loc, it + loc + 1);
+}

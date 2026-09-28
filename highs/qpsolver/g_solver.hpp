@@ -121,6 +121,13 @@ class AsmSolver {
         bool nullsizelimit();
         bool isOptimal();
         // Helper functions
+        void sendToEndOfActive(const HighsInt& loc);
+        void checkStatuses(){
+            for (HighsInt i {0}; i < this->Q_.dim_; i++){
+                if ( this->basis_idxs_[i] < this->lp_.num_row_ ) assert(static_cast<double>(this->con_status_[this->basis_idxs_[i]]) < 1.1);
+                else assert(static_cast<double>(this->var_status_[this->basis_idxs_[i] - this->lp_.num_row_]) < 1.1);
+            }
+        }
         void buildConstraint(const HighsInt& idx, HVector& hvec);
         void changeStatus(const HighsInt& idx, const AsmBasisStatus& newstatus);
         void findBestPrice(HighsInt& bestidx, double& bestmultiplier, HighsInt& bestloc);

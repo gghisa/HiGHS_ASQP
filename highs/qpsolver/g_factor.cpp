@@ -390,10 +390,7 @@ void AsmSolver::reduceOutsideBasis(const HighsInt& idx){
     // update indices
     this->basis_idxs_[loc_remove] = idx; // replace old index with new one in basis
     // send new index to end of active, by moving everything between end of rangsp and locremove down by 1
-    std::vector<HighsInt>::iterator it = this->basis_idxs_.begin();
-    std::rotate(it + this->rangsp_dim_, it + loc_remove, it + loc_remove + 1);
-    it = this->basis_perm_.begin();
-    std::rotate(it + this->rangsp_dim_, it + loc_remove, it + loc_remove + 1);
+    sendToEndOfActive(loc_remove);
     this->Vi_.erase( this->Vi_.begin() + loc_remove ); // remove reference to element in padding
     removeNullSpaceDim();
     return;

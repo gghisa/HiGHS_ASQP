@@ -32,6 +32,7 @@ void AsmSolver::findBestPrice(HighsInt& bestidx, double& bestmultiplier, HighsIn
         // sign Dantzig prices on the go
         if (idx < this->lp_.num_row_) sign = static_cast<double>( this->con_status_[idx] );
         else sign = static_cast<double>( this->var_status_[idx - this->lp_.num_row_] );
+        assert(sign < 1.1);
         price = sign * this->pricing_[i];
         if ( price < bestprice ){
             bestpricesign = sign;
@@ -220,10 +221,7 @@ void AsmSolver::activate(const HighsInt& idx, const AsmBasisStatus& status){
                 this->changeStatus(this->basis_idxs_[loc_actual], AsmBasisStatus::kInactive);
                 // update index
                 this->basis_idxs_[loc_actual] = idx;
-                auto it = this->basis_idxs_.begin();
-                std::rotate(it + this->rangsp_dim_, it + loc_actual, it + loc_actual + 1);
-                it = this->basis_perm_.begin();
-                std::rotate(it + this->rangsp_dim_, it + loc_actual, it + loc_actual + 1);
+                sendToEndOfActive(loc_actual);
                 // update factorization if the unit vector that is activated is already-in-basis
                 this->reduceInBasis(loc_remove);
                 this->Vi_.erase( this->Vi_.begin() + loc_remove ); // remove reference to element in padding
