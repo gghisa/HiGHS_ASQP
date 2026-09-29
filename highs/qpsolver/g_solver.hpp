@@ -67,6 +67,7 @@ class AsmSolver {
         double alpha_ {1.}; // step size for second pass ratio test
         HighsInt num_basis_updates_ {0};
         HighsInt reinversion_freq_ {100};
+        bool stepAlreadyTaken_;
         // permutation has to be used when FTRAN and BTRAN are called
         std::vector<HighsInt> basis_idxs_; // ordered active and free indices in basiss
         std::vector<HighsInt> basis_perm_; // ordered active and free indices permutation in basis

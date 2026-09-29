@@ -189,12 +189,15 @@ void AsmSolver::ratiotest(HighsInt& newactive_idx, AsmBasisStatus& newactive_sta
 }
 
 void AsmSolver::minorloop(){
+    this->stepAlreadyTaken_ = false;
     while ( norm(this->red_grad_) > this->options_.primal_feasibility_tolerance ){ // if nullsp is empty then norm returns 0
+        if ( this->stepAlreadyTaken_ ) recomputeRedHessian(); // if the last step was unconstrained but somehow we are not at reduced optimum yet
         this->solveEP();
         HighsInt newactiveidx {-1};
         AsmBasisStatus newactivestatus;
         this->ratiotest(newactiveidx, newactivestatus);
         if ( newactiveidx > -1 ) this->activate(newactiveidx, newactivestatus);
+        else this->stepAlreadyTaken_ = true;
         this->updateObjective();
         this->computeReducedVecs(); // red grad needs updating with new position
         this->info_.qp_iteration_count++;
