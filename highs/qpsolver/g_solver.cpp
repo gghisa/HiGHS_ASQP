@@ -84,12 +84,12 @@ void AsmSolver::relaxAndSearch(){ // loop through prices to find a constraint to
         this->ratiotest(newactiveidx, newactivestatus);
         if ( newactiveidx > - 1){ // if a constraint is activated
             if ( this->nullsp_dim_ == 0){ // replace relaxed with new one, update B factors only if we are going from vertex to vertex
-                this->replace( bestloc, newactiveidx, newactivestatus ); // takes care of idxs and status
+                this->replace( bestloc, newactiveidx, newactivestatus ); // statuses updated and indexes swapped inside replace()
             } else { // update factorisations of both B and M
-                this->extend( bestloc ); // takes care of basis_idxs_ too
-                this->activate( newactiveidx, newactivestatus ); // takes care of basis_idxs_ too
+                this->extend( bestloc );
+                this->activate( newactiveidx, newactivestatus );
             }
-        } else this->extend( bestloc ); // takes care of basis_idxs_ too
+        } else this->extend( bestloc );
         this->updateObjective();
         this->computeReducedVecs(); // TODO recomputing local gradient may not be necessary
         this->info_.qp_iteration_count++;
@@ -207,33 +207,45 @@ void AsmSolver::minorloop(){
 }
 
 void AsmSolver::activate(const HighsInt& idx, const AsmBasisStatus& status){
-    // we keep track of constraints free in basis for book-keeping purposes, even though
-    // the V part of B is made up of arbitrary unit vectors
-    HighsInt loc_remove {-1};
-    HighsInt varidx = idx - this->lp_.num_row_; // possibly unused, otherwise reused many times
-    // now  we have to choose what to do
-    // 1. if we are activating a unit vector, we check if it is already in V. If yes, just update perm and idxs, else update factorisations
-    // 2. if we are activating a constraint, update factorisations
-    // by update factorisations we mean updating B and L, the latter by choosing wisely which element to drop.
+    AsmBasisStatus oldstatus = getAsmBasisStatus(idx);
+    // old status cannot be active since activation requires movement in nullspace
+    assert (oldstatus == AsmBasisStatus::kFreeInBasis || oldstatus == AsmBasisStatus::kInactive);
+    // whether the constraint is padding or inactive, check whether the existing padding already has the correct vector
     if ( idx >= this->lp_.num_row_){ // if we are activating a variable's bound
+        HighsInt loc_remove {-1};
+        HighsInt varidx = idx - this->lp_.num_row_;
         for (loc_remove = 0; loc_remove < this->nullsp_dim_; loc_remove++){
             if ( this->Vi_[loc_remove] == varidx ){ // unit vector already in basis
                 HighsInt loc_actual = this->rangsp_dim_ + loc_remove;
                 // the unit vector in the padding took the place of some other constraint, whose status needs to be updated
-                this->changeStatus(this->basis_idxs_[loc_actual], AsmBasisStatus::kInactive);
-                // update index
-                this->basis_idxs_[loc_actual] = idx;
+                if ( this->basis_idxs_[loc_actual] != idx ){ // if the unit vector was a replacement for some constraint that will leave the basis
+                    this->changeStatus(this->basis_idxs_[loc_actual], AsmBasisStatus::kInactive); // deactivate old constraint (book-keeping)
+                    this->basis_idxs_[loc_actual] = idx; // update index
+                }
+                // or if the unit vector is an actual bound that is being activated
                 this->changeStatus(idx, status); // handle status update for activation
-                sendToEndOfActive(loc_actual);
+                this->fromPaddingToActive(loc_actual);
+                this->Vi_.erase( this->Vi_.begin() + loc_remove ); // remove reference to element in padding
                 // update factorization if the unit vector that is activated is already-in-basis
                 this->reduceInBasis(loc_remove);
-                this->Vi_.erase( this->Vi_.begin() + loc_remove ); // remove reference to element in padding
                 return;
             }
         }
     }
     // if we are activating a constraint or the variable bound we are activating is not already in V
-    this->reduceOutsideBasis(idx); // takes care of status update
-    this->changeStatus(idx, status); // handle status update for activation
+    HighsInt loc_remove = this->reduceOutsideBasis(idx); // returns location of padding vector to be removed from basis_idxs_
+    this->changeStatus( this->basis_idxs_[loc_remove], AsmBasisStatus::kInactive );
+    if ( oldstatus == AsmBasisStatus::kInactive ) this->basis_idxs_[loc_remove] = idx;
+    else if ( oldstatus == AsmBasisStatus::kFreeInBasis ){
+        for ( HighsInt i {this->rangsp_dim_}; i < this->Q_.dim_; i++){
+            if ( this->basis_idxs_[i] == idx ){
+                loc_remove = i;
+                break;
+            }
+        }
+    }
+    this->fromPaddingToActive(loc_remove);
+    this->changeStatus(idx, status);
+    removeNullSpaceDim();
     return;
 }

@@ -152,6 +152,7 @@ void AsmSolver::extend(const HighsInt& iloc_deactivated){
         throw std::domain_error("Reduced matrix is either semi- or indefinite!");
     }
     this->chol_.push_back( std::sqrt(lambda) );
+    // then change padding vector to unit vector if it wasn't a unit vector
     if ( idx_deactivated < this->lp_.num_row_ ) {
         // after adding a vector to Z, for numerical reasons we update the L and the factorisation of B
         // by changing the newly freed vector (that now pads A in B) with a unit vector
@@ -199,11 +200,7 @@ void AsmSolver::extend(const HighsInt& iloc_deactivated){
     }
     // update status
     this->changeStatus(idx_deactivated, AsmBasisStatus::kFreeInBasis);
-    // send deactivated constraint to the end of free-in-basis constraints
-    std::vector<HighsInt>::iterator it = this->basis_idxs_.begin() + iloc_deactivated;
-    std::rotate(it, it + 1, this->basis_idxs_.end());
-    it = this->basis_perm_.begin() + iloc_deactivated;
-    std::rotate(it, it + 1, this->basis_perm_.end());
+    this->fromActiveToPadding(iloc_deactivated);
     this->addNullSpaceDim();
     return;
 }
@@ -331,7 +328,8 @@ void AsmSolver::rightGivensHess(const HighsInt& start){
     }
 }
 
-void AsmSolver::reduceOutsideBasis(const HighsInt& idx){
+HighsInt AsmSolver::reduceOutsideBasis(const HighsInt& idx){
+    // this function is run if there was no vector in the padding corresponding to the constraint that is being activated
     // argument is index of new constraint to activate
     // then choose which constraint to drop from V
     // first extract constraint and build HVec
@@ -359,8 +357,10 @@ void AsmSolver::reduceOutsideBasis(const HighsInt& idx){
     // update basis matrix
     this->B_.update(&newcol, &oldcol, &iRow, &this->Bhint_);
     this->num_basis_updates_++;
-    if (this->nullsp_dim_ == 1) this->chol_.resize(0);
-    else {
+    if (this->nullsp_dim_ == 1){
+        this->chol_.resize(0);
+        this->Vi_.erase( this->Vi_.begin() ); // remove reference to element in padding
+    } else {
         // update L factorisation according to (28) in Fletcher
         // first store -d_k/d_p coefficients at the end of buffer_
         for (HighsInt i { this->rangsp_dim_ }; i < loc_remove; i++){ // elements i < this->rangsp_dim_ - 1 in buffer_ are rubbish
@@ -383,17 +383,10 @@ void AsmSolver::reduceOutsideBasis(const HighsInt& idx){
         }
         removeSpike(dim); // finally remove spike
         this->chol_.resize(this->chol_.size() - this->nullsp_dim_); // drop last row of L
+        this->Vi_.erase( this->Vi_.begin() + loc_remove ); // remove reference to element in padding
         loc_remove += this->rangsp_dim_; // restore for index update
     }
-    // change dropped constraint to inactive
-    this->changeStatus( this->basis_idxs_[loc_remove], AsmBasisStatus::kInactive );
-    // update indices
-    this->basis_idxs_[loc_remove] = idx; // replace old index with new one in basis
-    // send new index to end of active, by moving everything between end of rangsp and locremove down by 1
-    sendToEndOfActive(loc_remove);
-    this->Vi_.erase( this->Vi_.begin() + loc_remove ); // remove reference to element in padding
-    removeNullSpaceDim();
-    return;
+    return loc_remove;
 }
 
 void AsmSolver::permute(const HighsInt& loc_remove, const HighsInt& dim){
@@ -433,7 +426,9 @@ void AsmSolver::replace(const HighsInt& iloc_deactivated, const HighsInt& idx_ac
     // update basis matrix
     this->B_.update(&newcol, &oldcol, &iRow, &this->Bhint_);
     // update statuses
-    this->changeStatus( this->basis_idxs_[ iloc_deactivated ], AsmBasisStatus::kInactive );
     this->changeStatus( idx_activated, newactivestatus ); // update status of new active constraint
-    this->basis_idxs_[ iloc_deactivated ] = idx_activated; // update basis indices
+    if ( this->basis_idxs_[ iloc_deactivated] != idx_activated ){ // if new index is different than old index
+        this->changeStatus( this->basis_idxs_[ iloc_deactivated ], AsmBasisStatus::kInactive );
+        this->basis_idxs_[ iloc_deactivated ] = idx_activated; // update basis indices
+    }
 }

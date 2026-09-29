@@ -337,9 +337,26 @@ void AsmSolver::buildConstraint(const HighsInt& idx, HVector& hvec){
     return;
 }
 
-void AsmSolver::sendToEndOfActive(const HighsInt& loc){
+void AsmSolver::fromPaddingToActive(const HighsInt& loc){
+    // send (activated) formerly free in basis index to end of active constraints
     std::vector<HighsInt>::iterator it = this->basis_idxs_.begin();
     std::rotate(it + this->rangsp_dim_, it + loc, it + loc + 1);
     it = this->basis_perm_.begin();
     std::rotate(it + this->rangsp_dim_, it + loc, it + loc + 1);
+    return;
+}
+
+void AsmSolver::fromActiveToPadding(const HighsInt& loc){
+    // send (deactivated) constraint index to the end of free-in-basis constraints
+    // from the active set
+    std::vector<HighsInt>::iterator it = this->basis_idxs_.begin() + loc;
+    std::rotate(it, it + 1, this->basis_idxs_.end());
+    it = this->basis_perm_.begin() + loc;
+    std::rotate(it, it + 1, this->basis_perm_.end());
+    return;
+}
+
+AsmBasisStatus AsmSolver::getAsmBasisStatus(const HighsInt& idx){
+    if ( idx < this->lp_.num_row_ ) return con_status_[idx];
+    else return var_status_[idx - this->lp_.num_row_];
 }

@@ -88,7 +88,7 @@ class AsmSolver {
         void LLTsolve(std::vector<double>& vec);
         void extend(const HighsInt& loc_deactivated);
         void reduceInBasis(const HighsInt& loc_activated);
-        void reduceOutsideBasis(const HighsInt& idx);
+        HighsInt reduceOutsideBasis(const HighsInt& idx);
         void rightGivensHess(const HighsInt& start);
         void addSpike(const HighsInt& start, const HighsInt& idx_last_col);
         void removeSpike(const HighsInt& idx_last_col);
@@ -122,7 +122,9 @@ class AsmSolver {
         bool nullsizelimit();
         bool isOptimal();
         // Helper functions
-        void sendToEndOfActive(const HighsInt& loc);
+        AsmBasisStatus getAsmBasisStatus(const HighsInt& idx);
+        void fromActiveToPadding(const HighsInt& loc);
+        void fromPaddingToActive(const HighsInt& loc);
         void checkStatuses(){
             for (HighsInt i {0}; i < this->Q_.dim_; i++){
                 if ( this->basis_idxs_[i] < this->lp_.num_row_ ) assert(static_cast<double>(this->con_status_[this->basis_idxs_[i]]) < 1.1);
