@@ -12,7 +12,7 @@ HighsStatus AsmSolver::run(){
     if ( this->model_status_ == HighsModelStatus::kOptimal ){
         this->model_status_ = HighsModelStatus::kNotset;
         if ( norm(this->red_grad_) > this->options_.primal_feasibility_tolerance ) this->minorloop(); // in case nullspace is non-empty to start with
-        while ( this->maximalStepNotTaken() && !( this->iterlimit() || this->timelimit() || this->nullsizelimit() ) ) { // major iterations
+        while ( this->keepLooping() ) { // major iterations
             this->relaxAndSearch(); // increase size of nullspace
             if ( this->isOptimal() ) break;
             this->minorloop(); // find optimum in the nullspace
@@ -182,6 +182,7 @@ void AsmSolver::ratiotest(HighsInt& newactive_idx, AsmBasisStatus& newactive_sta
         this->compute_varvals(this->alpha_, this->solution_.col_value);
         this->lp_.a_matrix_.product(this->solution_.row_value, this->solution_.col_value); // a_i^T x_{k+1}
     } else {
+        this->alpha_ = 1.;
         this->solution_.row_value = this->newconvals_; // don't recompute new constraint values
         this->solution_.col_value = this->newvarvals_; // nor variables' values either
     }

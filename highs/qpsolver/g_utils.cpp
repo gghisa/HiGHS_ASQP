@@ -236,41 +236,29 @@ void AsmSolver::updateObjective(){
     return;
 }
 
-bool AsmSolver::iterlimit(){// iteration limit
-    if (this->info_.qp_iteration_count >= this->options_.qp_iteration_limit){
-        this->model_status_ = HighsModelStatus::kIterationLimit;
-        this->status_ = HighsStatus::kWarning; // TODO ok?
-        return true;
-    }
-    return false;
-};
-
-bool AsmSolver::timelimit(){// time limit
-    if (this->timer_.read() >= this->options_.time_limit){
-        this->model_status_ = HighsModelStatus::kTimeLimit;
-        this->status_ = HighsStatus::kWarning; // TODO ok?
-        return true;
-    }
-    return false;
-};
-
-bool AsmSolver::maximalStepNotTaken(){// optimality condition
-    if (this->nullsp_dim_ == this->Q_.dim_){ // cannot deactivate anything anymore, nullspace is maximal already
+bool AsmSolver::keepLooping(){
+    if ( this->nullsp_dim_ == this->Q_.dim_ ){ // cannot deactivate anything anymore, nullspace is maximal already
         this->model_status_ = HighsModelStatus::kOptimal;
         this->status_ = HighsStatus::kOk;
         return false;
     }
-    return true;
-};
-
-bool AsmSolver::nullsizelimit(){// nullspace size limit
-    if ( this->nullsp_dim_ > this->options_.qp_nullspace_limit){
+    if (this->info_.qp_iteration_count >= this->options_.qp_iteration_limit){ // iteration limit
+        this->model_status_ = HighsModelStatus::kIterationLimit;
+        this->status_ = HighsStatus::kWarning; // TODO ok?
+        return false;
+    }
+    if (this->timer_.read() >= this->options_.time_limit){ // time limit
+        this->model_status_ = HighsModelStatus::kTimeLimit;
+        this->status_ = HighsStatus::kWarning; // TODO ok?
+        return false;
+    }
+    if ( this->nullsp_dim_ > this->options_.qp_nullspace_limit){ // nullspace size limit
         this->model_status_ = HighsModelStatus::kSolveError;
         this->status_ = HighsStatus::kError;
-        return true;
+        return false;
     }
-    return false;
-};
+    return true;
+}
 
 bool AsmSolver::isOptimal(){ // break loop if optimality check is positive during deactivation
     if ( this->model_status_ == HighsModelStatus::kOptimal ){

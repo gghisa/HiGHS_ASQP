@@ -116,10 +116,7 @@ class AsmSolver {
         double computeQuadObjective(const std::vector<double>& vec);
         void updateObjective();
         // Main loop breaks
-        bool iterlimit();
-        bool timelimit();
-        bool maximalStepNotTaken();
-        bool nullsizelimit();
+        bool keepLooping();
         bool isOptimal();
         // Helper functions
         AsmBasisStatus getAsmBasisStatus(const HighsInt& idx);
