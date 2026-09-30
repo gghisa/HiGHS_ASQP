@@ -212,6 +212,7 @@ void AsmSolver::computeReducedVecs(){ // solve B x = (g + Q x_k) to compute Dant
 
 void AsmSolver::compute_varvals(const double& alpha, std::vector<double>& loc){ // compute x_{k+1}
     for (HighsInt i {0}; i < this->Q_.dim_; i++){
+        // this->step_[i] *= alpha; // TODO
         loc[i] = this->solution_.col_value[i] + alpha * this->step_[i];
     }
     return;

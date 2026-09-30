@@ -88,7 +88,7 @@ class AsmSolver {
         void LLTsolve(std::vector<double>& vec);
         void extend(const HighsInt& loc_deactivated);
         void reduceInBasis(const HighsInt& loc_activated);
-        HighsInt reduceOutsideBasis(const HighsInt& idx);
+        HighsInt reducePadding(const HighsInt& idx, const HighsInt& given_loc);
         void rightGivensHess(const HighsInt& start);
         void addSpike(const HighsInt& start, const HighsInt& idx_last_col);
         void removeSpike(const HighsInt& idx_last_col);

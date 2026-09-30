@@ -196,6 +196,13 @@ void AsmSolver::minorloop(){
         HighsInt newactiveidx {-1};
         AsmBasisStatus newactivestatus;
         this->ratiotest(newactiveidx, newactivestatus);
+        const double tol = 10 * this->options_.factor_pivot_tolerance;
+        for (HighsInt i {0}; i < this->Q_.dim_; i++){ // loop through variables
+            if ( std::abs(this->step_[i]) > tol ) assert( var_status_[i] == AsmBasisStatus::kInactive || var_status_[i] == AsmBasisStatus::kFreeInBasis);
+        }
+        for (HighsInt i {0}; i < this->lp_.num_row_; i++){ // loop through constraints
+            if ( std::abs(this->newconpivots_[i]) > tol ) assert( con_status_[i] == AsmBasisStatus::kInactive || con_status_[i] == AsmBasisStatus::kFreeInBasis);
+        }
         if ( newactiveidx > -1 ) this->activate(newactiveidx, newactivestatus);
         else this->stepAlreadyTaken_ = true;
         this->updateObjective();
@@ -233,17 +240,21 @@ void AsmSolver::activate(const HighsInt& idx, const AsmBasisStatus& status){
         }
     }
     // if we are activating a constraint or the variable bound we are activating is not already in V
-    HighsInt loc_remove = this->reduceOutsideBasis(idx); // returns location of padding vector to be removed from basis_idxs_
-    this->changeStatus( this->basis_idxs_[loc_remove], AsmBasisStatus::kInactive );
-    if ( oldstatus == AsmBasisStatus::kInactive ) this->basis_idxs_[loc_remove] = idx;
-    else if ( oldstatus == AsmBasisStatus::kFreeInBasis ){
+    HighsInt loc_remove {-1};
+    if ( oldstatus == AsmBasisStatus::kInactive ){
+        loc_remove = this->reducePadding(idx, -1); // returns location of padding vector to be removed from basis_idxs_
+        this->changeStatus( this->basis_idxs_[loc_remove], AsmBasisStatus::kInactive );
+        this->basis_idxs_[loc_remove] = idx;
+    } else if ( oldstatus == AsmBasisStatus::kFreeInBasis ){
         for ( HighsInt i {this->rangsp_dim_}; i < this->Q_.dim_; i++){
             if ( this->basis_idxs_[i] == idx ){
                 loc_remove = i;
+                this->reducePadding(idx, loc_remove);
                 break;
             }
         }
     }
+    assert(loc_remove>-1);
     this->fromPaddingToActive(loc_remove);
     this->changeStatus(idx, status);
     removeNullSpaceDim();

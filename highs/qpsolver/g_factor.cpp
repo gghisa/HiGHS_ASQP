@@ -280,7 +280,7 @@ void AsmSolver::removeSpike(const HighsInt& idx_last_col){
     }
 }
 
-void AsmSolver::reduceInBasis(const HighsInt& loc_activated){ // only called when element moved to A was in the padding V
+void AsmSolver::reduceInBasis(const HighsInt& loc_activated){ // only called when element moved to A was an element of the padding V
     if ( loc_activated == this->nullsp_dim_ - 1 ){ // if index of activated corresponds to index of last row in L
         this->chol_.resize(this->chol_.size() - this->nullsp_dim_); // drop last row of L
         this->removeNullSpaceDim();
@@ -328,23 +328,29 @@ void AsmSolver::rightGivensHess(const HighsInt& start){
     }
 }
 
-HighsInt AsmSolver::reduceOutsideBasis(const HighsInt& idx){
-    // this function is run if there was no vector in the padding corresponding to the constraint that is being activated
+HighsInt AsmSolver::reducePadding(const HighsInt& idx, const HighsInt& given_loc){
+    // this function is run if there was no padding vector that matches the activated one
+    // if the newly active index was free in basis, then there is no choice of which padding vector to move and it must be given
     // argument is index of new constraint to activate
-    // then choose which constraint to drop from V
+    // then choose which constraint to drop from V if not already given
     // first extract constraint and build HVec
     HVector newcol;
     buildConstraint(idx, newcol);
     stdvec2hvec(this->buffer_, newcol);
     this->B_.ftranCall(newcol, 1.);
     double max_abs {0.};
-    HighsInt loc_remove = this->Q_.dim_ - 1; // default remove last element in V
-    // now select which index to drop by finding largest element modulus in newcol (Z^T a_q)
-    for (HighsInt i {this->rangsp_dim_}; i < this->Q_.dim_; i++){ // Ztemp is a sparse vector
-        if ( std::abs( newcol.array[ this->basis_perm_[i] ] ) > std::abs( max_abs ) ) {
-            // only look at the trailing elements of the vector and 
-            max_abs = newcol.array[ this->basis_perm_[i] ];
-            loc_remove = i;
+    HighsInt loc_remove;
+    if (given_loc > -1) loc_remove = given_loc;
+    else {
+        // arbitrarily choose which padding element to remove
+        loc_remove = this->Q_.dim_ - 1; // default remove last element in V
+        // now select which index to drop by finding largest element modulus in newcol (Z^T a_q)
+        for (HighsInt i {this->rangsp_dim_}; i < this->Q_.dim_; i++){ // Ztemp is a sparse vector
+            if ( std::abs( newcol.array[ this->basis_perm_[i] ] ) > std::abs( max_abs ) ) {
+                // only look at the trailing elements of the vector and 
+                max_abs = newcol.array[ this->basis_perm_[i] ];
+                loc_remove = i;
+            }
         }
     }
     // build oldcol
@@ -390,6 +396,7 @@ HighsInt AsmSolver::reduceOutsideBasis(const HighsInt& idx){
 }
 
 void AsmSolver::permute(const HighsInt& loc_remove, const HighsInt& dim){
+    // TODO if profiling shows this is a bottleneck, consider merging with addSpike in a dedicated implementation
     std::vector<double> new_chol(this->chol_.size());
     // upper triangle above permuted row stays the same
     std::vector<double>::iterator itc = this->chol_.begin();
