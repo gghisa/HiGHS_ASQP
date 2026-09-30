@@ -38,6 +38,8 @@ AsmSolver::AsmSolver(const HighsOptions& options,
                      con_status_(lp.num_row_){
     // change hessian to square for better memory access
     if (this->Q_.format_ == HessianFormat::kTriangular) this->Q_ = this->Q_.toSquare();
+    this->diagonalQ_ = isQdiagonal();
+    if ( this->diagonalQ_ ) std::cout<<"Diagonal Hessian\n"<<std::flush;
 }
 
 HighsStatus AsmSolver::getHighsStatus(){ // public function
@@ -348,4 +350,15 @@ void AsmSolver::fromActiveToPadding(const HighsInt& loc){
 AsmBasisStatus AsmSolver::getAsmBasisStatus(const HighsInt& idx){
     if ( idx < this->lp_.num_row_ ) return con_status_[idx];
     else return var_status_[idx - this->lp_.num_row_];
+}
+
+bool AsmSolver::isQdiagonal(){
+    // works with square or triangular HighsHessian, which are identical if diagonal
+    HighsInt dim;
+    for (HighsInt iCol = 0; iCol < this->Q_.dim_; iCol++) {
+        dim = this->Q_.start_[iCol + 1] - this->Q_.start_[iCol];
+        if ( dim == 0 || ( dim == 1 && this->Q_.index_[this->Q_.start_[iCol]] == iCol ) ) continue; // column is empty
+        else return false;
+    }
+    return true;
 }
