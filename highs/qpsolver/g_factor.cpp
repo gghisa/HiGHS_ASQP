@@ -213,15 +213,11 @@ void AsmSolver::addSpike(const HighsInt& start, const HighsInt& idx_last_col){
     for (HighsInt i {start}; i > -1; i--){
         // argument i refers to the column whose last-row element is to be zeroed out
         // the spike is stored in the last row of L, so change is made in place
-        double cos {0.};
-        double sin {1.};
-        double a = this->chol_[ locL(j, j) ]; // bottom right element
-        if ( std::abs(a) >= this->options_.factor_pivot_tolerance){
-            double b = this->chol_[ locL(j, i) ]; // element of the last row to be zeroed out
-            double hyp = std::sqrt( a*a + b*b ); // guaranteed to be > 0
-            cos = a / hyp;
-            sin = b / hyp;
-        }
+        double cos = this->chol_[ locL(j, j) ]; // bottom right element
+        double sin = this->chol_[ locL(j, i) ]; // element of the last row to be zeroed out
+        double hyp = std::sqrt( cos*cos + sin*sin ); // guaranteed to be > 0
+        cos /= hyp;
+        sin /= hyp;
         // update bottom right element first
         this->chol_[ locL(j, j) ] = sin * this->chol_[ locL(j, i) ] + cos * this->chol_[ locL(j, j) ];
         // note element (j,i) is in fact (i,j) of the spike column, but stored in the last row of L
@@ -250,15 +246,11 @@ void AsmSolver::removeSpike(const HighsInt& idx_last_col){
     for (HighsInt i {0}; i < j; i++){
         // argument i referes to the row whose last-column element is to be zeroed out
         // the spike is stored in the last row of L, so change is made in place
-        double cos {0.};
-        double sin {1.};
-        double a = this->chol_[ locL(i, i) ]; // element i in the row whose last element has to be zeroed out
-        if ( std::abs(a) >= this->options_.factor_pivot_tolerance){
-            double b = this->chol_[ locL(j, i) ]; // element to zero out (in memory in the last row)
-            double hyp = std::sqrt( a*a + b*b ); // guaranteed to be > 0
-            cos = a / hyp;
-            sin = b / hyp;
-        }
+        double cos = this->chol_[ locL(i, i) ]; // element i in the row whose last element has to be zeroed out
+        double sin = this->chol_[ locL(j, i) ]; // element to zero out (in memory in the last row)
+        double hyp = std::sqrt( cos*cos + sin*sin ); // guaranteed to be > 0
+        cos /= hyp;
+        sin /= hyp;
         // diagonal element in row whose last element is being zeroed out
         // note element (j,i) is in fact (i,j) of the spike column, but stored in the last row of L
         this->chol_[ locL(i, i) ] = cos * this->chol_[ locL(i, i) ] + sin * this->chol_[ locL(j, i) ];
@@ -308,15 +300,11 @@ void AsmSolver::rightGivensHess(const HighsInt& start){
     // intended for removing a row/column from L when an arbitrary vector is removed
     for (HighsInt i {start}; i < this->nullsp_dim_; i++){
         // argument i refers to element (i,i) in L that is to be zeroed out
-        double cos {0.};
-        double sin {1.};
-        double a = this->chol_[ locL(i, i - 1) ];
-        if ( std::abs(a) >= this->options_.factor_pivot_tolerance ){
-            double b = this->chol_[ locL(i, i) ]; // element to zero out
-            double hyp = std::sqrt( a*a + b*b ); // guaranteed to be > 0
-            cos = a / hyp;
-            sin = b / hyp;
-        }
+        double cos = this->chol_[ locL(i, i - 1) ];
+        double sin = this->chol_[ locL(i, i) ]; // element to zero out
+        double hyp = std::sqrt( cos*cos + sin*sin ); // guaranteed to be > 0
+        cos /= hyp;
+        sin /= hyp;
         // change elements in column i and then i+1, so loop through rows beneath the diagonal
         for (HighsInt j {i}; j < this->nullsp_dim_; j++){
             double temp = cos * this->chol_[ locL(j,i-1) ] + sin * this->chol_[ locL(j, i) ];
@@ -328,7 +316,7 @@ void AsmSolver::rightGivensHess(const HighsInt& start){
     }
 }
 
-HighsInt AsmSolver::reducePadding(const HighsInt& idx, const HighsInt& given_loc){
+void AsmSolver::reducePadding(const HighsInt& idx, HighsInt& loc_remove){
     // this function is run if there was no padding vector that matches the activated one
     // if the newly active index was free in basis, then there is no choice of which padding vector to move and it must be given
     // argument is index of new constraint to activate
@@ -339,9 +327,7 @@ HighsInt AsmSolver::reducePadding(const HighsInt& idx, const HighsInt& given_loc
     stdvec2hvec(this->buffer_, newcol);
     this->B_.ftranCall(newcol, 1.);
     double max_abs {0.};
-    HighsInt loc_remove;
-    if (given_loc > -1) loc_remove = given_loc;
-    else {
+    if (loc_remove == -1){
         // arbitrarily choose which padding element to remove
         loc_remove = this->Q_.dim_ - 1; // default remove last element in V
         // now select which index to drop by finding largest element modulus in newcol (Z^T a_q)
@@ -392,8 +378,21 @@ HighsInt AsmSolver::reducePadding(const HighsInt& idx, const HighsInt& given_loc
         this->Vi_.erase( this->Vi_.begin() + loc_remove ); // remove reference to element in padding
         loc_remove += this->rangsp_dim_; // restore for index update
     }
-    return loc_remove;
+    return;
 }
+// from Claude.ai to avoid having to allocate most memory, this mostly happens in-place
+//void AsmSolver::permute(const HighsInt& loc_remove, const HighsInt& dim){
+//    std::vector<double>::iterator itc = this->chol_.begin();
+//    std::vector<double> lastrow(dim + 1);
+//    std::copy(itc + locL(loc_remove,0), itc + locL(loc_remove,loc_remove), lastrow.begin());
+//    lastrow[dim] = this->chol_[locL(loc_remove, loc_remove)];
+//    for (HighsInt i {loc_remove + 1}; i <= dim; i++){
+//        lastrow[i - 1] = this->chol_[locL(i, loc_remove)];
+//        std::copy(itc + locL(i,0),            itc + locL(i,loc_remove), itc + locL(i-1,0));
+//        std::copy(itc + locL(i,loc_remove+1), itc + locL(i,i) + 1,      itc + locL(i-1,loc_remove));
+//    }
+//    std::copy(lastrow.begin(), lastrow.end(), itc + locL(dim,0));
+//}
 
 void AsmSolver::permute(const HighsInt& loc_remove, const HighsInt& dim){
     // TODO if profiling shows this is a bottleneck, consider merging with addSpike in a dedicated implementation

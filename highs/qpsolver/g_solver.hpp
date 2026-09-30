@@ -88,7 +88,7 @@ class AsmSolver {
         void LLTsolve(std::vector<double>& vec);
         void extend(const HighsInt& loc_deactivated);
         void reduceInBasis(const HighsInt& loc_activated);
-        HighsInt reducePadding(const HighsInt& idx, const HighsInt& given_loc);
+        void reducePadding(const HighsInt& idx, HighsInt& loc_remove);
         void rightGivensHess(const HighsInt& start);
         void addSpike(const HighsInt& start, const HighsInt& idx_last_col);
         void removeSpike(const HighsInt& idx_last_col);
@@ -125,12 +125,6 @@ class AsmSolver {
         AsmBasisStatus getAsmBasisStatus(const HighsInt& idx);
         void fromActiveToPadding(const HighsInt& loc);
         void fromPaddingToActive(const HighsInt& loc);
-        void checkStatuses(){
-            for (HighsInt i {0}; i < this->Q_.dim_; i++){
-                if ( this->basis_idxs_[i] < this->lp_.num_row_ ) assert(static_cast<double>(this->con_status_[this->basis_idxs_[i]]) < 1.1);
-                else assert(static_cast<double>(this->var_status_[this->basis_idxs_[i] - this->lp_.num_row_]) < 1.1);
-            }
-        }
         void buildConstraint(const HighsInt& idx, HVector& hvec);
         void changeStatus(const HighsInt& idx, const AsmBasisStatus& newstatus);
         void findBestPrice(HighsInt& bestidx, double& bestmultiplier, HighsInt& bestloc);
