@@ -124,7 +124,7 @@ void AsmSolver::extend(const HighsInt& iloc_deactivated){
     }
     lambda += 2 * computeQuadObjective(Ztemp.array);
     if (lambda <= this->options_.factor_pivot_tolerance){
-        std::cout<<"Reduced matrix is either semi- or indefinite!"<<std::flush;
+        std::cout<<"Reduced matrix is either semi- or indefinite!\n"<<std::flush;
         throw std::domain_error("Reduced matrix is either semi- or indefinite!");
     }
     this->chol_.push_back( std::sqrt(lambda) );
@@ -410,6 +410,7 @@ void AsmSolver::replace(const HighsInt& iloc_deactivated, const HighsInt& idx_ac
     this->B_.btranCall(oldcol, 1.);
     // update basis matrix
     this->B_.update(&newcol, &oldcol, &iRow, &this->Bhint_);
+    this->num_basis_updates_++;
     // update statuses
     this->changeStatus( idx_activated, newactivestatus ); // update status of new active constraint
     if ( this->basis_idxs_[ iloc_deactivated] != idx_activated ){ // if new index is different than old index

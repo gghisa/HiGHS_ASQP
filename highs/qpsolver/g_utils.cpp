@@ -51,7 +51,7 @@ HighsModelStatus AsmSolver::getHighsModelStatus(){ // public function
 }
 
 void AsmSolver::HBtran(std::vector<double>& vec){
-    assert( this->buffer_.size() == this->Q_.dim_);
+    assert( (HighsInt) this->buffer_.size() == this->Q_.dim_);
     // first apply P
     for (HighsInt i {0}; i < this->Q_.dim_; i++){
         this->buffer_[ this->basis_perm_[i] ] = vec[ i ];
@@ -62,7 +62,7 @@ void AsmSolver::HBtran(std::vector<double>& vec){
 }
 
 void AsmSolver::HFtran(std::vector<double>& vec){
-    assert( this->buffer_.size() == this->Q_.dim_);
+    assert( (HighsInt) this->buffer_.size() == this->Q_.dim_);
     this->B_.ftranCall(vec); // first solve for B^{-1}
     // then apply P^T = P^{-1}
     for (HighsInt i {0}; i < this->Q_.dim_; i++){
@@ -165,6 +165,8 @@ void AsmSolver::setupBasisMat(std::vector<HighsInt>& basis_idxs){ // TODO do not
     constraint_mat.num_col_ = temp_old_num_row; // it receives the constraint matrix stored "column wise"
     // where each column is a constraint. its inverse transpose will have as columns the nullspace basis
     this->B_.setup(constraint_mat, basis_idxs); // shuffles basis indices
+    //this->B_.setup( constraint_mat.num_col_, constraint_mat.num_row_, constraint_mat.start_.data(),
+    //                constraint_mat.index_.data(), constraint_mat.value_.data(), basis_idxs_.data() );
     this->B_.build();
     return;
 }
@@ -262,6 +264,7 @@ bool AsmSolver::isOptimal(){ // break loop if optimality check is positive durin
 }
 
 void AsmSolver::reinvertBasis(){
+    this->HFactor_basis_.assign(this->Q_.dim_ + this->lp_.num_row_, -1);
     this->B_.build(); // TODO are indexes changed?
     this->recomputeRedHessian();
     this->num_basis_updates_ = 0;

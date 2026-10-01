@@ -16,7 +16,7 @@ HighsStatus AsmSolver::run(){
             this->relaxAndSearch(); // increase size of nullspace
             if ( this->isOptimal() ) break;
             this->minorloop(); // find optimum in the nullspace
-            // if ( this->num_basis_updates_ > this->reinversion_freq_) reinvertBasis();
+            //if ( this->num_basis_updates_ > this->reinversion_freq_) reinvertBasis();
         }
         // outside loop but run only if feasibility is successful:
         std::cout<<this->objective_<<" iterations: "<<this->info_.qp_iteration_count<<" time: "<<this->timer_.read()<<"\n";
@@ -32,7 +32,7 @@ void AsmSolver::findBestPrice(HighsInt& bestidx, double& bestmultiplier, HighsIn
         // sign Dantzig prices on the go
         if (idx < this->lp_.num_row_) sign = static_cast<double>( this->con_status_[idx] );
         else sign = static_cast<double>( this->var_status_[idx - this->lp_.num_row_] );
-        assert(sign < 1.1);
+        assert(sign < 1.1); // either upper, equality, or lower
         price = sign * this->pricing_[i];
         if ( price < bestprice ){
             bestpricesign = sign;
@@ -117,6 +117,7 @@ void AsmSolver::minorloop(){
     while ( norm(this->red_grad_) > this->options_.primal_feasibility_tolerance ){ // if nullsp is empty then norm returns 0
         if ( this->stepAlreadyTaken_ ) recomputeRedHessian(); // if the last step was unconstrained but somehow we are not at reduced optimum yet
         this->solveEP();
+        //if ( norm(this->step_) < this->options_.primal_feasibility_tolerance ) break;
         HighsInt newactiveidx {-1};
         AsmBasisStatus newactivestatus;
         this->ratiotest(newactiveidx, newactivestatus);

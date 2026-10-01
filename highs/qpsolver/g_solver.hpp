@@ -66,7 +66,7 @@ class AsmSolver {
         double alpha_relaxed_ {1.}; // step size for relaxed (first pass) ratio test
         double alpha_ {1.}; // step size for second pass ratio test
         HighsInt num_basis_updates_ {0};
-        HighsInt reinversion_freq_ {100};
+        HighsInt reinversion_freq_ {10};
         bool diagonalQ_ {false};
         bool stepAlreadyTaken_;
         // permutation has to be used when FTRAN and BTRAN are called
