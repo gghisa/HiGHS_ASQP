@@ -425,6 +425,7 @@ set(highs_sources
     qpsolver/a_asm.cpp
     qpsolver/a_quass.cpp
     qpsolver/g_factor.cpp
+    qpsolver/g_ratiotest.cpp
     qpsolver/g_solver.cpp
     qpsolver/g_utils.cpp
     qpsolver/basis.cpp
