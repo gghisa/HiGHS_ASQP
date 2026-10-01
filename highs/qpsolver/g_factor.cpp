@@ -7,11 +7,8 @@
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 #include "qpsolver/g_solver.hpp"
 
-HighsInt AsmSolver::locL(const HighsInt& i, const HighsInt& j) {
-    if ( j > i ){
-        std::cout<<"Column index should not be larger than row index!"<<std::flush;
-        throw std::domain_error("Column index should not be larger than row index!");
-    }
+HighsInt AsmSolver::locL(const HighsInt& i, const HighsInt& j){ // TODO inline?
+    assert( j <= i );
     return i*(i+1)/2 + j; // assumes indices are given for lower triangular matrix
 }
 
@@ -42,12 +39,13 @@ void AsmSolver::recomputeRedHessian(){
         // extract column of Z
         this->B_.btranCall(ZT[i], 1.); // solves returning a column of Z, which we store as a row of Z^T
     }
+    double sum;
     for (HighsInt i {0}; i < this->nullsp_dim_; i++){// loop over the rows of Z^T
         this->Q_.product(ZT[i].array, this->buffer_); // compute row of Z^T Q
         for (HighsInt j {0}; j <= i; j++){ // loop through columns of Z, up to the current row of Z^T, to only compute lower triangle of red_hessian_
             // TODO could this be done with HFtran to compute a full column of the reduced Hessian, without the need to store Z^T?
             // in which case, do not use this->buffer_ anymore
-            double sum {0.};
+            sum = 0.;
             for (HighsInt k {0}; k < this->Q_.dim_; k++){ // inner produce of row of Z^T Q with column of Z
                 sum += this->buffer_[k] * ZT[j].array[k]; // factorization row by row according to Cholesky—Banachiewicz
             }
@@ -74,28 +72,6 @@ void AsmSolver::recomputeRedHessian(){
     }
     return;
 }
-
-// TODO from claude.ai
-// TO avoid checks from locL function
-// void AsmSolver::Lsolve(std::vector<double>& vec){
-//     double* v = vec.data() + this->rangsp_dim_;
-//     for (HighsInt i = 0; i < this->nullsp_dim_; i++){
-//         const double* row = &this->chol_[i*(i+1)/2];  // row i of L, contiguous
-//         double s = v[i];
-//         for (HighsInt j = 0; j < i; j++) s -= row[j] * v[j];
-//         v[i] = s / row[i];
-//     }
-// }
-// 
-// void AsmSolver::LTsolve(std::vector<double>& vec){
-//     double* v = vec.data() + this->rangsp_dim_;
-//     for (HighsInt i = this->nullsp_dim_ - 1; i >= 0; i--){
-//         const double* row = &this->chol_[i*(i+1)/2];
-//         v[i] /= row[i];
-//         const double vi = v[i];
-//         for (HighsInt j = 0; j < i; j++) v[j] -= row[j] * vi;
-//     }
-// }
 
 void AsmSolver::Lsolve(std::vector<double>& vec){
     // solve Ly = b with forward substitution
@@ -210,20 +186,20 @@ void AsmSolver::addSpike(const HighsInt& start, const HighsInt& idx_last_col){
     // intended to add the spike on the last, right-most, column
     // subdiagonal sine is negative
     HighsInt j = idx_last_col; // at this point the size of the nullspace hasnt been updated yet, but L is enhanced already
+    double sin, cos, hyp;
+    double temp_ki, temp_kj;
     for (HighsInt i {start}; i > -1; i--){
         // argument i refers to the column whose last-row element is to be zeroed out
         // the spike is stored in the last row of L, so change is made in place
-        double cos = this->chol_[ locL(j, j) ]; // bottom right element
-        double sin = this->chol_[ locL(j, i) ]; // element of the last row to be zeroed out
-        double hyp = std::sqrt( cos*cos + sin*sin ); // guaranteed to be > 0
+        cos = this->chol_[ locL(j, j) ]; // bottom right element
+        sin = this->chol_[ locL(j, i) ]; // element of the last row to be zeroed out
+        hyp = std::sqrt( cos*cos + sin*sin ); // guaranteed to be > 0
         cos /= hyp;
         sin /= hyp;
         // update bottom right element first
         this->chol_[ locL(j, j) ] = sin * this->chol_[ locL(j, i) ] + cos * this->chol_[ locL(j, j) ];
         // note element (j,i) is in fact (i,j) of the spike column, but stored in the last row of L
         this->chol_[ locL(j, i) ] = sin * this->chol_[ locL(i, i) ]; // create spike element where element is implicitly zeroed out
-        double temp_ki;
-        double temp_kj;
         // change each row element in the two columns affected (i and last one) on and below row i up to second to last row
         for (HighsInt k {j - 1}; k > i; k--){
             temp_ki = this->chol_[ locL(k, i) ];
@@ -243,19 +219,19 @@ void AsmSolver::removeSpike(const HighsInt& idx_last_col){
     // intended to remove the spike on the last, right-most, column
     // subdiagonal sine is positive
     HighsInt j = idx_last_col; // at this point the size of the nullspace hasnt been updated yet, but L is enhanced already
+    double cos, sin, hyp;
+    double temp_ki, temp_kj;
     for (HighsInt i {0}; i < j; i++){
         // argument i referes to the row whose last-column element is to be zeroed out
         // the spike is stored in the last row of L, so change is made in place
-        double cos = this->chol_[ locL(i, i) ]; // element i in the row whose last element has to be zeroed out
-        double sin = this->chol_[ locL(j, i) ]; // element to zero out (in memory in the last row)
-        double hyp = std::sqrt( cos*cos + sin*sin ); // guaranteed to be > 0
+        cos = this->chol_[ locL(i, i) ]; // element i in the row whose last element has to be zeroed out
+        sin = this->chol_[ locL(j, i) ]; // element to zero out (in memory in the last row)
+        hyp = std::sqrt( cos*cos + sin*sin ); // guaranteed to be > 0
         cos /= hyp;
         sin /= hyp;
         // diagonal element in row whose last element is being zeroed out
         // note element (j,i) is in fact (i,j) of the spike column, but stored in the last row of L
         this->chol_[ locL(i, i) ] = cos * this->chol_[ locL(i, i) ] + sin * this->chol_[ locL(j, i) ];
-        double temp_ki;
-        double temp_kj;
         // change each row element in the two columns affected (i and last one) on and below row i up to second to last row
         for (HighsInt k {i + 1}; k < j; k++){
             temp_ki = this->chol_[ locL(k, i) ];
@@ -298,16 +274,18 @@ void AsmSolver::reduceInBasis(const HighsInt& loc_activated){ // only called whe
 void AsmSolver::rightGivensHess(const HighsInt& start){
     // Givens rotations on L from the right that affect columns
     // intended for removing a row/column from L when an arbitrary vector is removed
+    double cos, sin, hyp;
+    double temp;
     for (HighsInt i {start}; i < this->nullsp_dim_; i++){
         // argument i refers to element (i,i) in L that is to be zeroed out
-        double cos = this->chol_[ locL(i, i - 1) ];
-        double sin = this->chol_[ locL(i, i) ]; // element to zero out
-        double hyp = std::sqrt( cos*cos + sin*sin ); // guaranteed to be > 0
+        cos = this->chol_[ locL(i, i - 1) ];
+        sin = this->chol_[ locL(i, i) ]; // element to zero out
+        hyp = std::sqrt( cos*cos + sin*sin ); // guaranteed to be > 0
         cos /= hyp;
         sin /= hyp;
         // change elements in column i and then i+1, so loop through rows beneath the diagonal
         for (HighsInt j {i}; j < this->nullsp_dim_; j++){
-            double temp = cos * this->chol_[ locL(j,i-1) ] + sin * this->chol_[ locL(j, i) ];
+            temp = cos * this->chol_[ locL(j,i-1) ] + sin * this->chol_[ locL(j, i) ];
             // TODO we are accessing a row-wise matrix by column, could be better
             //  when i == j the element (i, i+1) is zeroed out and then deleted so no need to change it
             if (j != i) this->chol_[ locL(j,i) ] = - sin * this->chol_[ locL(j,i-1) ] + cos * this->chol_[ locL(j, i) ];
@@ -402,8 +380,9 @@ void AsmSolver::permute(const HighsInt& loc_remove, const HighsInt& dim){
     std::vector<double>::iterator itn = new_chol.begin();
     std::copy(itc, itc + (loc_remove * (loc_remove+1))/2, itn);
     // copy lower left rectangle and lower right triangle, line by line
+    HighsInt uppertr_size;
     for (HighsInt i {loc_remove + 1}; i < this->nullsp_dim_; i++){
-        HighsInt uppertr_size = (i * (i-1))/2;
+        uppertr_size = (i * (i-1))/2;
         std::copy(itc + locL(i,0), itc + locL(i,loc_remove), itn + uppertr_size );
         std::copy(itc + locL(i, loc_remove+1), itc + locL(i, i)+1, itn + uppertr_size + loc_remove);
     }

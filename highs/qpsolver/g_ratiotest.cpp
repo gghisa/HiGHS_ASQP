@@ -57,10 +57,7 @@ void AsmSolver::ratiotest_pass2(HighsInt& newactive_idx, AsmBasisStatus& newacti
         this->ratio2(max_pivot, this->newconpivots_[i], this->lp_.row_lower_[i], this->lp_.row_upper_[i],
                      this->solution_.row_value[i], this->alpha_relaxed_, this->alpha_,
                      i, newactive_idx, newactive_status);
-    if ( max_pivot <= this->options_.factor_pivot_tolerance ){
-        std::cout<<"Second pass not activating any constraint!"<<std::flush;
-        throw std::logic_error("Second pass not activating any constraint!");
-    }
+    assert(max_pivot > this->options_.factor_pivot_tolerance);
     this->alpha_ = std::max( this->alpha_, 0. );
     return;
 }

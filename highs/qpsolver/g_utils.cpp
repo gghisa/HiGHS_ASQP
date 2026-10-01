@@ -51,10 +51,7 @@ HighsModelStatus AsmSolver::getHighsModelStatus(){ // public function
 }
 
 void AsmSolver::HBtran(std::vector<double>& vec){
-    if ((HighsInt)this->buffer_.size() != this->Q_.dim_){
-        std::cout<<"Wrong buffer_ size!"<<std::flush;
-        throw std::length_error("Wrong buffer_ size!");
-    }
+    assert( this->buffer_.size() == this->Q_.dim_);
     // first apply P
     for (HighsInt i {0}; i < this->Q_.dim_; i++){
         this->buffer_[ this->basis_perm_[i] ] = vec[ i ];
@@ -65,10 +62,7 @@ void AsmSolver::HBtran(std::vector<double>& vec){
 }
 
 void AsmSolver::HFtran(std::vector<double>& vec){
-    if ((HighsInt)this->buffer_.size() != this->Q_.dim_){
-        std::cout<<"Wrong buffer_ size!"<<std::flush;
-        throw std::length_error("Wrong buffer_ size!");
-    }
+    assert( this->buffer_.size() == this->Q_.dim_);
     this->B_.ftranCall(vec); // first solve for B^{-1}
     // then apply P^T = P^{-1}
     for (HighsInt i {0}; i < this->Q_.dim_; i++){
@@ -137,10 +131,7 @@ void AsmSolver::setupQpBasis(){
     // set nullspace and range dimensions
     this->nullsp_dim_ = (HighsInt) free_idxs.size();
     this->rangsp_dim_ = (HighsInt) this->basis_idxs_.size();
-    if (this->rangsp_dim_ + this->nullsp_dim_ != this->Q_.dim_){
-        std::cout<<"Active and Free constraints should add up to number of columns!"<<std::flush;
-        throw std::logic_error("Active and Free constraints should add up to number of columns!");
-    }
+    assert(this->rangsp_dim_ + this->nullsp_dim_ == this->Q_.dim_);
     // merge indices
     this->basis_idxs_.insert(this->basis_idxs_.end(),
                              free_idxs.begin(), free_idxs.end());
