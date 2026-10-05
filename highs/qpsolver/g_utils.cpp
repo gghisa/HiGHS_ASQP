@@ -72,13 +72,14 @@ void AsmSolver::HFtran(std::vector<double>& vec){
     return;
 }
 
-void AsmSolver::feasibility(){
+HighsModelStatus AsmSolver::feasibility(){
     // TODO hotstart if basis is provided
     if (this->options_.qp_allow_hot_start &&
         this->lp_basis_.valid &&
         this->solution_.value_valid){
         // TODO add check to make sure basis checks out with solution
         this->status_ = HighsStatus::kError; // TODO, for now do not run the active set solver
+        this->model_status_ = HighsModelStatus::kUnknown;
     } else {
         this->setupFeasibilityLp();
         Highs highs_feasibility;
@@ -92,6 +93,7 @@ void AsmSolver::feasibility(){
         this->model_status_ = highs_feasibility.getModelStatus();
         // TODO deal with timer? report it up
         if ( this->model_status_ == HighsModelStatus::kOptimal ){ // note Optimal in Phase1 is Feasible for ASM
+            this->model_status_ = HighsModelStatus::kNotset;
             this->info_.simplex_iteration_count = highs_feasibility.getSimplexIterationCount();
             this->lp_basis_ = highs_feasibility.getBasis();
             this->solution_ = highs_feasibility.getSolution();
@@ -100,6 +102,7 @@ void AsmSolver::feasibility(){
             this->buildRelaxedLp();
         }
     }
+    return this->model_status_;
 }
 
 void AsmSolver::setupFeasibilityLp(){
@@ -151,7 +154,10 @@ void AsmSolver::setupQpBasis(){
         }
     }
     // build Reduced Hessian
-    this->recomputeRedHessian();
+    if ( this->nullsp_dim_ > 0 ){
+        this->recomputeRedHessian();
+        this->atFSEP_ = false; // so that first minor loop is initiated
+    }
     this->computeReducedVecs(); // compute initial reduced gradient and pricing
     return;
 }
@@ -159,14 +165,12 @@ void AsmSolver::setupQpBasis(){
 void AsmSolver::setupBasisMat(std::vector<HighsInt>& basis_idxs){ // TODO do not create constraint mat copy
     HighsSparseMatrix constraint_mat = this->lp_.a_matrix_; // create a copy of the constraint matrix
     constraint_mat.ensureRowwise(); // flip the way in which it is stored
-    constraint_mat.format_ = MatrixFormat::kColwise; // but "trick it" into thinking it is still stored columnwise
-    HighsInt temp_old_num_row = constraint_mat.num_row_; // flip the number of rows and columns
-    constraint_mat.num_row_ = constraint_mat.num_col_; // so that when HFactor uses the matrix
-    constraint_mat.num_col_ = temp_old_num_row; // it receives the constraint matrix stored "column wise"
+    // but "trick it" into thinking it is still stored columnwise
     // where each column is a constraint. its inverse transpose will have as columns the nullspace basis
-    this->B_.setup(constraint_mat, basis_idxs); // shuffles basis indices
-    //this->B_.setup( constraint_mat.num_col_, constraint_mat.num_row_, constraint_mat.start_.data(),
-    //                constraint_mat.index_.data(), constraint_mat.value_.data(), basis_idxs_.data() );
+    // use same setup as Micheal, flip the number of rows and columns so that when HFactor uses the matrix
+    // it receives the constraint matrix stored "column wise"
+    this->B_.setup( constraint_mat.num_row_, constraint_mat.num_col_, constraint_mat.start_.data(),
+                    constraint_mat.index_.data(), constraint_mat.value_.data(), basis_idxs.data() );
     this->B_.build();
     return;
 }

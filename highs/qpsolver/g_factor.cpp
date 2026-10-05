@@ -102,9 +102,10 @@ void AsmSolver::LLTsolve(std::vector<double>& vec){
     return;
 }
 
-void AsmSolver::extend(const HighsInt& iloc_deactivated){
-    const HighsInt idx_deactivated = this->basis_idxs_[ iloc_deactivated ];
-    HighsInt loc_deactivated = this->basis_perm_[ iloc_deactivated ];
+void AsmSolver::extend(){
+    assert( this->relaxed_iloc_ > -1 );
+    const HighsInt idx_deactivated = this->basis_idxs_[ this->relaxed_iloc_ ];
+    HighsInt loc_deactivated = this->basis_perm_[ this->relaxed_iloc_ ];
     // get new nullspace column, creating unit HVector
     this->Vi_.push_back(idx_deactivated - this->lp_.num_row_); // if deactivated element is a constraint this will be changed later
     HVector Ztemp;
@@ -176,8 +177,9 @@ void AsmSolver::extend(const HighsInt& iloc_deactivated){
     }
     // update status
     this->changeStatus(idx_deactivated, AsmBasisStatus::kFreeInBasis);
-    this->fromActiveToPadding(iloc_deactivated);
+    this->fromActiveToPadding(this->relaxed_iloc_);
     this->addNullSpaceDim();
+    this->relaxed_iloc_ = -1; // book-keeping
     return;
 }
 

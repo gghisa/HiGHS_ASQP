@@ -68,7 +68,11 @@ class AsmSolver {
         HighsInt num_basis_updates_ {0};
         HighsInt reinversion_freq_ {10};
         bool diagonalQ_ {false};
-        bool stepAlreadyTaken_;
+        bool stepAlreadyTaken_ {false};
+        bool atFSEP_ {true};
+        HighsInt relaxed_iloc_ {-1};
+        HighsInt newactive_idx_ {-1};
+        AsmBasisStatus newactive_status_;
         // permutation has to be used when FTRAN and BTRAN are called
         std::vector<HighsInt> basis_idxs_; // ordered active and free indices in basiss
         std::vector<HighsInt> basis_perm_; // ordered active and free indices permutation in basis
@@ -87,7 +91,7 @@ class AsmSolver {
         void Lsolve(std::vector<double>& vec);
         void LTsolve(std::vector<double>& vec);
         void LLTsolve(std::vector<double>& vec);
-        void extend(const HighsInt& loc_deactivated);
+        void extend();
         void reduceInBasis(const HighsInt& loc_activated);
         void reducePadding(const HighsInt& idx, HighsInt& loc_remove);
         void rightGivensHess(const HighsInt& start);
@@ -95,22 +99,20 @@ class AsmSolver {
         void removeSpike(const HighsInt& idx_last_col);
         void permute(const HighsInt& loc_remove, const HighsInt& dim);
         // Feasibility phase functions
-        void feasibility();
+        HighsModelStatus feasibility();
         void setupFeasibilityLp();
         void setupQpBasis();
         void setupBasisMat(std::vector<HighsInt>& basis_idxs);
         void buildRelaxedLp();
         // Main loop functions
-        void minorloop();
-        void relaxAndSearch();
-        void solveEP();
+        void computeReducedDirection();
         void ratiotest_pass1();
-        void ratiotest_pass2(HighsInt& newactive_idx, AsmBasisStatus& newactive_status);
-        void ratiotest(HighsInt& newactive_idx, AsmBasisStatus& newactive_status);
-        void activate(const HighsInt& idx, const AsmBasisStatus& status);
+        void ratiotest_pass2();
+        void ratiotest();
+        void activate();
         void replace(const HighsInt& iloc_deactivated, const HighsInt& idx_activated, const AsmBasisStatus& newactivestatus);
         // Object computations
-        void computeSearchDir(const HighsInt& bestloc, const double& bestmultiplier);
+        void computeRelaxedDirection();
         void computeLocGrad();
         void computeReducedVecs();
         void compute_varvals(const double& alpha, std::vector<double>& loc);
@@ -126,7 +128,7 @@ class AsmSolver {
         void fromPaddingToActive(const HighsInt& loc);
         void buildConstraint(const HighsInt& idx, HVector& hvec);
         void changeStatus(const HighsInt& idx, const AsmBasisStatus& newstatus);
-        void findBestPrice(HighsInt& bestidx, double& bestmultiplier, HighsInt& bestloc);
+        void findBestPrice(HighsInt& bestidx, double& bestmultiplier);
         static void ratio1(const double tol, const double denom, const double lower, const double upper,
                            const double oldval, const double newval, double& alpha); // static from Claude.ai
         static void ratio2(double& max_pivot, const double denom, const double lower, const double upper,
