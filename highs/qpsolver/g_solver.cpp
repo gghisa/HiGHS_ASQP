@@ -14,15 +14,34 @@ HighsStatus AsmSolver::run(){
         if ( this->atFSEP_ ){
             this->computeRelaxedDirection();
             if ( this->isOptimal() ) break; // TODO change to return
-            this->extend();
         } else this->computeReducedDirection();
-        if ( this->norm(step_) < this->options_.primal_feasibility_tolerance ){
-            this->atFSEP_ = true;
-            continue;
-        }
+        // if step is too small, we consider to be at FSEP
+        //if ( this->norm(step_) < this->options_.primal_feasibility_tolerance ){
+        //    this->atFSEP_ = true;
+        //    continue;
+        //}
+        // perform ratio test
         this->ratiotest();
-        if ( this->newactive_idx_ > -1 ) this->activate(); // TODO call replace when vertex to vertex
-        else this->atFSEP_ = true;
+        // potentially activate a new constraint
+        if ( this->atFSEP_ ) {
+            if ( this->newactive_idx_ > - 1){ // if a constraint is activated
+                if ( this->nullsp_dim_ == 0) this->replace();
+                else { // update factorisations of both B and M
+                    this->extend();
+                    this->activate();
+                    this->atFSEP_ = false;
+                }
+            } else {
+                this->extend();
+                this->atFSEP_ = false;
+            }
+        } else {
+            if ( this->newactive_idx_ > -1) this->activate();
+            else {
+                // TODO stepalreadytake_? logic is different now, what happens?
+                this->atFSEP_ = true;
+            }
+        }
         this->updateObjective();
         this->computeReducedVecs(); // red grad needs updating with new position
         this->info_.qp_iteration_count++;

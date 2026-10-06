@@ -110,7 +110,7 @@ class AsmSolver {
         void ratiotest_pass2();
         void ratiotest();
         void activate();
-        void replace(const HighsInt& iloc_deactivated, const HighsInt& idx_activated, const AsmBasisStatus& newactivestatus);
+        void replace();
         // Object computations
         void computeRelaxedDirection();
         void computeLocGrad();

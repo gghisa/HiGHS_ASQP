@@ -399,11 +399,11 @@ void AsmSolver::permute(const HighsInt& loc_remove, const HighsInt& dim){
     this->chol_ = std::move(new_chol);
 }
 
-void AsmSolver::replace(const HighsInt& iloc_deactivated, const HighsInt& idx_activated, const AsmBasisStatus& newactivestatus){
+void AsmSolver::replace(){
     HVector newcol;
     HVector oldcol;
-    HighsInt iRow = this->basis_perm_[ iloc_deactivated ];
-    buildConstraint(idx_activated, newcol);
+    HighsInt iRow = this->basis_perm_[ this->relaxed_iloc_ ];
+    buildConstraint(this->newactive_idx_, newcol);
     this->B_.ftranCall(newcol, 1.);
     // 
     this->buffer_.assign(this->Q_.dim_, 0.);
@@ -414,9 +414,9 @@ void AsmSolver::replace(const HighsInt& iloc_deactivated, const HighsInt& idx_ac
     this->B_.update(&newcol, &oldcol, &iRow, &this->Bhint_);
     this->num_basis_updates_++;
     // update statuses
-    this->changeStatus( idx_activated, newactivestatus ); // update status of new active constraint
-    if ( this->basis_idxs_[ iloc_deactivated] != idx_activated ){ // if new index is different than old index
-        this->changeStatus( this->basis_idxs_[ iloc_deactivated ], AsmBasisStatus::kInactive );
-        this->basis_idxs_[ iloc_deactivated ] = idx_activated; // update basis indices
+    this->changeStatus( this->newactive_idx_, this->newactive_status_ ); // update status of new active constraint
+    if ( this->basis_idxs_[ this->relaxed_iloc_] != this->newactive_idx_ ){ // if new index is different than old index
+        this->changeStatus( this->basis_idxs_[ this->relaxed_iloc_ ], AsmBasisStatus::kInactive );
+        this->basis_idxs_[ this->relaxed_iloc_ ] = this->newactive_idx_; // update basis indices
     }
 }
