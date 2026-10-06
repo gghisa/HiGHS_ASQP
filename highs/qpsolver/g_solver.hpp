@@ -111,6 +111,7 @@ class AsmSolver {
         void ratiotest();
         void activate();
         void replace();
+        void doUpdates();
         // Object computations
         void computeRelaxedDirection();
         void computeLocGrad();

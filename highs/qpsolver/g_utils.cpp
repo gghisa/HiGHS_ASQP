@@ -236,11 +236,6 @@ void AsmSolver::updateObjective(){
 }
 
 bool AsmSolver::keepLooping(){
-    if ( this->nullsp_dim_ == this->Q_.dim_ ){ // cannot deactivate anything anymore, nullspace is maximal already
-        this->model_status_ = HighsModelStatus::kOptimal;
-        this->status_ = HighsStatus::kOk;
-        return false;
-    }
     if (this->info_.qp_iteration_count >= this->options_.qp_iteration_limit){ // iteration limit
         this->model_status_ = HighsModelStatus::kIterationLimit;
         this->status_ = HighsStatus::kWarning; // TODO ok?

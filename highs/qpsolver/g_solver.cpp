@@ -22,34 +22,37 @@ HighsStatus AsmSolver::run(){
         //}
         // perform ratio test
         this->ratiotest();
-        // potentially activate a new constraint
-        if ( this->atFSEP_ ) {
-            if ( this->newactive_idx_ > - 1){ // if a constraint is activated
-                if ( this->nullsp_dim_ == 0) this->replace();
-                else { // update factorisations of both B and M
-                    this->extend();
-                    this->activate();
-                    this->atFSEP_ = false;
-                }
-            } else {
-                this->extend();
-                this->atFSEP_ = false;
-            }
-        } else {
-            if ( this->newactive_idx_ > -1) this->activate();
-            else {
-                // TODO stepalreadytake_? logic is different now, what happens?
-                this->atFSEP_ = true;
-            }
-        }
-        this->updateObjective();
-        this->computeReducedVecs(); // red grad needs updating with new position
-        this->info_.qp_iteration_count++;
+        // (potentially) update factorisations
+        this->doUpdates();
         std::cout<<this->objective_<<" - "<<this->nullsp_dim_<<"\n";
     }
     // outside loop but run only if feasibility is successful:
     std::cout<<this->objective_<<" iterations: "<<this->info_.qp_iteration_count<<" time: "<<this->timer_.read()<<"\n";
     return this->getHighsStatus();
+}
+
+void AsmSolver::doUpdates(){
+    if ( this->atFSEP_ ) {
+        this->stepAlreadyTaken_ = false;
+        if ( this->newactive_idx_ > - 1){ // if a constraint is activated
+            if ( this->nullsp_dim_ == 0) this->replace();
+            else { // update factorisations of both B and M
+                this->extend();
+                this->activate();
+                this->atFSEP_ = false;
+            }
+        } else {
+            this->extend();
+            this->atFSEP_ = false;
+        }
+    } else {
+        this->stepAlreadyTaken_ = true;
+        if ( this->newactive_idx_ > -1) this->activate();
+        else this->atFSEP_ = true;
+    }
+    this->updateObjective();
+    this->computeReducedVecs(); // red grad needs updating with new position
+    this->info_.qp_iteration_count++;
 }
 
 void AsmSolver::findBestPrice(HighsInt& bestidx, double& bestmultiplier){
@@ -104,10 +107,12 @@ void AsmSolver::computeRelaxedDirection(){
             this->newvarvals_[i] = this->solution_.col_value[i] + this->step_[i];
         }
     }
+    return;
 }
 
 
 void AsmSolver::computeReducedDirection(){ // solve Equality Problem
+    if ( this->stepAlreadyTaken_ ) this->recomputeRedHessian(); // TODO keep?
     for (HighsInt i {0}; i < this->nullsp_dim_; i++){
         this->step_[this->rangsp_dim_ + i] = - this->red_grad_[i]; // TODO, is there a better place to flip sign?
     }
@@ -119,6 +124,7 @@ void AsmSolver::computeReducedDirection(){ // solve Equality Problem
     for (HighsInt i {0}; i < this->Q_.dim_; i++){
         this->newvarvals_[i] = this->solution_.col_value[i] + this->step_[i];
     }
+    return;
 }
 
 void AsmSolver::activate(){
