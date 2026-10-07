@@ -63,8 +63,6 @@ void AsmSolver::ratiotest_pass2(){
 }
 
 void AsmSolver::ratiotest(){
-    this->newactive_idx_ = -1;
-    this->newactive_status_ = AsmBasisStatus::kInactive;
     // assumes this->newvarvals are already computed (due to differences between major and minor loop)
     this->lp_.a_matrix_.product(this->newconvals_, this->newvarvals_); // a_i^T x_{k+1}
     this->lp_.a_matrix_.product(this->newconpivots_, this->step_); // a_i^T \s

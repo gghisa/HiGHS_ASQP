@@ -72,7 +72,7 @@ class AsmSolver {
         bool atFSEP_ {true};
         HighsInt relaxed_iloc_ {-1};
         HighsInt newactive_idx_ {-1};
-        AsmBasisStatus newactive_status_;
+        AsmBasisStatus newactive_status_ { AsmBasisStatus::kInactive };
         // permutation has to be used when FTRAN and BTRAN are called
         std::vector<HighsInt> basis_idxs_; // ordered active and free indices in basiss
         std::vector<HighsInt> basis_perm_; // ordered active and free indices permutation in basis

@@ -128,9 +128,6 @@ void AsmSolver::computeReducedDirection(){ // solve Equality Problem
 }
 
 void AsmSolver::activate(){
-    AsmBasisStatus oldstatus = getAsmBasisStatus(this->newactive_idx_);
-    // old status cannot be active since activation requires movement in nullspace
-    assert (oldstatus == AsmBasisStatus::kFreeInBasis || oldstatus == AsmBasisStatus::kInactive);
     // whether the constraint is padding or inactive, check whether the existing padding already has the correct vector
     if ( this->newactive_idx_ >= this->lp_.num_row_){ // if we are activating a variable's bound
         HighsInt loc_remove {-1};
@@ -153,24 +150,29 @@ void AsmSolver::activate(){
             }
         }
     }
+    // old status cannot be active since activation requires movement in nullspace
+    AsmBasisStatus oldstatus = getAsmBasisStatus(this->newactive_idx_);
+    assert (oldstatus == AsmBasisStatus::kFreeInBasis || oldstatus == AsmBasisStatus::kInactive);
+    // TODO update in case starting nullspace is not empty and padding vectors are not unit only
     // if we are activating a constraint or the variable bound we are activating is not already in V
     HighsInt loc_remove {-1};
+    this->reducePadding(this->newactive_idx_, loc_remove); // returns location of padding vector to be removed from basis_idxs_
     if ( oldstatus == AsmBasisStatus::kInactive ){
-        this->reducePadding(this->newactive_idx_, loc_remove); // returns location of padding vector to be removed from basis_idxs_
         this->changeStatus( this->basis_idxs_[loc_remove], AsmBasisStatus::kInactive );
         this->basis_idxs_[loc_remove] = this->newactive_idx_;
-    } else if ( oldstatus == AsmBasisStatus::kFreeInBasis ){
-        for ( HighsInt i {this->rangsp_dim_}; i < this->Q_.dim_; i++){
-            if ( this->basis_idxs_[i] == this->newactive_idx_ ){
-                loc_remove = i;
-                this->reducePadding(this->newactive_idx_, loc_remove);
+    } else { // if ( oldstatus == AsmBasisStatus::kFreeInBasis ){
+        HighsInt old_loc;
+        for ( old_loc = this->rangsp_dim_; old_loc < this->Q_.dim_; old_loc++){
+            if ( this->basis_idxs_[old_loc] == this->newactive_idx_ ){// find position of index already in basis
+                std::swap( this->basis_idxs_[loc_remove], this->basis_idxs_[old_loc] ); // swap it with location to activate
                 break;
             }
         }
     }
-    assert(loc_remove >= this->rangsp_dim_);
     this->fromPaddingToActive(loc_remove);
     this->changeStatus(this->newactive_idx_, this->newactive_status_);
     removeNullSpaceDim();
+    this->newactive_idx_ = -1;
+    this->newactive_status_ = AsmBasisStatus::kInactive;
     return;
 }

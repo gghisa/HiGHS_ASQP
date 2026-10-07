@@ -304,16 +304,14 @@ void AsmSolver::reducePadding(const HighsInt& idx, HighsInt& loc_remove){
     stdvec2hvec(this->buffer_, newcol);
     this->B_.ftranCall(newcol, 1.);
     double max_abs {0.};
-    if (loc_remove == -1){
-        // arbitrarily choose which padding element to remove
-        loc_remove = this->Q_.dim_ - 1; // default remove last element in V
-        // now select which index to drop by finding largest element modulus in newcol (Z^T a_q)
-        for (HighsInt i {this->rangsp_dim_}; i < this->Q_.dim_; i++){ // Ztemp is a sparse vector
-            if ( std::abs( newcol.array[ this->basis_perm_[i] ] ) > std::abs( max_abs ) ) {
-                // only look at the trailing elements of the vector and 
-                max_abs = newcol.array[ this->basis_perm_[i] ];
-                loc_remove = i;
-            }
+    // arbitrarily choose which padding element to remove
+    loc_remove = this->Q_.dim_ - 1; // default remove last element in V
+    // now select which index to drop by finding largest element modulus in newcol (Z^T a_q)
+    for (HighsInt i {this->rangsp_dim_}; i < this->Q_.dim_; i++){ // Ztemp is a sparse vector
+        if ( std::abs( newcol.array[ this->basis_perm_[i] ] ) > std::abs( max_abs ) ) {
+            // only look at the trailing elements of the vector and 
+            max_abs = newcol.array[ this->basis_perm_[i] ];
+            loc_remove = i;
         }
     }
     // build oldcol
@@ -330,6 +328,7 @@ void AsmSolver::reducePadding(const HighsInt& idx, HighsInt& loc_remove){
         this->chol_.resize(0);
         this->Vi_.erase( this->Vi_.begin() ); // remove reference to element in padding
     } else {
+        assert(std::abs(max_abs) > this->options_.factor_pivot_tolerance );
         // update L factorisation according to (28) in Fletcher
         // first store -d_k/d_p coefficients at the end of buffer_
         for (HighsInt i { this->rangsp_dim_ }; i < loc_remove; i++){ // elements i < this->rangsp_dim_ - 1 in buffer_ are rubbish
@@ -416,4 +415,6 @@ void AsmSolver::replace(){
         this->changeStatus( this->basis_idxs_[ this->relaxed_iloc_ ], AsmBasisStatus::kInactive );
         this->basis_idxs_[ this->relaxed_iloc_ ] = this->newactive_idx_; // update basis indices
     }
+    this->newactive_idx_ = -1;
+    this->newactive_status_ = AsmBasisStatus::kInactive;
 }
