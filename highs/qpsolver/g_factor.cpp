@@ -26,6 +26,7 @@ void AsmSolver::stdvec2hvec(const std::vector<double>& vec, HVector& hvec){
 }
 
 void AsmSolver::recomputeRedHessian(){
+    std::cout<<"recomputing Red Hessian\n"<<std::flush;
     std::vector<HVector> ZT(this->nullsp_dim_); // TODO anything we can do to salvage information?
     HighsInt chol_size = this->nullsp_dim_ * (this->nullsp_dim_ + 1) / 2;
     this->chol_.assign(chol_size, 0.);
@@ -46,9 +47,8 @@ void AsmSolver::recomputeRedHessian(){
             // TODO could this be done with HFtran to compute a full column of the reduced Hessian, without the need to store Z^T?
             // in which case, do not use this->buffer_ anymore
             sum = 0.;
-            for (HighsInt k {0}; k < this->Q_.dim_; k++){ // inner produce of row of Z^T Q with column of Z
+            for (HighsInt k {0}; k < this->Q_.dim_; k++) // inner produce of row of Z^T Q with column of Z
                 sum += this->buffer_[k] * ZT[j].array[k]; // factorization row by row according to Cholesky—Banachiewicz
-            }
             this->chol_[ locL(i,j) ] = sum; // should be ordered such that chol_ is row-wise of M
         }
     }
@@ -156,19 +156,16 @@ void AsmSolver::extend(){
         if ( this->nullsp_dim_ > 0 ){ // if nullspace wasn't empty before deactivation rotations have a reason to be used
             HighsInt dim = this->nullsp_dim_;
             // first reorder elements of newcol (vector d in Fletcher) with the permutation in which vectors in Z sit
-            for (HighsInt i { this->rangsp_dim_ }; i < this->Q_.dim_; i++){ // elements i < this->rangsp_dim_ - 1 in buffer_ are rubbish
-                this->buffer_[ i - 1 ] = - newcol.array[ this->basis_perm_[i] ] / max_abs;
-            }
-            this->buffer_.back() = 1 / max_abs;
-            // now elements d_[p+1 to n] in (24) of 10.1007/s101070050113 are the last n - (p+1) elements of buffer
+            for (HighsInt i { this->rangsp_dim_ }; i < this->Q_.dim_; i++) // elements i < this->rangsp_dim_ - 1 in buffer_ are rubbish
+                this->buffer_[ i ] = - newcol.array[ this->basis_perm_[i] ] / max_abs;
+            // now elements d_[p+1 to n] in (24) of 10.1007/s101070050113 are the last elements of buffer
             // apply givens rotation from the left to zero out all but the rightmost element in the last row of the enhanced L
             // use their memory space to store the spike column that appears in the rightmost column of L
             addSpike(this->nullsp_dim_ - 1, this->nullsp_dim_); // add spike from the second to last row
             // multiply spike column with eta colum
-            for (HighsInt i {0}; i < dim; i++){
-                this->chol_[ locL(dim, i) ] += this->chol_[ locL(dim, dim) ] * this->buffer_[ this->rangsp_dim_ -1 + i ];
-            }
-            this->chol_[ locL(dim, dim) ] *= this->buffer_.back(); // last element in the spike is only scaled
+            for (HighsInt i {0}; i < dim; i++)
+                this->chol_[ locL(dim, i) ] += this->chol_[ locL(dim, dim) ] * this->buffer_[ this->rangsp_dim_ + i ];
+            this->chol_.back() /= max_abs; // last element in the spike is only scaled
             // remove right spike
             removeSpike(this->nullsp_dim_);
         } else { // otherwise chol_ is a singleton that only needs scaling
