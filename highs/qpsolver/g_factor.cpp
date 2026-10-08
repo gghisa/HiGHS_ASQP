@@ -102,17 +102,39 @@ void AsmSolver::LLTsolve(std::vector<double>& vec){
     return;
 }
 
-void AsmSolver::extend(){
-    assert( this->relaxed_iloc_ > -1 );
-    const HighsInt idx_deactivated = this->basis_idxs_[ this->relaxed_iloc_ ];
-    HighsInt loc_deactivated = this->basis_perm_[ this->relaxed_iloc_ ];
-    // get new nullspace column, creating unit HVector
-    this->Vi_.push_back(idx_deactivated - this->lp_.num_row_); // if deactivated element is a constraint this will be changed later
-    HVector Ztemp;
+HighsInt AsmSolver::replaceWithUnitVec(HighsInt iloc, HVector& Ztemp, HVector& newcol, double& max_abs){
+    HighsInt max_idx {-1};
+    for (HighsInt i {0}; i < Ztemp.count; i++){ // Ztemp is a sparse vector
+        if ( std::abs( Ztemp.array[Ztemp.index[i]] ) > std::abs( max_abs ) ) {
+            max_abs = Ztemp.array[Ztemp.index[i]];
+            max_idx = Ztemp.index[i];
+        }
+    }
+    // build ep as the unit column replacing the deactivated constraint
+    this->buffer_.assign(this->Q_.dim_,0.);
+    this->buffer_[max_idx] = 1.;
+    stdvec2hvec(this->buffer_, newcol);
+    this->B_.ftranCall(newcol, 1.);
+    // update basis matrix
+    this->B_.update(&newcol, &Ztemp, &iloc, &this->Bhint_);
+    this->num_basis_updates_++;
+    return max_idx + this->lp_.num_row_; // return which unit vector has been added to basis
+}
+
+void AsmSolver::buildZtemp(const HighsInt& iloc, HVector& Ztemp){ // TODO make Ztemp an object of the class
     this->buffer_.assign(this->Q_.dim_, 0.);
-    this->buffer_[loc_deactivated] = 1.;
+    this->buffer_[iloc] = 1.;
     stdvec2hvec(this->buffer_, Ztemp);// create new z_col (first get unit HVector)
     this->B_.btranCall(Ztemp, 1.); // compute z_col inplace
+}
+
+void AsmSolver::extend(){
+    assert( this->relaxed_iloc_ > -1 );
+    HighsInt idx_deactivated = this->basis_idxs_[ this->relaxed_iloc_ ];
+    HighsInt loc_deactivated = this->basis_perm_[ this->relaxed_iloc_ ];
+    // get new nullspace column, creating unit HVector
+    HVector Ztemp;
+    this->buildZtemp(loc_deactivated, Ztemp);
     double lambda {0.}; // new diagonal element for cholesky factor
     if (this->nullsp_dim_ > 0){ // nullspace dimension updated after calling extend()
         // solve L l = Z^T ( Q z_col ) = Z^T sol
@@ -130,54 +152,43 @@ void AsmSolver::extend(){
     }
     this->chol_.push_back( std::sqrt(lambda) );
     // then change padding vector to unit vector if it wasn't a unit vector
-    if ( idx_deactivated < this->lp_.num_row_ ) {
+    if ( idx_deactivated < this->lp_.num_row_ ){
         // after adding a vector to Z, for numerical reasons we update the L and the factorisation of B
         // by changing the newly freed vector (that now pads A in B) with a unit vector
+        this->changeStatus(idx_deactivated, AsmBasisStatus::kInactive);
         HVector newcol;
-        // find largest element modulus in Ztemp
         double max_abs {0.};
-        HighsInt max_idx {-1};
-        for (HighsInt i {0}; i < Ztemp.count; i++){ // Ztemp is a sparse vector
-            if ( std::abs( Ztemp.array[Ztemp.index[i]] ) > std::abs( max_abs ) ) {
-                max_abs = Ztemp.array[Ztemp.index[i]];
-                max_idx = Ztemp.index[i];
-            }
-        }
-        // build ep as the unit column replacing the deactivated constraint
-        this->buffer_.assign(this->Q_.dim_,0.);
-        this->buffer_[max_idx] = 1.;
-        stdvec2hvec(this->buffer_, newcol);
-        this->B_.ftranCall(newcol, 1.);
-        // update basis matrix
-        this->B_.update(&newcol, &Ztemp, &loc_deactivated, &this->Bhint_);
-        this->num_basis_updates_++;
-        this->Vi_.back() = max_idx;
+        HighsInt q = this->replaceWithUnitVec(loc_deactivated, Ztemp, newcol, max_abs);
+        this->basis_idxs_[ this->relaxed_iloc_ ] = q;
         // then update reduced hessian factor
-        if ( this->nullsp_dim_ > 0 ){ // if nullspace wasn't empty before deactivation rotations have a reason to be used
-            HighsInt dim = this->nullsp_dim_;
-            // first reorder elements of newcol (vector d in Fletcher) with the permutation in which vectors in Z sit
-            for (HighsInt i { this->rangsp_dim_ }; i < this->Q_.dim_; i++) // elements i < this->rangsp_dim_ - 1 in buffer_ are rubbish
-                this->buffer_[ i ] = - newcol.array[ this->basis_perm_[i] ] / max_abs;
-            // now elements d_[p+1 to n] in (24) of 10.1007/s101070050113 are the last elements of buffer
-            // apply givens rotation from the left to zero out all but the rightmost element in the last row of the enhanced L
-            // use their memory space to store the spike column that appears in the rightmost column of L
-            addSpike(this->nullsp_dim_ - 1, this->nullsp_dim_); // add spike from the second to last row
-            // multiply spike column with eta colum
-            for (HighsInt i {0}; i < dim; i++)
-                this->chol_[ locL(dim, i) ] += this->chol_[ locL(dim, dim) ] * this->buffer_[ this->rangsp_dim_ + i ];
-            this->chol_.back() /= max_abs; // last element in the spike is only scaled
-            // remove right spike
-            removeSpike(this->nullsp_dim_);
-        } else { // otherwise chol_ is a singleton that only needs scaling
-            this->chol_.back() /= max_abs;
-        }
+        if ( this->nullsp_dim_ > 0 ) // if nullspace wasn't empty before deactivation rotations have a reason to be used
+            this->refresh(max_abs, newcol);
+        else this->chol_.back() /= max_abs; // otherwise chol_ is a singleton that only needs scaling
     }
     // update status
-    this->changeStatus(idx_deactivated, AsmBasisStatus::kFreeInBasis);
+    this->changeStatus(this->basis_idxs_[this->relaxed_iloc_], AsmBasisStatus::kFreeInBasis); // NB use location to account for both cases above
     this->fromActiveToPadding(this->relaxed_iloc_);
     this->addNullSpaceDim();
     this->relaxed_iloc_ = -1; // book-keeping
     return;
+}
+
+void AsmSolver::refresh(const double& max_abs, HVector& newcol){
+    // update reduced hessian after a padding vector has been changed with newcol
+    HighsInt dim = this->nullsp_dim_;
+    // first reorder elements of newcol (vector d in Fletcher) with the permutation in which vectors in Z sit
+    for (HighsInt i { this->rangsp_dim_ }; i < this->Q_.dim_; i++) // elements i < this->rangsp_dim_ - 1 in buffer_ are rubbish
+        this->buffer_[ i ] = - newcol.array[ this->basis_perm_[i] ] / max_abs;
+    // now elements d_[p+1 to n] in (24) of 10.1007/s101070050113 are the last elements of buffer
+    // apply givens rotation from the left to zero out all but the rightmost element in the last row of the enhanced L
+    // use their memory space to store the spike column that appears in the rightmost column of L
+    addSpike(this->nullsp_dim_ - 1, this->nullsp_dim_); // add spike from the second to last row
+    // multiply spike column with eta colum
+    for (HighsInt i {0}; i < dim; i++)
+        this->chol_[ locL(dim, i) ] += this->chol_[ locL(dim, dim) ] * this->buffer_[ this->rangsp_dim_ + i ];
+    this->chol_.back() /= max_abs; // last element in the spike is only scaled
+    // remove right spike
+    removeSpike(this->nullsp_dim_);
 }
 
 void AsmSolver::addSpike(const HighsInt& start, const HighsInt& idx_last_col){
@@ -295,7 +306,6 @@ void AsmSolver::rightGivensHess(const HighsInt& start){
 
 void AsmSolver::reducePadding(const HighsInt& idx, HighsInt& loc_remove){
     // this function is run if there was no padding vector that matches the activated one
-    // if the newly active index was free in basis, then there is no choice of which padding vector to move and it must be given
     // argument is index of new constraint to activate
     // then choose which constraint to drop from V if not already given
     // first extract constraint and build HVec
@@ -307,6 +317,7 @@ void AsmSolver::reducePadding(const HighsInt& idx, HighsInt& loc_remove){
     // arbitrarily choose which padding element to remove
     loc_remove = this->Q_.dim_ - 1; // default remove last element in V
     // now select which index to drop by finding largest element modulus in newcol (Z^T a_q)
+    // TODO exploit sparsity of newcol in this loop
     for (HighsInt i {this->rangsp_dim_}; i < this->Q_.dim_; i++){ // Ztemp is a sparse vector
         if ( std::abs( newcol.array[ this->basis_perm_[i] ] ) > std::abs( max_abs ) ) {
             // only look at the trailing elements of the vector and 
@@ -326,7 +337,6 @@ void AsmSolver::reducePadding(const HighsInt& idx, HighsInt& loc_remove){
     this->num_basis_updates_++;
     if (this->nullsp_dim_ == 1){
         this->chol_.resize(0);
-        this->Vi_.erase( this->Vi_.begin() ); // remove reference to element in padding
     } else {
         assert(std::abs(max_abs) > this->options_.factor_pivot_tolerance );
         // update L factorisation according to (28) in Fletcher
@@ -351,7 +361,6 @@ void AsmSolver::reducePadding(const HighsInt& idx, HighsInt& loc_remove){
         }
         removeSpike(dim); // finally remove spike
         this->chol_.resize(this->chol_.size() - this->nullsp_dim_); // drop last row of L
-        this->Vi_.erase( this->Vi_.begin() + loc_remove ); // remove reference to element in padding
         loc_remove += this->rangsp_dim_; // restore for index update
     }
     return;
@@ -415,6 +424,6 @@ void AsmSolver::replace(){
         this->changeStatus( this->basis_idxs_[ this->relaxed_iloc_ ], AsmBasisStatus::kInactive );
         this->basis_idxs_[ this->relaxed_iloc_ ] = this->newactive_idx_; // update basis indices
     }
-    this->newactive_idx_ = -1;
+    this->newactive_idx_ = -1; // book keeping
     this->newactive_status_ = AsmBasisStatus::kInactive;
 }

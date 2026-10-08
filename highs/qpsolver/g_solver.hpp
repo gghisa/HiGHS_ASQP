@@ -51,7 +51,6 @@ class AsmSolver {
         std::vector<double> chol_; // explicit hessian or its cholesky factor
         HFactor B_;
         std::vector<double> buffer_; // for operations with permutations
-        std::vector<HighsInt> Vi_; // vector of indices of the unit vectors padding A in B
         // Real numbers vectors
         std::vector<double> loc_grad_; // current gradient g + Q x_k, where x_k = solution_.col_value
         std::vector<double> red_grad_; // current reduced gradient Z^T (g + Q x_k)
@@ -98,6 +97,7 @@ class AsmSolver {
         void addSpike(const HighsInt& start, const HighsInt& idx_last_col);
         void removeSpike(const HighsInt& idx_last_col);
         void permute(const HighsInt& loc_remove, const HighsInt& dim);
+        void refresh(const double& max_abs, HVector& newcol);
         // Feasibility phase functions
         HighsModelStatus feasibility();
         void setupFeasibilityLp();
@@ -112,6 +112,7 @@ class AsmSolver {
         void activate();
         void replace();
         void doUpdates();
+        HighsInt replaceWithUnitVec(HighsInt i, HVector& Ztemp, HVector& newcol, double& max_abs);
         // Object computations
         void computeRelaxedDirection();
         void computeLocGrad();
@@ -123,6 +124,7 @@ class AsmSolver {
         bool keepLooping();
         bool isOptimal();
         // Helper functions
+        void buildZtemp(const HighsInt& iloc, HVector& Ztemp);
         bool isQdiagonal();
         AsmBasisStatus getAsmBasisStatus(const HighsInt& idx);
         void fromActiveToPadding(const HighsInt& loc);

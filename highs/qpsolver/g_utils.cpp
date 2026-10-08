@@ -140,8 +140,6 @@ void AsmSolver::setupQpBasis(){
                              free_idxs.begin(), free_idxs.end());
     this->HFactor_basis_ = this->basis_idxs_; // store buffer
     // free indices at the start are necessarily variables, so they are unit vectors for sure
-    this->Vi_.assign(this->nullsp_dim_, -1);
-    for (HighsInt i {0}; i < this->nullsp_dim_; i++) this->Vi_[i] = free_idxs[i] - this->lp_.num_row_;
     this->setupBasisMat(this->HFactor_basis_); // setup HFactor
     // since basis indices may have been shuffled so that free indices may not trail active ones anymore,
     // set permutation order to match the index sets (A,V) structure
@@ -155,6 +153,22 @@ void AsmSolver::setupQpBasis(){
     }
     // build Reduced Hessian
     if ( this->nullsp_dim_ > 0 ){
+        // replace non-unitary constraints in padding with unit ones
+        for (HighsInt i {this->rangsp_dim_}; i < this->Q_.dim_; i++){
+            if ( this->basis_idxs_[i] < this->lp_.num_row_ ){
+                HVector Ztemp, newcol;
+                double max_abs;
+                this->buildZtemp(i, Ztemp);
+                HighsInt q = this->replaceWithUnitVec(i, Ztemp, newcol, max_abs);
+                // change old constraint to inactive
+                assert( this->getAsmBasisStatus(this->basis_idxs_[i]) == AsmBasisStatus::kFreeInBasis );
+                this->changeStatus( this->basis_idxs_[i], AsmBasisStatus::kInactive );
+                this->basis_idxs_[i] = q;
+                // change new unit constraint to free in basis
+                assert( this->getAsmBasisStatus( q ) == AsmBasisStatus::kInactive );
+                this->changeStatus( q, AsmBasisStatus::kFreeInBasis );
+            }
+        }
         this->recomputeRedHessian();
         this->atFSEP_ = false; // so that first minor loop is initiated
     }
@@ -322,6 +336,7 @@ void AsmSolver::buildConstraint(const HighsInt& idx, HVector& hvec){
 }
 
 void AsmSolver::fromPaddingToActive(const HighsInt& loc){
+    assert(loc >= this->rangsp_dim_);
     // send (activated) formerly free in basis index to end of active constraints
     std::vector<HighsInt>::iterator it = this->basis_idxs_.begin();
     std::rotate(it + this->rangsp_dim_, it + loc, it + loc + 1);
@@ -331,6 +346,7 @@ void AsmSolver::fromPaddingToActive(const HighsInt& loc){
 }
 
 void AsmSolver::fromActiveToPadding(const HighsInt& loc){
+    assert( loc < this->rangsp_dim_ );
     // send (deactivated) constraint index to the end of free-in-basis constraints
     // from the active set
     std::vector<HighsInt>::iterator it = this->basis_idxs_.begin() + loc;

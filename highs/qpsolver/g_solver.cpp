@@ -46,9 +46,13 @@ void AsmSolver::doUpdates(){
             this->atFSEP_ = false;
         }
     } else {
-        this->stepAlreadyTaken_ = true;
-        if ( this->newactive_idx_ > -1) this->activate();
-        else this->atFSEP_ = true;
+        if ( this->newactive_idx_ > -1){
+            this->activate();
+            this->stepAlreadyTaken_ = false;
+        } else {
+            this->atFSEP_ = true;
+            this->stepAlreadyTaken_ = true;
+        }
     }
     this->updateObjective();
     this->computeReducedVecs(); // red grad needs updating with new position
@@ -128,51 +132,31 @@ void AsmSolver::computeReducedDirection(){ // solve Equality Problem
 }
 
 void AsmSolver::activate(){
+    assert(getAsmBasisStatus(this->newactive_idx_) == AsmBasisStatus::kFreeInBasis ||
+           getAsmBasisStatus(this->newactive_idx_) == AsmBasisStatus::kInactive);
     // whether the constraint is padding or inactive, check whether the existing padding already has the correct vector
-    if ( this->newactive_idx_ >= this->lp_.num_row_){ // if we are activating a variable's bound
-        HighsInt loc_remove {-1};
-        HighsInt varidx = this->newactive_idx_ - this->lp_.num_row_;
-        for (loc_remove = 0; loc_remove < this->nullsp_dim_; loc_remove++){
-            if ( this->Vi_[loc_remove] == varidx ){ // unit vector already in basis
-                HighsInt loc_actual = this->rangsp_dim_ + loc_remove;
-                // the unit vector in the padding took the place of some other constraint, whose status needs to be updated
-                if ( this->basis_idxs_[loc_actual] != this->newactive_idx_ ){ // if the unit vector was a replacement for some constraint that will leave the basis
-                    this->changeStatus(this->basis_idxs_[loc_actual], AsmBasisStatus::kInactive); // deactivate old constraint (book-keeping)
-                    this->basis_idxs_[loc_actual] = this->newactive_idx_; // update index
-                }
-                // or if the unit vector is an actual bound that is being activated
+    if ( this->getAsmBasisStatus(this->newactive_idx_) == AsmBasisStatus::kFreeInBasis ){
+        assert( this->newactive_idx_ >= this->lp_.num_row_ ); // it should be a unit vector
+        for (HighsInt loc_remove {0}; loc_remove < this->nullsp_dim_; loc_remove++){
+            if ( this->basis_idxs_[this->rangsp_dim_ + loc_remove] == this->newactive_idx_ ){ // unit vector already in basis
                 this->changeStatus(this->newactive_idx_, this->newactive_status_); // handle status update for activation
-                this->fromPaddingToActive(loc_actual);
-                this->Vi_.erase( this->Vi_.begin() + loc_remove ); // remove reference to element in padding
+                if ( loc_remove >  0) // memory operations needed if we are activating a constraint that is not the first in padding
+                    this->fromPaddingToActive(loc_remove + this->rangsp_dim_); // handle index update
                 // update factorization if the unit vector that is activated is already-in-basis
                 this->reduceInBasis(loc_remove);
-                return;
-            }
-        }
-    }
-    // old status cannot be active since activation requires movement in nullspace
-    AsmBasisStatus oldstatus = getAsmBasisStatus(this->newactive_idx_);
-    assert (oldstatus == AsmBasisStatus::kFreeInBasis || oldstatus == AsmBasisStatus::kInactive);
-    // TODO update in case starting nullspace is not empty and padding vectors are not unit only
-    // if we are activating a constraint or the variable bound we are activating is not already in V
-    HighsInt loc_remove {-1};
-    this->reducePadding(this->newactive_idx_, loc_remove); // returns location of padding vector to be removed from basis_idxs_
-    if ( oldstatus == AsmBasisStatus::kInactive ){
-        this->changeStatus( this->basis_idxs_[loc_remove], AsmBasisStatus::kInactive );
-        this->basis_idxs_[loc_remove] = this->newactive_idx_;
-    } else { // if ( oldstatus == AsmBasisStatus::kFreeInBasis ){
-        HighsInt old_loc;
-        for ( old_loc = this->rangsp_dim_; old_loc < this->Q_.dim_; old_loc++){
-            if ( this->basis_idxs_[old_loc] == this->newactive_idx_ ){// find position of index already in basis
-                std::swap( this->basis_idxs_[loc_remove], this->basis_idxs_[old_loc] ); // swap it with location to activate
                 break;
             }
         }
+    } else { // if we are activating a constraint or the variable bound we are activating is not already in V
+        HighsInt loc_remove {-1};
+        this->reducePadding(this->newactive_idx_, loc_remove); // yields location of padding vector to be removed from basis_idxs_
+        this->changeStatus( this->basis_idxs_[loc_remove], AsmBasisStatus::kInactive );
+        this->basis_idxs_[loc_remove] = this->newactive_idx_; // update index
+        if ( loc_remove > this->rangsp_dim_ ) this->fromPaddingToActive(loc_remove);
+        this->changeStatus(this->newactive_idx_, this->newactive_status_);
+        removeNullSpaceDim();
     }
-    this->fromPaddingToActive(loc_remove);
-    this->changeStatus(this->newactive_idx_, this->newactive_status_);
-    removeNullSpaceDim();
-    this->newactive_idx_ = -1;
+    this->newactive_idx_ = -1; // book keeping
     this->newactive_status_ = AsmBasisStatus::kInactive;
     return;
 }
