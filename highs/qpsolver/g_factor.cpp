@@ -206,8 +206,8 @@ void AsmSolver::addSpike(const HighsInt& start, const HighsInt& idx_last_col){
         hyp = std::sqrt( cos*cos + sin*sin ); // guaranteed to be > 0
         cos /= hyp;
         sin /= hyp;
-        // update bottom right element first
-        this->chol_[ locL(j, j) ] = sin * this->chol_[ locL(j, i) ] + cos * this->chol_[ locL(j, j) ];
+        // update bottom right element first ( locL(j,j) )
+        this->chol_.back() = sin * this->chol_[ locL(j, i) ] + cos * this->chol_[ locL(j, j) ];
         // note element (j,i) is in fact (i,j) of the spike column, but stored in the last row of L
         this->chol_[ locL(j, i) ] = sin * this->chol_[ locL(i, i) ]; // create spike element where element is implicitly zeroed out
         // change each row element in the two columns affected (i and last one) on and below row i up to second to last row
@@ -252,9 +252,9 @@ void AsmSolver::removeSpike(const HighsInt& idx_last_col){
             this->chol_[ locL(j, k) ] = - sin * temp_ki + cos * temp_kj; // element (k, j) stored in (j, k)
         }
         // element that was zero
-        this->chol_[ locL(j, i) ] = sin * this->chol_[ locL(j, j) ];
+        this->chol_[ locL(j, i) ] = sin * this->chol_.back();
         // bottom right element
-        this->chol_[ locL(j, j) ] *= cos;
+        this->chol_.back() *= cos; // locL(j,j)
     }
 }
 
