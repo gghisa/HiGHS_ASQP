@@ -92,14 +92,16 @@ void AsmSolver::computeRelaxedDirection(){
         double alpha_min = 0.; // use first as buffer for y_p^T Q y_p
         // extract yp
         buildZtemp( this->basis_perm_[ this->relaxed_iloc_ ] ); // y_p in this->Ztemp_
-        std::vector<double> vec(this->Q_.dim_);
+        this->Rtemp_.assign(this->Q_.dim_, 0.);
         this->step_ = this->Ztemp_.array;
-        this->Q_.product(this->step_, vec); // Q y_p
-        for (HighsInt i {0}; i < this->Q_.dim_; i++) alpha_min += this->step_[i] * vec[i]; // compute y_p^T Q y_p for later
+        this->Q_.product(this->step_, this->Rtemp_); // Q y_p
+        for (HighsInt i {0}; i < this->Q_.dim_; i++) alpha_min += this->step_[i] * this->Rtemp_[i]; // compute y_p^T Q y_p for later
         // compute direction
         if ( this->nullsp_dim_ > 0 ){
-            this->HFtran(vec); // B^{-1} Q y_p ~ Z^T Q y_p (in memory)
-            LLTsolve(vec); // M^{-1} Z^T Q y_p
+            this->HFtran(this->Rtemp_); // B^{-1} Q y_p ~ Z^T Q y_p (in memory)
+            Lsolve(this->Rtemp_); // M^{-1} Z^T Q y_p
+            std::vector<double> vec = this->Rtemp_;
+            LTsolve(vec);
             std::fill(vec.begin(), vec.end() - this->nullsp_dim_, 0.); // [ 0 | M^{-1} Z^T Q y_p ]
             this->HBtran(vec); // B^{-T} [ 0 | M^{-1} Z^T Q y_p ] = Z M^{-1} Z^T Q y_p
             for (HighsInt i {0}; i < this->Q_.dim_; i++) this->step_[i] -= vec[i]; // ( I - Z M^{-1} Z^T Q ) y_p

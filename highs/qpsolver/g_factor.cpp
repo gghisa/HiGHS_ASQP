@@ -136,12 +136,8 @@ void AsmSolver::extend(){
     double lambda {0.}; // new diagonal element for cholesky factor
     if (this->nullsp_dim_ > 0){ // nullspace dimension updated after calling extend()
         // solve L l = Z^T ( Q z_col ) = Z^T sol
-        std::vector<double> sol(this->Q_.dim_);
-        this->Q_.product(Ztemp_.array, sol);
-        HFtran(sol); // B^{-1} ( sol ) ~ Z^T ( Q z_col ) in memory
-        Lsolve(sol);
-        this->chol_.insert(this->chol_.end(), sol.begin() + this->rangsp_dim_, sol.end());
-        for (HighsInt i {this->rangsp_dim_}; i < this->Q_.dim_; i++) lambda -= sol[i] * sol[i];
+        this->chol_.insert(this->chol_.end(), this->Rtemp_.begin() + this->rangsp_dim_, this->Rtemp_.end());
+        for (HighsInt i {this->rangsp_dim_}; i < this->Q_.dim_; i++) lambda -= this->Rtemp_[i] * this->Rtemp_[i];
     }
     lambda += 2 * computeQuadObjective(Ztemp_.array);
     if (lambda <= this->options_.factor_pivot_tolerance){
