@@ -102,12 +102,12 @@ void AsmSolver::LLTsolve(std::vector<double>& vec){
     return;
 }
 
-HighsInt AsmSolver::replaceWithUnitVec(HighsInt iloc, HVector& Ztemp, HVector& newcol, double& max_abs){
+HighsInt AsmSolver::replaceWithUnitVec(HighsInt iloc, HVector& newcol, double& max_abs){
     HighsInt max_idx {-1};
-    for (HighsInt i {0}; i < Ztemp.count; i++){ // Ztemp is a sparse vector
-        if ( std::abs( Ztemp.array[Ztemp.index[i]] ) > std::abs( max_abs ) ) {
-            max_abs = Ztemp.array[Ztemp.index[i]];
-            max_idx = Ztemp.index[i];
+    for (HighsInt i {0}; i < this->Ztemp_.count; i++){ // Ztemp is a sparse vector
+        if ( std::abs( this->Ztemp_.array[this->Ztemp_.index[i]] ) > std::abs( max_abs ) ) {
+            max_abs = this->Ztemp_.array[this->Ztemp_.index[i]];
+            max_idx = this->Ztemp_.index[i];
         }
     }
     // build ep as the unit column replacing the deactivated constraint
@@ -116,16 +116,16 @@ HighsInt AsmSolver::replaceWithUnitVec(HighsInt iloc, HVector& Ztemp, HVector& n
     stdvec2hvec(this->buffer_, newcol);
     this->B_.ftranCall(newcol, 1.);
     // update basis matrix
-    this->B_.update(&newcol, &Ztemp, &iloc, &this->Bhint_);
+    this->B_.update(&newcol, &this->Ztemp_, &iloc, &this->Bhint_);
     this->num_basis_updates_++;
     return max_idx + this->lp_.num_row_; // return which unit vector has been added to basis
 }
 
-void AsmSolver::buildZtemp(const HighsInt& iloc, HVector& Ztemp){ // TODO make Ztemp an object of the class
+void AsmSolver::buildZtemp(const HighsInt& iloc){ // TODO make Ztemp an object of the class
     this->buffer_.assign(this->Q_.dim_, 0.);
     this->buffer_[iloc] = 1.;
-    stdvec2hvec(this->buffer_, Ztemp);// create new z_col (first get unit HVector)
-    this->B_.btranCall(Ztemp, 1.); // compute z_col inplace
+    stdvec2hvec(this->buffer_, this->Ztemp_);// create new z_col (first get unit HVector)
+    this->B_.btranCall(this->Ztemp_, 1.); // compute z_col inplace
 }
 
 void AsmSolver::extend(){
@@ -133,19 +133,17 @@ void AsmSolver::extend(){
     HighsInt idx_deactivated = this->basis_idxs_[ this->relaxed_iloc_ ];
     HighsInt loc_deactivated = this->basis_perm_[ this->relaxed_iloc_ ];
     // get new nullspace column, creating unit HVector
-    HVector Ztemp;
-    this->buildZtemp(loc_deactivated, Ztemp);
     double lambda {0.}; // new diagonal element for cholesky factor
     if (this->nullsp_dim_ > 0){ // nullspace dimension updated after calling extend()
         // solve L l = Z^T ( Q z_col ) = Z^T sol
         std::vector<double> sol(this->Q_.dim_);
-        this->Q_.product(Ztemp.array, sol);
+        this->Q_.product(Ztemp_.array, sol);
         HFtran(sol); // B^{-1} ( sol ) ~ Z^T ( Q z_col ) in memory
         Lsolve(sol);
         this->chol_.insert(this->chol_.end(), sol.begin() + this->rangsp_dim_, sol.end());
         for (HighsInt i {this->rangsp_dim_}; i < this->Q_.dim_; i++) lambda -= sol[i] * sol[i];
     }
-    lambda += 2 * computeQuadObjective(Ztemp.array);
+    lambda += 2 * computeQuadObjective(Ztemp_.array);
     if (lambda <= this->options_.factor_pivot_tolerance){
         std::cout<<"Reduced matrix is either semi- or indefinite!\n"<<std::flush;
         throw std::domain_error("Reduced matrix is either semi- or indefinite!");
@@ -158,7 +156,7 @@ void AsmSolver::extend(){
         this->changeStatus(idx_deactivated, AsmBasisStatus::kInactive);
         HVector newcol;
         double max_abs {0.};
-        HighsInt q = this->replaceWithUnitVec(loc_deactivated, Ztemp, newcol, max_abs);
+        HighsInt q = this->replaceWithUnitVec(loc_deactivated, newcol, max_abs);
         this->basis_idxs_[ this->relaxed_iloc_ ] = q;
         // then update reduced hessian factor
         if ( this->nullsp_dim_ > 0 ) // if nullspace wasn't empty before deactivation rotations have a reason to be used

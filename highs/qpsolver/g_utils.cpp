@@ -40,6 +40,7 @@ AsmSolver::AsmSolver(const HighsOptions& options,
     if (this->Q_.format_ == HessianFormat::kTriangular) this->Q_ = this->Q_.toSquare();
     this->diagonalQ_ = isQdiagonal();
     if ( this->diagonalQ_ ) std::cout<<"Diagonal Hessian\n"<<std::flush;
+    this->Ztemp_.setup(this->Q_.dim_);
 }
 
 HighsStatus AsmSolver::getHighsStatus(){ // public function
@@ -156,10 +157,10 @@ void AsmSolver::setupQpBasis(){
         // replace non-unitary constraints in padding with unit ones
         for (HighsInt i {this->rangsp_dim_}; i < this->Q_.dim_; i++){
             if ( this->basis_idxs_[i] < this->lp_.num_row_ ){
-                HVector Ztemp, newcol;
+                HVector newcol;
                 double max_abs;
-                this->buildZtemp(i, Ztemp);
-                HighsInt q = this->replaceWithUnitVec(i, Ztemp, newcol, max_abs);
+                this->buildZtemp(i);
+                HighsInt q = this->replaceWithUnitVec(i, newcol, max_abs);
                 // change old constraint to inactive
                 assert( this->getAsmBasisStatus(this->basis_idxs_[i]) == AsmBasisStatus::kFreeInBasis );
                 this->changeStatus( this->basis_idxs_[i], AsmBasisStatus::kInactive );

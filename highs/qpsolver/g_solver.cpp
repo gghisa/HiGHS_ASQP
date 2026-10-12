@@ -91,10 +91,9 @@ void AsmSolver::computeRelaxedDirection(){
     } else { 
         double alpha_min = 0.; // use first as buffer for y_p^T Q y_p
         // extract yp
-        this->step_.assign(this->Q_.dim_, 0.);
-        this->step_[ this->basis_perm_[this->relaxed_iloc_] ] = 1.;
-        this->B_.btranCall(this->step_); // y_p
+        buildZtemp( this->basis_perm_[ this->relaxed_iloc_ ] ); // y_p in this->Ztemp_
         std::vector<double> vec(this->Q_.dim_);
+        this->step_ = this->Ztemp_.array;
         this->Q_.product(this->step_, vec); // Q y_p
         for (HighsInt i {0}; i < this->Q_.dim_; i++) alpha_min += this->step_[i] * vec[i]; // compute y_p^T Q y_p for later
         // compute direction
