@@ -106,7 +106,7 @@ class AsmSolver {
         void buildRelaxedLp();
         // Main loop functions
         void computeReducedDirection();
-        void ratiotest_pass1();
+        bool ratiotest_pass1();
         void ratiotest_pass2();
         void ratiotest();
         void activate();
@@ -131,7 +131,7 @@ class AsmSolver {
         void fromPaddingToActive(const HighsInt& loc);
         void buildConstraint(const HighsInt& idx, HVector& hvec);
         void changeStatus(const HighsInt& idx, const AsmBasisStatus& newstatus);
-        void findBestPrice(HighsInt& bestidx, double& bestmultiplier);
+        void findBestPrice(HighsInt& bestidx, double& bestmultiplier, double& bestpricesign);
         static void ratio1(const double tol, const double denom, const double lower, const double upper,
                            const double oldval, const double newval, double& alpha); // static from Claude.ai
         static void ratio2(double& max_pivot, const double denom, const double lower, const double upper,

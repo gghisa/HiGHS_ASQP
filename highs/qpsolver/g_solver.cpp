@@ -10,6 +10,7 @@
 HighsStatus AsmSolver::run(){
     if ( this->feasibility() != HighsModelStatus::kNotset ) return this->status_;
     while ( this->keepLooping() ){
+        std::cout<<this->objective_<<" - "<<this->nullsp_dim_<<"\n";
         // compute search direction
         if ( this->atFSEP_ ){
             this->computeRelaxedDirection();
@@ -24,7 +25,6 @@ HighsStatus AsmSolver::run(){
         this->ratiotest();
         // (potentially) update factorisations
         this->doUpdates();
-        std::cout<<this->objective_<<" - "<<this->nullsp_dim_<<"\n";
     }
     // outside loop but run only if feasibility is successful:
     std::cout<<this->objective_<<" iterations: "<<this->info_.qp_iteration_count<<" time: "<<this->timer_.read()<<"\n";
@@ -59,9 +59,10 @@ void AsmSolver::doUpdates(){
     this->info_.qp_iteration_count++;
 }
 
-void AsmSolver::findBestPrice(HighsInt& bestidx, double& bestmultiplier){
+void AsmSolver::findBestPrice(HighsInt& bestidx, double& bestmultiplier, double& bestpricesign){
     double bestprice = - this->options_.dual_feasibility_tolerance;
-    double price {0.}, sign {0.}, bestpricesign {0.}; // TODO messy initialisations and temp variables
+    double price {0.}, sign {0.};
+    bestpricesign = 0.; // TODO messy initialisations and temp variables
     for (HighsInt i {0}; i < this->rangsp_dim_; i++){ // loop through active constraints only
         HighsInt idx = this->basis_idxs_[i];
         // sign Dantzig prices on the go
@@ -82,10 +83,12 @@ void AsmSolver::findBestPrice(HighsInt& bestidx, double& bestmultiplier){
 
 void AsmSolver::computeRelaxedDirection(){
     HighsInt bestidx {-1};
-    double bestmultiplier;
-    this->findBestPrice(bestidx, bestmultiplier);
-    if ( bestidx == -1 ) this->model_status_ = HighsModelStatus::kOptimal; // set to optimal to break the major loop
-    else { 
+    double bestmultiplier, bestpricesign;
+    this->findBestPrice(bestidx, bestmultiplier, bestpricesign);
+    if ( bestidx == -1 ){
+        this->model_status_ = HighsModelStatus::kOptimal; // set to optimal to break the major loop
+        return;
+    } else { 
         double alpha_min = 0.; // use first as buffer for y_p^T Q y_p
         // extract yp
         this->step_.assign(this->Q_.dim_, 0.);
@@ -103,12 +106,20 @@ void AsmSolver::computeRelaxedDirection(){
             for (HighsInt i {0}; i < this->Q_.dim_; i++) this->step_[i] -= vec[i]; // ( I - Z M^{-1} Z^T Q ) y_p
         }
         // compute step
-        if ( std::abs(alpha_min) <= this->options_.factor_pivot_tolerance ) std::cout<<"Zero search direction"; // TODO
-        if ( alpha_min < - this->options_.factor_pivot_tolerance ) std::cout<<"Negative curvature search direction"; // TODO
-        alpha_min = - bestmultiplier / alpha_min;
-        for (HighsInt i {0}; i < this->Q_.dim_; i++){
-            this->step_[i] *= alpha_min;
-            this->newvarvals_[i] = this->solution_.col_value[i] + this->step_[i];
+        if ( std::abs(alpha_min) <= this->options_.factor_pivot_tolerance ){
+            this->alpha_relaxed_ = kHighsInf;
+            for (HighsInt i {0}; i < this->Q_.dim_; i++){
+                this->step_[i] *= bestpricesign;
+                this->newvarvals_[i] = this->solution_.col_value[i] + this->step_[i];
+            }
+        } else if ( alpha_min < - this->options_.factor_pivot_tolerance ) std::cout<<"Negative curvature search direction\n"; // TODO
+        else {
+            alpha_min = - bestmultiplier / alpha_min;
+            for (HighsInt i {0}; i < this->Q_.dim_; i++){
+                this->step_[i] *= alpha_min;
+                this->newvarvals_[i] = this->solution_.col_value[i] + this->step_[i];
+            }
+            this->alpha_relaxed_ = 1.;
         }
     }
     return;
@@ -117,17 +128,16 @@ void AsmSolver::computeRelaxedDirection(){
 
 void AsmSolver::computeReducedDirection(){ // solve Equality Problem
     if ( this->stepAlreadyTaken_ ) this->recomputeRedHessian(); // TODO keep?
-    for (HighsInt i {0}; i < this->nullsp_dim_; i++){
+    for (HighsInt i {0}; i < this->nullsp_dim_; i++)
         this->step_[this->rangsp_dim_ + i] = - this->red_grad_[i]; // TODO, is there a better place to flip sign?
-    }
     this->LLTsolve(this->step_);
     // then compute full space step
     std::fill(this->step_.begin(), this->step_.begin() + this->rangsp_dim_, 0.);
     this->HBtran(this->step_);
     // and update newvarvals
-    for (HighsInt i {0}; i < this->Q_.dim_; i++){
+    for (HighsInt i {0}; i < this->Q_.dim_; i++)
         this->newvarvals_[i] = this->solution_.col_value[i] + this->step_[i];
-    }
+    this->alpha_relaxed_ = 1.; // will look for lower alphas than unity only, since step is properly scaled
     return;
 }
 
