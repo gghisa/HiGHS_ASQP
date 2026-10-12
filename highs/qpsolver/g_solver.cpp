@@ -89,33 +89,36 @@ void AsmSolver::computeRelaxedDirection(){
         this->model_status_ = HighsModelStatus::kOptimal; // set to optimal to break the major loop
         return;
     } else { 
-        double alpha_min = 0.; // use first as buffer for y_p^T Q y_p
+        this->yQytemp_ = 0.; // buffer for y_p^T Q y_p
+        this->Rtemp_.assign(this->Q_.dim_, 0.); // buffer for the solution of L x = Z^T Q y_p
         // extract yp
         buildZtemp( this->basis_perm_[ this->relaxed_iloc_ ] ); // y_p in this->Ztemp_
-        this->Rtemp_.assign(this->Q_.dim_, 0.);
-        this->step_ = this->Ztemp_.array;
+        this->step_ = this->Ztemp_.array; // TODO what about permutations?
         this->Q_.product(this->step_, this->Rtemp_); // Q y_p
-        for (HighsInt i {0}; i < this->Q_.dim_; i++) alpha_min += this->step_[i] * this->Rtemp_[i]; // compute y_p^T Q y_p for later
         // compute direction
         if ( this->nullsp_dim_ > 0 ){
             this->HFtran(this->Rtemp_); // B^{-1} Q y_p ~ Z^T Q y_p (in memory)
-            Lsolve(this->Rtemp_); // M^{-1} Z^T Q y_p
+            this->yQytemp_ = this->Rtemp_[ this->relaxed_iloc_ ]; // extract y_p^T Q y_p for later
+            // TODO is L solve the right first step to take here?
+            Lsolve(this->Rtemp_); // L^{-1} Z^T Q y_p
             std::vector<double> vec = this->Rtemp_;
-            LTsolve(vec);
+            LTsolve(vec); // M^{-1} Z^T Q y_p
             std::fill(vec.begin(), vec.end() - this->nullsp_dim_, 0.); // [ 0 | M^{-1} Z^T Q y_p ]
             this->HBtran(vec); // B^{-T} [ 0 | M^{-1} Z^T Q y_p ] = Z M^{-1} Z^T Q y_p
             for (HighsInt i {0}; i < this->Q_.dim_; i++) this->step_[i] -= vec[i]; // ( I - Z M^{-1} Z^T Q ) y_p
+        } else { // compute y_p^T Q y_p for later
+            for (HighsInt i {0}; i < this->Q_.dim_; i++) this->yQytemp_ += this->step_[i] * this->Rtemp_[i];
         }
         // compute step
-        if ( std::abs(alpha_min) <= this->options_.factor_pivot_tolerance ){
+        if ( std::abs(this->yQytemp_) <= this->options_.factor_pivot_tolerance ){
             this->alpha_relaxed_ = kHighsInf;
             for (HighsInt i {0}; i < this->Q_.dim_; i++){
                 this->step_[i] *= bestpricesign;
                 this->newvarvals_[i] = this->solution_.col_value[i] + this->step_[i];
             }
-        } else if ( alpha_min < - this->options_.factor_pivot_tolerance ) std::cout<<"Negative curvature search direction\n"; // TODO
+        } else if ( this->yQytemp_ < - this->options_.factor_pivot_tolerance ) std::cout<<"Negative curvature search direction\n"; // TODO
         else {
-            alpha_min = - bestmultiplier / alpha_min;
+            double alpha_min = - bestmultiplier / this->yQytemp_;
             for (HighsInt i {0}; i < this->Q_.dim_; i++){
                 this->step_[i] *= alpha_min;
                 this->newvarvals_[i] = this->solution_.col_value[i] + this->step_[i];

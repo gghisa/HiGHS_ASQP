@@ -133,18 +133,16 @@ void AsmSolver::extend(){
     HighsInt idx_deactivated = this->basis_idxs_[ this->relaxed_iloc_ ];
     HighsInt loc_deactivated = this->basis_perm_[ this->relaxed_iloc_ ];
     // get new nullspace column, creating unit HVector
-    double lambda {0.}; // new diagonal element for cholesky factor
     if (this->nullsp_dim_ > 0){ // nullspace dimension updated after calling extend()
-        // solve L l = Z^T ( Q z_col ) = Z^T sol
+        // L l = Z^T ( Q z_col ) = Z^T sol from buffer
         this->chol_.insert(this->chol_.end(), this->Rtemp_.begin() + this->rangsp_dim_, this->Rtemp_.end());
-        for (HighsInt i {this->rangsp_dim_}; i < this->Q_.dim_; i++) lambda -= this->Rtemp_[i] * this->Rtemp_[i];
+        for (HighsInt i {this->rangsp_dim_}; i < this->Q_.dim_; i++) this->yQytemp_ -= this->Rtemp_[i] * this->Rtemp_[i];
     }
-    lambda += 2 * computeQuadObjective(Ztemp_.array);
-    if (lambda <= this->options_.factor_pivot_tolerance){
+    if (this->yQytemp_ <= this->options_.factor_pivot_tolerance){
         std::cout<<"Reduced matrix is either semi- or indefinite!\n"<<std::flush;
         throw std::domain_error("Reduced matrix is either semi- or indefinite!");
     }
-    this->chol_.push_back( std::sqrt(lambda) );
+    this->chol_.push_back( std::sqrt(this->yQytemp_) );
     // then change padding vector to unit vector if it wasn't a unit vector
     if ( idx_deactivated < this->lp_.num_row_ ){
         // after adding a vector to Z, for numerical reasons we update the L and the factorisation of B

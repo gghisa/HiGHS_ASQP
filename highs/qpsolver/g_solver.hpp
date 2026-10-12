@@ -51,8 +51,9 @@ class AsmSolver {
         std::vector<double> chol_; // explicit hessian or its cholesky factor
         HFactor B_;
         std::vector<double> buffer_; // for operations with permutations
-        std::vector<double> Rtemp_;
+        std::vector<double> Rtemp_; // buffer for the solution of L x = Z^T Q y_p
         HVector Ztemp_;
+        double yQytemp_; 
         // Real numbers vectors
         std::vector<double> loc_grad_; // current gradient g + Q x_k, where x_k = solution_.col_value
         std::vector<double> red_grad_; // current reduced gradient Z^T (g + Q x_k)
