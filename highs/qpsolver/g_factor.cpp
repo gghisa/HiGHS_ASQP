@@ -96,12 +96,6 @@ void AsmSolver::LTsolve(std::vector<double>& vec){
     return;
 }
 
-void AsmSolver::LLTsolve(std::vector<double>& vec){
-    Lsolve(vec);
-    LTsolve(vec);
-    return;
-}
-
 HighsInt AsmSolver::replaceWithUnitVec(HighsInt iloc, HVector& newcol, double& max_abs){
     HighsInt max_idx {-1};
     for (HighsInt i {0}; i < this->Ztemp_.count; i++){ // Ztemp is a sparse vector
@@ -111,10 +105,7 @@ HighsInt AsmSolver::replaceWithUnitVec(HighsInt iloc, HVector& newcol, double& m
         }
     }
     // build ep as the unit column replacing the deactivated constraint
-    this->buffer_.assign(this->Q_.dim_,0.);
-    this->buffer_[max_idx] = 1.;
-    stdvec2hvec(this->buffer_, newcol);
-    this->B_.ftranCall(newcol, 1.);
+    buildConstraint(max_idx + this->lp_.num_row_, newcol); // extra FLOP necessary?
     // update basis matrix
     this->B_.update(&newcol, &this->Ztemp_, &iloc, &this->Bhint_);
     this->num_basis_updates_++;
@@ -303,8 +294,6 @@ void AsmSolver::reducePadding(const HighsInt& idx, HighsInt& loc_remove){
     // first extract constraint and build HVec
     HVector newcol;
     buildConstraint(idx, newcol);
-    stdvec2hvec(this->buffer_, newcol);
-    this->B_.ftranCall(newcol, 1.);
     double max_abs {0.};
     // arbitrarily choose which padding element to remove
     loc_remove = this->Q_.dim_ - 1; // default remove last element in V
@@ -401,14 +390,8 @@ void AsmSolver::replace(){
     HVector oldcol;
     HighsInt iRow = this->basis_perm_[ this->relaxed_iloc_ ];
     buildConstraint(this->newactive_idx_, newcol);
-    this->B_.ftranCall(newcol, 1.);
-    // 
-    this->buffer_.assign(this->Q_.dim_, 0.);
-    this->buffer_[iRow] = 1.;
-    stdvec2hvec(this->buffer_, oldcol);
-    this->B_.btranCall(oldcol, 1.);
     // update basis matrix
-    this->B_.update(&newcol, &oldcol, &iRow, &this->Bhint_);
+    this->B_.update(&newcol, &this->Ztemp_, &iRow, &this->Bhint_);
     this->num_basis_updates_++;
     // update statuses
     this->changeStatus( this->newactive_idx_, this->newactive_status_ ); // update status of new active constraint

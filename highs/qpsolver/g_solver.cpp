@@ -93,7 +93,7 @@ void AsmSolver::computeRelaxedDirection(){
         this->Rtemp_.assign(this->Q_.dim_, 0.); // buffer for the solution of L x = Z^T Q y_p
         // extract yp
         buildZtemp( this->basis_perm_[ this->relaxed_iloc_ ] ); // y_p in this->Ztemp_
-        this->step_ = this->Ztemp_.array; // TODO what about permutations?
+        this->step_ = this->Ztemp_.array; // Permutation happens before btran called in buildZtemp()
         this->Q_.product(this->step_, this->Rtemp_); // Q y_p
         // compute direction
         if ( this->nullsp_dim_ > 0 ){
@@ -134,7 +134,8 @@ void AsmSolver::computeReducedDirection(){ // solve Equality Problem
     if ( this->stepAlreadyTaken_ ) this->recomputeRedHessian(); // TODO keep?
     for (HighsInt i {0}; i < this->nullsp_dim_; i++)
         this->step_[this->rangsp_dim_ + i] = - this->red_grad_[i]; // TODO, is there a better place to flip sign?
-    this->LLTsolve(this->step_);
+    this->Lsolve(this->step_);
+    this->LTsolve(this->step_);
     // then compute full space step
     std::fill(this->step_.begin(), this->step_.begin() + this->rangsp_dim_, 0.);
     this->HBtran(this->step_);

@@ -92,7 +92,6 @@ class AsmSolver {
         void recomputeRedHessian();
         void Lsolve(std::vector<double>& vec);
         void LTsolve(std::vector<double>& vec);
-        void LLTsolve(std::vector<double>& vec);
         void extend();
         void reduceInBasis(const HighsInt& loc_activated);
         void reducePadding(const HighsInt& idx, HighsInt& loc_remove);
