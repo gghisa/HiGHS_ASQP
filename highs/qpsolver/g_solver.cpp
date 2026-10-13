@@ -99,11 +99,10 @@ void AsmSolver::computeRelaxedDirection(){
         if ( this->nullsp_dim_ > 0 ){
             this->HFtran(this->Rtemp_); // B^{-1} Q y_p ~ Z^T Q y_p (in memory)
             this->yQytemp_ = this->Rtemp_[ this->relaxed_iloc_ ]; // extract y_p^T Q y_p for later
-            // TODO is L solve the right first step to take here?
+            std::fill(this->Rtemp_.begin(), this->Rtemp_.end() - this->nullsp_dim_, 0.); // [ 0 | M^{-1} Z^T Q y_p ]
             Lsolve(this->Rtemp_); // L^{-1} Z^T Q y_p
             std::vector<double> vec = this->Rtemp_;
             LTsolve(vec); // M^{-1} Z^T Q y_p
-            std::fill(vec.begin(), vec.end() - this->nullsp_dim_, 0.); // [ 0 | M^{-1} Z^T Q y_p ]
             this->HBtran(vec); // B^{-T} [ 0 | M^{-1} Z^T Q y_p ] = Z M^{-1} Z^T Q y_p
             for (HighsInt i {0}; i < this->Q_.dim_; i++) this->step_[i] -= vec[i]; // ( I - Z M^{-1} Z^T Q ) y_p
         } else { // compute y_p^T Q y_p for later
