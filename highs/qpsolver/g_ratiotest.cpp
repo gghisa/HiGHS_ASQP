@@ -72,7 +72,7 @@ void AsmSolver::ratiotest(){
     // assumes this->newvarvals are already computed (due to differences between major and minor loop)
     this->lp_.a_matrix_.product(this->newconvals_, this->newvarvals_); // a_i^T x_{k+1}
     this->lp_.a_matrix_.product(this->newconpivots_, this->step_); // a_i^T \s
-    if ( ratiotest_pass1() ) ratiotest_pass2(); // if we meet a constraint
+    if ( this->ratiotest_pass1() ) this->ratiotest_pass2(); // if we meet a constraint
     else this->alpha_ = this->alpha_relaxed_;
     // TODO unnecessary computations are done here if we are in minor loop
     // TODO is updating step_ to be done?

@@ -332,7 +332,7 @@ void AsmSolver::buildConstraint(const HighsInt& idx, HVector& hvec){
         this->buffer_.assign(this->Q_.dim_, 0.);
         this->buffer_[idx - this->lp_.num_row_] = 1.;
     }
-    stdvec2hvec(this->buffer_, hvec);
+    this->stdvec2hvec(this->buffer_, hvec);
     this->B_.ftranCall(hvec, 1.);
     return;
 }

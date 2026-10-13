@@ -105,7 +105,7 @@ HighsInt AsmSolver::replaceWithUnitVec(HighsInt iloc, HVector& newcol, double& m
         }
     }
     // build ep as the unit column replacing the deactivated constraint
-    buildConstraint(max_idx + this->lp_.num_row_, newcol); // extra FLOP necessary?
+    this->buildConstraint(max_idx + this->lp_.num_row_, newcol); // extra FLOP necessary?
     // update basis matrix
     this->B_.update(&newcol, &this->Ztemp_, &iloc, &this->Bhint_);
     this->num_basis_updates_++;
@@ -115,7 +115,7 @@ HighsInt AsmSolver::replaceWithUnitVec(HighsInt iloc, HVector& newcol, double& m
 void AsmSolver::buildZtemp(const HighsInt& iloc){ // TODO make Ztemp an object of the class
     this->buffer_.assign(this->Q_.dim_, 0.);
     this->buffer_[iloc] = 1.;
-    stdvec2hvec(this->buffer_, this->Ztemp_);// create new z_col (first get unit HVector)
+    this->stdvec2hvec(this->buffer_, this->Ztemp_);// create new z_col (first get unit HVector)
     this->B_.btranCall(this->Ztemp_, 1.); // compute z_col inplace
 }
 
@@ -165,13 +165,13 @@ void AsmSolver::refresh(const double& max_abs, HVector& newcol){
     // now elements d_[p+1 to n] in (24) of 10.1007/s101070050113 are the last elements of buffer
     // apply givens rotation from the left to zero out all but the rightmost element in the last row of the enhanced L
     // use their memory space to store the spike column that appears in the rightmost column of L
-    addSpike(this->nullsp_dim_ - 1, this->nullsp_dim_); // add spike from the second to last row
+    this->addSpike(this->nullsp_dim_ - 1, this->nullsp_dim_); // add spike from the second to last row
     // multiply spike column with eta colum
     for (HighsInt i {0}; i < dim; i++)
         this->chol_[ locL(dim, i) ] += this->chol_[ locL(dim, dim) ] * this->buffer_[ this->rangsp_dim_ + i ];
     this->chol_.back() /= max_abs; // last element in the spike is only scaled
     // remove right spike
-    removeSpike(this->nullsp_dim_);
+    this->removeSpike(this->nullsp_dim_);
 }
 
 void AsmSolver::addSpike(const HighsInt& start, const HighsInt& idx_last_col){
@@ -251,7 +251,7 @@ void AsmSolver::reduceInBasis(const HighsInt& loc_activated){ // only called whe
     // we remove row loc_activated (a posteriori, below, for indexing reasons)
     // so we need to zero out the super-diagonal elements
     // from row loc_activated+1 till the end
-    rightGivensHess(loc_activated + 1);
+    this->rightGivensHess(loc_activated + 1);
     // then we need to erase all of the zeroes, first erase all super-diagonal elements that were zeroed out
     for (HighsInt i {this->nullsp_dim_ - 1}; i > loc_activated; i--){
         this->chol_.erase( this->chol_.begin() + locL(i,i) );
@@ -259,8 +259,7 @@ void AsmSolver::reduceInBasis(const HighsInt& loc_activated){ // only called whe
     // then delete exactly loc_activated elements which is the number of elements in row loc_activated
     HighsInt size_L1 = ((loc_activated - 1) * loc_activated) / 2; // size of lower diagonal matrix above removed row
     this->chol_.erase(this->chol_.begin() + size_L1, this->chol_.begin() + size_L1 + loc_activated + 1);
-    // TODO is this size correct?
-    removeNullSpaceDim();
+    this->removeNullSpaceDim();
     return;
 }
 
@@ -293,7 +292,7 @@ void AsmSolver::reducePadding(const HighsInt& idx, HighsInt& loc_remove){
     // then choose which constraint to drop from V if not already given
     // first extract constraint and build HVec
     HVector newcol;
-    buildConstraint(idx, newcol);
+    this->buildConstraint(idx, newcol);
     double max_abs {0.};
     // arbitrarily choose which padding element to remove
     loc_remove = this->Q_.dim_ - 1; // default remove last element in V
@@ -311,7 +310,7 @@ void AsmSolver::reducePadding(const HighsInt& idx, HighsInt& loc_remove){
     HVector oldcol;
     this->buffer_.assign(this->Q_.dim_, 0.);
     this->buffer_[ iRow ] = 1.;
-    stdvec2hvec(this->buffer_, oldcol);
+    this->stdvec2hvec(this->buffer_, oldcol);
     this->B_.btranCall(oldcol, 1.);
     // update basis matrix
     this->B_.update(&newcol, &oldcol, &iRow, &this->Bhint_);
@@ -332,15 +331,15 @@ void AsmSolver::reducePadding(const HighsInt& idx, HighsInt& loc_remove){
         // then explicitly permute L according to P^T L P
         HighsInt dim = this->nullsp_dim_ - 1;
         // if we remove the last row no need to permute anything
-        if ( loc_remove < dim ) permute(loc_remove, dim);
+        if ( loc_remove < dim ) this->permute(loc_remove, dim);
         // then add spike elements until full
-        if (loc_remove > 0) addSpike(loc_remove - 1, dim); // permuting first row already gives full spike
+        if (loc_remove > 0) this->addSpike(loc_remove - 1, dim); // permuting first row already gives full spike
         // then multiply out with (nullsp_dim_ - 1, nullsp_dim_)-size eta matrix
         // upper (nullsp_dim_ - 1, nullsp_dim_ - 1)-size triangle is unchanged
         for(HighsInt j {0}; j < dim; j++){
             this->chol_[ locL(dim, j) ] += this->chol_.back() * this->buffer_[this->rangsp_dim_ + 1 + j];
         }
-        removeSpike(dim); // finally remove spike
+        this->removeSpike(dim); // finally remove spike
         this->chol_.resize(this->chol_.size() - this->nullsp_dim_); // drop last row of L
         loc_remove += this->rangsp_dim_; // restore for index update
     }
@@ -389,7 +388,7 @@ void AsmSolver::replace(){
     HVector newcol;
     HVector oldcol;
     HighsInt iRow = this->basis_perm_[ this->relaxed_iloc_ ];
-    buildConstraint(this->newactive_idx_, newcol);
+    this->buildConstraint(this->newactive_idx_, newcol);
     // update basis matrix
     this->B_.update(&newcol, &this->Ztemp_, &iRow, &this->Bhint_);
     this->num_basis_updates_++;

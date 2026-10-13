@@ -92,7 +92,7 @@ void AsmSolver::computeRelaxedDirection(){
         this->yQytemp_ = 0.; // buffer for y_p^T Q y_p
         this->Rtemp_.assign(this->Q_.dim_, 0.); // buffer for the solution of L x = Z^T Q y_p
         // extract yp
-        buildZtemp( this->basis_perm_[ this->relaxed_iloc_ ] ); // y_p in this->Ztemp_
+        this->buildZtemp( this->basis_perm_[ this->relaxed_iloc_ ] ); // y_p in this->Ztemp_
         this->step_ = this->Ztemp_.array; // Permutation happens before btran called in buildZtemp()
         this->Q_.product(this->step_, this->Rtemp_); // Q y_p
         // compute direction
@@ -100,9 +100,9 @@ void AsmSolver::computeRelaxedDirection(){
             this->HFtran(this->Rtemp_); // B^{-1} Q y_p ~ Z^T Q y_p (in memory)
             this->yQytemp_ = this->Rtemp_[ this->relaxed_iloc_ ]; // extract y_p^T Q y_p for later
             std::fill(this->Rtemp_.begin(), this->Rtemp_.end() - this->nullsp_dim_, 0.); // [ 0 | M^{-1} Z^T Q y_p ]
-            Lsolve(this->Rtemp_); // L^{-1} Z^T Q y_p
+            this->Lsolve(this->Rtemp_); // L^{-1} Z^T Q y_p
             std::vector<double> vec = this->Rtemp_;
-            LTsolve(vec); // M^{-1} Z^T Q y_p
+            this->LTsolve(vec); // M^{-1} Z^T Q y_p
             this->HBtran(vec); // B^{-T} [ 0 | M^{-1} Z^T Q y_p ] = Z M^{-1} Z^T Q y_p
             for (HighsInt i {0}; i < this->Q_.dim_; i++) this->step_[i] -= vec[i]; // ( I - Z M^{-1} Z^T Q ) y_p
         } else { // compute y_p^T Q y_p for later
@@ -146,8 +146,8 @@ void AsmSolver::computeReducedDirection(){ // solve Equality Problem
 }
 
 void AsmSolver::activate(){
-    assert(getAsmBasisStatus(this->newactive_idx_) == AsmBasisStatus::kFreeInBasis ||
-           getAsmBasisStatus(this->newactive_idx_) == AsmBasisStatus::kInactive);
+    assert(this->getAsmBasisStatus(this->newactive_idx_) == AsmBasisStatus::kFreeInBasis ||
+           this->getAsmBasisStatus(this->newactive_idx_) == AsmBasisStatus::kInactive);
     // whether the constraint is padding or inactive, check whether the existing padding already has the correct vector
     if ( this->getAsmBasisStatus(this->newactive_idx_) == AsmBasisStatus::kFreeInBasis ){
         assert( this->newactive_idx_ >= this->lp_.num_row_ ); // it should be a unit vector
@@ -168,7 +168,7 @@ void AsmSolver::activate(){
         this->basis_idxs_[loc_remove] = this->newactive_idx_; // update index
         if ( loc_remove > this->rangsp_dim_ ) this->fromPaddingToActive(loc_remove);
         this->changeStatus(this->newactive_idx_, this->newactive_status_);
-        removeNullSpaceDim();
+        this->removeNullSpaceDim();
     }
     this->newactive_idx_ = -1; // book keeping
     this->newactive_status_ = AsmBasisStatus::kInactive;
