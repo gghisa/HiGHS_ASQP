@@ -109,13 +109,15 @@ void AsmSolver::computeRelaxedDirection(){
             for (HighsInt i {0}; i < this->Q_.dim_; i++) this->yQytemp_ += this->step_[i] * this->Rtemp_[i];
         }
         // compute step
-        if ( std::abs(this->yQytemp_) <= this->options_.factor_pivot_tolerance ){
+        double tol = 10 * this->options_.factor_pivot_tolerance; // TODO use a proper number
+        if ( std::abs(this->yQytemp_) <= tol){
+            this->yQytemp_ = 0;
             this->alpha_relaxed_ = kHighsInf;
             for (HighsInt i {0}; i < this->Q_.dim_; i++){
                 this->step_[i] *= bestpricesign;
                 this->newvarvals_[i] = this->solution_.col_value[i] + this->step_[i];
             }
-        } else if ( this->yQytemp_ < - this->options_.factor_pivot_tolerance ) std::cout<<"Negative curvature search direction\n"; // TODO
+        } else if ( this->yQytemp_ < - tol ) std::cout<<"Negative curvature search direction\n"; // TODO
         else {
             double alpha_min = - bestmultiplier / this->yQytemp_;
             for (HighsInt i {0}; i < this->Q_.dim_; i++){
