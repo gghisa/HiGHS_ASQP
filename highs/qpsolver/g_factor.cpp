@@ -245,7 +245,6 @@ void AsmSolver::removeSpike(const HighsInt& idx_last_col){
 void AsmSolver::reduceInBasis(const HighsInt& loc_activated){ // only called when element moved to A was an element of the padding V
     if ( loc_activated == this->nullsp_dim_ - 1 ){ // if index of activated corresponds to index of last row in L
         this->chol_.resize(this->chol_.size() - this->nullsp_dim_); // drop last row of L
-        this->removeNullSpaceDim();
         return;
     }
     // TODO givens rotations are also needed when dealing with indefinite matrix
@@ -258,9 +257,8 @@ void AsmSolver::reduceInBasis(const HighsInt& loc_activated){ // only called whe
         this->chol_.erase( this->chol_.begin() + locL(i,i) );
     }
     // then delete exactly loc_activated elements which is the number of elements in row loc_activated
-    HighsInt size_L1 = ((loc_activated - 1) * loc_activated) / 2; // size of lower diagonal matrix above removed row
+    HighsInt size_L1 = ((loc_activated + 1) * loc_activated) / 2; // size of lower diagonal matrix above removed row
     this->chol_.erase(this->chol_.begin() + size_L1, this->chol_.begin() + size_L1 + loc_activated + 1);
-    this->removeNullSpaceDim();
     return;
 }
 
