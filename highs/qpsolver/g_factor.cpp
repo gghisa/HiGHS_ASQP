@@ -129,9 +129,11 @@ void AsmSolver::extend(){
         this->chol_.insert(this->chol_.end(), this->Rtemp_.begin() + this->rangsp_dim_, this->Rtemp_.end());
         for (HighsInt i {this->rangsp_dim_}; i < this->Q_.dim_; i++) this->yQytemp_ -= this->Rtemp_[i] * this->Rtemp_[i];
     }
-    if (this->yQytemp_ <= this->options_.factor_pivot_tolerance){
+    if (this->yQytemp_ < -this->options_.factor_pivot_tolerance){
         std::cout<<"Reduced matrix is either semi- or indefinite!\n"<<std::flush;
         throw std::domain_error("Reduced matrix is either semi- or indefinite!");
+    } else if ( this->yQytemp_ < this->options_.factor_pivot_tolerance ){
+        this->yQytemp_ += this->options_.primal_feasibility_tolerance; // TODO implement noncovex code
     }
     this->chol_.push_back( std::sqrt(this->yQytemp_) );
     // then change padding vector to unit vector if it wasn't a unit vector
@@ -384,19 +386,19 @@ void AsmSolver::permute(const HighsInt& loc_remove, const HighsInt& dim){
 }
 
 void AsmSolver::replace(){
-    HVector newcol;
-    HVector oldcol;
-    HighsInt iRow = this->basis_perm_[ this->relaxed_iloc_ ];
-    this->buildConstraint(this->newactive_idx_, newcol);
-    // update basis matrix
-    this->B_.update(&newcol, &this->Ztemp_, &iRow, &this->Bhint_);
-    this->num_basis_updates_++;
+    assert(this->getAsmBasisStatus(this->newactive_idx_) != this->newactive_status_);
     // update statuses
-    this->changeStatus( this->newactive_idx_, this->newactive_status_ ); // update status of new active constraint
     if ( this->basis_idxs_[ this->relaxed_iloc_] != this->newactive_idx_ ){ // if new index is different than old index
+        HVector newcol;
+        HighsInt iRow = this->basis_perm_[ this->relaxed_iloc_ ];
+        this->buildConstraint(this->newactive_idx_, newcol);
+        // update basis matrix
+        this->B_.update(&newcol, &this->Ztemp_, &iRow, &this->Bhint_);
+        this->num_basis_updates_++;
         this->changeStatus( this->basis_idxs_[ this->relaxed_iloc_ ], AsmBasisStatus::kInactive );
         this->basis_idxs_[ this->relaxed_iloc_ ] = this->newactive_idx_; // update basis indices
     }
+    this->changeStatus( this->newactive_idx_, this->newactive_status_ ); // update status of new active constraint
     this->newactive_idx_ = -1; // book keeping
     this->newactive_status_ = AsmBasisStatus::kInactive;
 }
