@@ -239,6 +239,7 @@ void AsmSolver::removeSpike(const HighsInt& idx_last_col){
         // bottom right element
         this->chol_.back() *= cos; // locL(j,j)
     }
+    this->chol_.back() = std::abs( this->chol_.back() ); // TODO hack
 }
 
 void AsmSolver::reduceInBasis(const HighsInt& loc_activated){ // only called when element moved to A was an element of the padding V
