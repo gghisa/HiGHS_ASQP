@@ -56,16 +56,20 @@ void AsmSolver::recomputeRedHessian(){
     for (HighsInt i {0}; i<this->nullsp_dim_; i++){
         for (HighsInt j {0}; j <= i; j++){
             if (i == j){ // diagonal element
+                sum = 0;
                 for (HighsInt k {0}; k < j; k++){
                     double row_el = this->chol_[ locL(i,k)];
-                    this->chol_[ locL(i,i) ] -= row_el * row_el;
+                    sum += row_el * row_el;
                 }
+                this->chol_[ locL(i,i) ] -= sum;
                 this->chol_[ locL(i,i) ] = std::sqrt(this->chol_[ locL(i,i) ]);
             }
             else { // off diagonal element
+                sum = 0;
                 for (HighsInt k {0}; k < j; k++){
-                    this->chol_[ locL(i,j) ] -= this->chol_[ locL(i,k) ] * this->chol_[ locL(j,k) ];
+                    sum += this->chol_[ locL(i,k) ] * this->chol_[ locL(j,k) ];
                 }
+                this->chol_[ locL(i,j) ] -= sum;
                 this->chol_[ locL(i,j) ] /= this->chol_[ locL(j,j) ];
             }
         }
@@ -75,10 +79,13 @@ void AsmSolver::recomputeRedHessian(){
 
 void AsmSolver::Lsolve(std::vector<double>& vec){
     // solve Ly = b with forward substitution
+    double sum;
     for (HighsInt i {0}; i < this->nullsp_dim_; i++){
+        sum = 0;
         for (HighsInt j {0}; j < i; j++){
-            vec[i + this->rangsp_dim_] -= this->chol_[ locL(i,j) ] * vec[j + this->rangsp_dim_]; 
+            sum+= this->chol_[ locL(i,j) ] * vec[j + this->rangsp_dim_]; 
         }
+        vec[i + this->rangsp_dim_] -= sum;
         vec[i + this->rangsp_dim_] /= this->chol_[ locL(i,i) ];
     }
     return;
@@ -87,10 +94,12 @@ void AsmSolver::Lsolve(std::vector<double>& vec){
 void AsmSolver::LTsolve(std::vector<double>& vec){
     // solve L^T z = y with backward substitution
     HighsInt limit = this->nullsp_dim_ - 1;
+    double sum;
     for (HighsInt i {limit}; i > -1; i--){
-        for (HighsInt j {limit}; j > i; j--){// perform operation in place
-            vec[i + this->rangsp_dim_] -= this->chol_[ locL(j,i) ] * vec[j + this->rangsp_dim_]; // note indices are swapped since we are accessing the upper triangular image of L
-        }
+        sum = 0; // for numerical reasons, evaluate first looped sum, then add to potentially bigger number
+        for (HighsInt j {limit}; j > i; j--) // note indices are swapped since we are accessing the upper triangular image of L
+            sum += this->chol_[ locL(j,i) ] * vec[j + this->rangsp_dim_];
+        vec[i + this->rangsp_dim_] -= sum;
         vec[i +  this->rangsp_dim_] /= this->chol_[ locL(i,i) ];
     }
     return;
@@ -127,12 +136,15 @@ void AsmSolver::extend(){
     if (this->nullsp_dim_ > 0){ // nullspace dimension updated after calling extend()
         // L l = Z^T ( Q z_col ) = Z^T sol from buffer
         this->chol_.insert(this->chol_.end(), this->Rtemp_.begin() + this->rangsp_dim_, this->Rtemp_.end());
-        for (HighsInt i {this->rangsp_dim_}; i < this->Q_.dim_; i++) this->yQytemp_ -= this->Rtemp_[i] * this->Rtemp_[i];
+        double sum {0.}; // for numerical reasons, evaluate first looped sum, then add to potentially bigger number
+        for (HighsInt i {this->rangsp_dim_}; i < this->Q_.dim_; i++) sum += this->Rtemp_[i] * this->Rtemp_[i];
+        this->yQytemp_ -= sum;
     }
-    if (this->yQytemp_ < -this->options_.factor_pivot_tolerance){
+    double tol = 10 * this->options_.factor_pivot_tolerance;
+    if (this->yQytemp_ < - tol ){
         std::cout<<"Reduced matrix is either semi- or indefinite!\n"<<std::flush;
         throw std::domain_error("Reduced matrix is either semi- or indefinite!");
-    } else if ( this->yQytemp_ < this->options_.factor_pivot_tolerance ){
+    } else if ( this->yQytemp_ < tol ){
         this->yQytemp_ += this->options_.primal_feasibility_tolerance; // TODO implement noncovex code
     }
     this->chol_.push_back( std::sqrt(this->yQytemp_) );

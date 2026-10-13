@@ -106,7 +106,9 @@ void AsmSolver::computeRelaxedDirection(){
             this->HBtran(vec); // B^{-T} [ 0 | M^{-1} Z^T Q y_p ] = Z M^{-1} Z^T Q y_p
             for (HighsInt i {0}; i < this->Q_.dim_; i++) this->step_[i] -= vec[i]; // ( I - Z M^{-1} Z^T Q ) y_p
         } else { // compute y_p^T Q y_p for later
-            for (HighsInt i {0}; i < this->Q_.dim_; i++) this->yQytemp_ += this->step_[i] * this->Rtemp_[i];
+            double sum {0.}; // for numerical reasons, evaluate first looped sum, then add to potentially bigger number
+            for (HighsInt i {0}; i < this->Q_.dim_; i++) sum += this->step_[i] * this->Rtemp_[i];
+            this->yQytemp_ += sum;
         }
         // compute step
         double tol = 10 * this->options_.factor_pivot_tolerance; // TODO use a proper number
