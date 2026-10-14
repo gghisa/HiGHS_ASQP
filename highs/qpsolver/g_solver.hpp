@@ -125,6 +125,7 @@ class AsmSolver {
         // Main loop breaks
         bool keepLooping();
         bool isOptimal();
+        bool isUnbounded();
         // Helper functions
         void buildZtemp(const HighsInt& iloc);
         bool isQdiagonal();
@@ -144,4 +145,6 @@ class AsmSolver {
         void removeNullSpaceDim();
         AsmBasisStatus HighsStatusToAsm(const HighsBasisStatus& status, const HighsInt i, const bool variable);
         double norm(const std::vector<double>& vec);
+        void AsmToHighs();
+        HighsBasisStatus convertAsmBasisToHighs(const AsmBasisStatus& status);
 };

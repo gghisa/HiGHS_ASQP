@@ -28,10 +28,8 @@ bool AsmSolver::ratiotest_pass1(){
                      this->solution_.row_value[i], this->newconvals_[i], this->alpha_relaxed_);
     if ( alpha_relaxed_ != alphatemp ){
         return true; // a constraint has been hit
-    } else if ( this->alpha_relaxed_ == kHighsInf ){
-        std::cout<<"Unbounded";
-        throw std::domain_error("Problem is unbounded!");
-    }
+    } else if ( this->alpha_relaxed_ == kHighsInf ) this->model_status_ = HighsModelStatus::kUnbounded;
+    // case in which alpha_relaxed == 1 after ratio test is here
     return false;
 }
 

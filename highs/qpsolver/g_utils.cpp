@@ -277,6 +277,14 @@ bool AsmSolver::isOptimal(){ // break loop if optimality check is positive durin
     return false;
 }
 
+bool AsmSolver::isUnbounded(){
+    if ( this->model_status_ == HighsModelStatus::kUnbounded ){
+        this->status_ = HighsStatus::kOk;
+        return true;
+    }
+    return false;
+}
+
 void AsmSolver::reinvertBasis(){
     this->HFactor_basis_.assign(this->Q_.dim_ + this->lp_.num_row_, -1);
     this->B_.build(); // TODO are indexes changed?
@@ -372,4 +380,35 @@ bool AsmSolver::isQdiagonal(){
         else return false;
     }
     return true;
+}
+
+void AsmSolver::AsmToHighs(){
+    // convert basis statuses
+    for (HighsInt i {0}; i < this->Q_.dim_; i++)
+        this->lp_basis_.col_status[i] = convertAsmBasisToHighs(this->var_status_[i]);
+    for (HighsInt i {0}; i < this->lp_.num_row_; i++)
+        this->lp_basis_.row_status[i] = convertAsmBasisToHighs(this->con_status_[i]);
+    // extract duals
+    HighsInt idx;
+    for (HighsInt i {0}; i < this->rangsp_dim_; i++){
+        idx = this->basis_idxs_[i];
+        if ( idx < this->lp_.num_row_ ){
+            this->solution_.row_dual[idx] = this->pricing_[i];
+        } else this->solution_.col_dual[idx - this->lp_.num_row_] = this->pricing_[i];
+    }
+}
+
+HighsBasisStatus AsmSolver::convertAsmBasisToHighs(const AsmBasisStatus& status){
+    switch (status) {
+        case AsmBasisStatus::kEquality :
+            return HighsBasisStatus::kLower;
+        case AsmBasisStatus::kLower :
+            return HighsBasisStatus::kLower;
+        case AsmBasisStatus::kUpper :
+            return HighsBasisStatus::kUpper;
+        case AsmBasisStatus::kFreeInBasis :
+            return HighsBasisStatus::kNonbasic;
+        case AsmBasisStatus::kInactive :
+            return HighsBasisStatus::kBasic;
+    }
 }

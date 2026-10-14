@@ -23,11 +23,13 @@ HighsStatus AsmSolver::run(){
         //}
         // perform ratio test
         this->ratiotest();
+        if ( this->isUnbounded() ) break;
         // (potentially) update factorisations
         this->doUpdates();
     }
     // outside loop but run only if feasibility is successful:
     std::cout<<this->objective_<<" iterations: "<<this->info_.qp_iteration_count<<" time: "<<this->timer_.read()<<"\n";
+    this->AsmToHighs();
     return this->getHighsStatus();
 }
 
