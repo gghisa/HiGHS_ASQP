@@ -28,7 +28,7 @@ HighsStatus AsmSolver::run(){
         this->doUpdates();
     }
     // outside loop but run only if feasibility is successful:
-    std::cout<<this->objective_<<" iterations: "<<this->info_.qp_iteration_count<<" time: "<<this->timer_.read()<<"\n";
+    std::cout<<this->objective_<<" - "<<this->nullsp_dim_<<"\n";
     this->AsmToHighs();
     return this->getHighsStatus();
 }
@@ -133,7 +133,6 @@ void AsmSolver::computeRelaxedDirection(){
     }
     return;
 }
-
 
 void AsmSolver::computeReducedDirection(){ // solve Equality Problem
     if ( this->stepAlreadyTaken_ ) this->recomputeRedHessian(); // TODO keep?

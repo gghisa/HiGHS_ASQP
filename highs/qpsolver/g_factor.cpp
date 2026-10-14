@@ -27,32 +27,57 @@ void AsmSolver::stdvec2hvec(const std::vector<double>& vec, HVector& hvec){
 
 void AsmSolver::recomputeRedHessian(){
     std::cout<<"recomputing Red Hessian\n"<<std::flush;
-    std::vector<HVector> ZT(this->nullsp_dim_); // TODO anything we can do to salvage information?
+    HVector ZTQi;
+    HighsSparseMatrix ZTQ;
+    ZTQ.format_ = MatrixFormat::kColwise;
+    ZTQ.num_col_ = this->Q_.dim_;
+    ZTQ.num_row_ = this->nullsp_dim_;
     HighsInt chol_size = this->nullsp_dim_ * (this->nullsp_dim_ + 1) / 2;
     this->chol_.assign(chol_size, 0.);
-    for (HighsInt i {0}; i < this->nullsp_dim_; i++){ // get Z^T
-        // create unit HVector
-        ZT[i].setup(this->Q_.dim_);
-        ZT[i].index[0] = this->basis_perm_[this->rangsp_dim_ + i];
-        ZT[i].array[ ZT[i].index[0] ] = 1.;
-        ZT[i].count = 1;
-        ZT[i].packFlag = true;
+    for (HighsInt i {0}; i < this->Q_.dim_; i++){ // get Q Z column vectors
+        ZTQi.setup(this->Q_.dim_);
+        // create unit HVector with entries from relevant Hessian column
+        ZTQi.count = this->Q_.start_[i + 1] - this->Q_.start_[i];
+        for ( HighsInt j {0}; j < ZTQi.count; j++ ){
+            ZTQi.index[j] = this->Q_.index_[ this->Q_.start_[i] + j ];
+            ZTQi.array[ ZTQi.index[j] ] = this->Q_.value_[ this->Q_.start_[i] + j ];
+        }
+        ZTQi.packFlag = true;
         // extract column of Z
-        this->B_.btranCall(ZT[i], 1.); // solves returning a column of Z, which we store as a row of Z^T
+        this->B_.ftranCall(ZTQi, 1.); // on the last this->nullsp_dim_ elements here are meaningful for us Z^T Q e_i
+        // append new column to sparse matrix
+        double value;
+        HighsInt count = 0;
+        for ( HighsInt j {this->rangsp_dim_}; j < this->Q_.dim_; j++){
+            value = ZTQi.array[ this->basis_perm_[j] ];
+            if ( std::abs(value) > this->options_.factor_pivot_tolerance ){
+                ZTQ.index_.push_back(j - this->rangsp_dim_);
+                ZTQ.value_.push_back(value);
+                count += 1;
+            }
+        }
+        ZTQ.start_.push_back(ZTQ.start_.back() + count);
     }
+    ZTQ.ensureRowwise(); // hold Z^T Q rowise, hence Q Z columnwise
+    ZTQ.format_ = MatrixFormat::kColwise; // book keeping
+    ZTQ.num_col_ = ZTQ.num_row_;
+    ZTQ.num_row_ = this->Q_.dim_;
     double sum;
-    for (HighsInt i {0}; i < this->nullsp_dim_; i++){// loop over the rows of Z^T
-        this->Q_.product(ZT[i].array, this->buffer_); // compute row of Z^T Q
-        for (HighsInt j {0}; j <= i; j++){ // loop through columns of Z, up to the current row of Z^T, to only compute lower triangle of red_hessian_
-            // TODO could this be done with HFtran to compute a full column of the reduced Hessian, without the need to store Z^T?
-            // in which case, do not use this->buffer_ anymore
-            sum = 0.;
-            for (HighsInt k {0}; k < this->Q_.dim_; k++) // inner produce of row of Z^T Q with column of Z
-                sum += this->buffer_[k] * ZT[j].array[k]; // factorization row by row according to Cholesky—Banachiewicz
-            this->chol_[ locL(i,j) ] = sum; // should be ordered such that chol_ is row-wise of M
+    for (HighsInt i {0}; i < this->nullsp_dim_; i++){ // loop over the columns of Q Z
+        ZTQi.setup(this->Q_.dim_);
+        // create unit HVector with entries from relevant Q Z column
+        ZTQi.count = ZTQ.start_[i + 1] - ZTQ.start_[i];
+        for ( HighsInt j {0}; j < ZTQi.count; j++ ){
+            ZTQi.index[j] = ZTQ.index_[ ZTQ.start_[i] + j ];
+            ZTQi.array[ ZTQi.index[j] ] = ZTQ.value_[ ZTQ.start_[i] + j ];
+        }
+        ZTQi.packFlag = true;
+        this->B_.ftranCall(ZTQi, 1.); // compute column i of reduced hessian (last nullsp elements in resulting vec)
+        for (HighsInt j {i}; j < this->nullsp_dim_; j++){ // loop through rows of Z^T to only compute lower triangle of red_hessian_
+            this->chol_[ locL(j,i) ] = ZTQi.array[ this->basis_perm_[this->rangsp_dim_ + j] ]; // should be ordered such that chol_ is row-wise of M
         }
     }
-    // perform cholesky factorization in place
+    // perform cholesky factorization in place, row by row according to Cholesky—Banachiewicz
     for (HighsInt i {0}; i<this->nullsp_dim_; i++){
         for (HighsInt j {0}; j <= i; j++){
             if (i == j){ // diagonal element
@@ -62,7 +87,7 @@ void AsmSolver::recomputeRedHessian(){
                     sum += row_el * row_el;
                 }
                 this->chol_[ locL(i,i) ] -= sum;
-                this->chol_[ locL(i,i) ] = std::sqrt(this->chol_[ locL(i,i) ]);
+                this->chol_[ locL(i,i) ] = std::sqrt(this->chol_[ locL(i,i) ] + 1e-8); // TODO remove regularisation
             }
             else { // off diagonal element
                 sum = 0;
@@ -344,7 +369,7 @@ void AsmSolver::reducePadding(const HighsInt& idx, HighsInt& loc_remove){
         // then explicitly permute L according to P^T L P
         HighsInt dim = this->nullsp_dim_ - 1;
         // if we remove the last row no need to permute anything
-        if ( loc_remove < dim ) this->permute(loc_remove, dim);
+        if ( loc_remove < dim ) this->permute(loc_remove, dim); // TODO remove, takes too long
         // then add spike elements until full
         if (loc_remove > 0) this->addSpike(loc_remove - 1, dim); // permuting first row already gives full spike
         // then multiply out with (nullsp_dim_ - 1, nullsp_dim_)-size eta matrix

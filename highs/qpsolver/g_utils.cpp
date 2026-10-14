@@ -92,8 +92,8 @@ HighsModelStatus AsmSolver::feasibility(){
         // use dual simplex if the objective value is all zeros, beacuse that means dual feasibility is guaranteed
         this->status_ = highs_feasibility.run();
         this->model_status_ = highs_feasibility.getModelStatus();
-        // TODO deal with timer? report it up
-        if ( this->model_status_ == HighsModelStatus::kOptimal ){ // note Optimal in Phase1 is Feasible for ASM
+        // TODO what if phase 1 finds unbounded problem (hence not optimal)?
+        if ( this->model_status_ == HighsModelStatus::kOptimal ){
             this->model_status_ = HighsModelStatus::kNotset;
             this->info_.simplex_iteration_count = highs_feasibility.getSimplexIterationCount();
             this->lp_basis_ = highs_feasibility.getBasis();
@@ -410,5 +410,7 @@ HighsBasisStatus AsmSolver::convertAsmBasisToHighs(const AsmBasisStatus& status)
             return HighsBasisStatus::kNonbasic;
         case AsmBasisStatus::kInactive :
             return HighsBasisStatus::kBasic;
+        default:
+            return HighsBasisStatus::kNonbasic;
     }
 }
