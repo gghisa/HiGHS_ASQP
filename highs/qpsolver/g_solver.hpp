@@ -72,6 +72,7 @@ class AsmSolver {
         bool diagonalQ_ {false};
         bool stepAlreadyTaken_ {false};
         bool atFSEP_ {true};
+        HighsInt relaxed_idx_ {-1};
         HighsInt relaxed_iloc_ {-1};
         HighsInt newactive_idx_ {-1};
         AsmBasisStatus newactive_status_ { AsmBasisStatus::kInactive };
@@ -126,6 +127,10 @@ class AsmSolver {
         bool keepLooping();
         bool isOptimal();
         bool isUnbounded();
+        // loggin functions
+        void logging();
+        std::string AsmStatusToString(const HighsInt idx);
+        std::string AsmStatusToString(const AsmBasisStatus status);
         // Helper functions
         void buildZtemp(const HighsInt& iloc);
         bool isQdiagonal();
@@ -134,7 +139,7 @@ class AsmSolver {
         void fromPaddingToActive(const HighsInt& loc);
         void buildConstraint(const HighsInt& idx, HVector& hvec);
         void changeStatus(const HighsInt& idx, const AsmBasisStatus& newstatus);
-        void findBestPrice(HighsInt& bestidx, double& bestmultiplier, double& bestpricesign);
+        void findBestPrice(double& bestmultiplier, double& bestpricesign);
         static void ratio1(const double tol, const double denom, const double lower, const double upper,
                            const double oldval, const double newval, double& alpha); // static from Claude.ai
         static void ratio2(double& max_pivot, const double denom, const double lower, const double upper,

@@ -414,3 +414,35 @@ HighsBasisStatus AsmSolver::convertAsmBasisToHighs(const AsmBasisStatus& status)
             return HighsBasisStatus::kNonbasic;
     }
 }
+
+std::string AsmSolver::AsmStatusToString(const HighsInt idx){
+    AsmBasisStatus status;
+    if ( idx < this->lp_.num_row_ ) status = this->con_status_[idx];
+    else status = this->var_status_[idx - this->lp_.num_row_];
+    return AsmStatusToString(status);
+}
+
+std::string AsmSolver::AsmStatusToString(const AsmBasisStatus status){
+    switch (status) {
+        case AsmBasisStatus::kEquality:
+            return "equality";
+        case AsmBasisStatus::kLower:
+            return "lower";
+        case AsmBasisStatus::kUpper:
+            return "upper";
+        case AsmBasisStatus::kFreeInBasis:
+            return "free in basis";
+        case AsmBasisStatus::kInactive:
+            return "inactive";
+        default:
+            return "undefined";
+    }
+}
+
+void AsmSolver::logging(){ // TODO
+    //highsLogUser(this->options_.log_options, HighsLogType::kInfo,
+    //             "1 Log User Print Info\n");
+    highsLogDev(this->options_.log_options, HighsLogType::kDetailed,
+                 "Iter %d: objective %f, nullspace dim %d \n",
+                 this->info_.qp_iteration_count, this->objective_, this->nullsp_dim_);
+}

@@ -10,11 +10,10 @@
 HighsStatus AsmSolver::run(){
     if ( this->feasibility() != HighsModelStatus::kNotset ) return this->status_;
     while ( this->keepLooping() ){
-        std::cout<<this->objective_<<" - "<<this->nullsp_dim_<<"\n";
         // compute search direction
         if ( this->atFSEP_ ){
             this->computeRelaxedDirection();
-            if ( this->isOptimal() ) break; // TODO change to return
+            if ( this->isOptimal() ) break;
         } else this->computeReducedDirection();
         // if step is too small, we consider to be at FSEP
         //if ( this->norm(step_) < this->options_.primal_feasibility_tolerance ){
@@ -28,7 +27,6 @@ HighsStatus AsmSolver::run(){
         this->doUpdates();
     }
     // outside loop but run only if feasibility is successful:
-    std::cout<<this->objective_<<" - "<<this->nullsp_dim_<<"\n";
     this->AsmToHighs();
     return this->getHighsStatus();
 }
@@ -58,10 +56,15 @@ void AsmSolver::doUpdates(){
     }
     this->updateObjective();
     this->computeReducedVecs(); // red grad needs updating with new position
+    this->logging();
+    // book keeping
+    this->newactive_idx_ = -1;
+    this->newactive_status_ = AsmBasisStatus::kInactive;
     this->info_.qp_iteration_count++;
 }
 
-void AsmSolver::findBestPrice(HighsInt& bestidx, double& bestmultiplier, double& bestpricesign){
+void AsmSolver::findBestPrice(double& bestmultiplier, double& bestpricesign){
+    this->relaxed_idx_ = -1;
     double bestprice = - this->options_.dual_feasibility_tolerance;
     double price {0.}, sign {0.};
     bestpricesign = 0.; // TODO messy initialisations and temp variables
@@ -75,7 +78,7 @@ void AsmSolver::findBestPrice(HighsInt& bestidx, double& bestmultiplier, double&
         if ( price < bestprice ){
             bestpricesign = sign;
             bestprice = price;
-            bestidx = idx;
+            this->relaxed_idx_ = idx;
             this->relaxed_iloc_ = i;
         }
     }
@@ -84,10 +87,9 @@ void AsmSolver::findBestPrice(HighsInt& bestidx, double& bestmultiplier, double&
 }
 
 void AsmSolver::computeRelaxedDirection(){
-    HighsInt bestidx {-1};
     double bestmultiplier, bestpricesign;
-    this->findBestPrice(bestidx, bestmultiplier, bestpricesign);
-    if ( bestidx == -1 ){
+    this->findBestPrice(bestmultiplier, bestpricesign);
+    if ( this->relaxed_idx_ == -1 ){
         this->model_status_ = HighsModelStatus::kOptimal; // set to optimal to break the major loop
         return;
     } else { 
@@ -131,6 +133,9 @@ void AsmSolver::computeRelaxedDirection(){
             this->alpha_relaxed_ = 1.;
         }
     }
+    // logging
+    highsLogDev(this->options_.log_options, HighsLogType::kDetailed,
+                "    Relaxed index %d active at %s\n", this->relaxed_idx_, AsmStatusToString(this->relaxed_idx_).c_str());
     return;
 }
 
@@ -173,7 +178,8 @@ void AsmSolver::activate(){
     if ( loc_remove > this->rangsp_dim_ ) // perform move if element isnt already neighbouring active indices
         this->fromPaddingToActive(loc_remove);
     this->removeNullSpaceDim();
-    this->newactive_idx_ = -1; // book keeping
-    this->newactive_status_ = AsmBasisStatus::kInactive;
+    // logging
+    highsLogDev(this->options_.log_options, HighsLogType::kDetailed,
+                "    Activated index %d at %s\n", this->newactive_idx_, AsmStatusToString(this->newactive_status_).c_str());
     return;
 }

@@ -181,6 +181,7 @@ void AsmSolver::extend(){
         HVector newcol;
         double max_abs {0.};
         HighsInt q = this->replaceWithUnitVec(loc_deactivated, newcol, max_abs);
+        assert( this->getAsmBasisStatus(q) == AsmBasisStatus::kInactive );
         this->basis_idxs_[ this->relaxed_iloc_ ] = q;
         // then update reduced hessian factor
         if ( this->nullsp_dim_ > 0 ) // if nullspace wasn't empty before deactivation rotations have a reason to be used
@@ -191,7 +192,6 @@ void AsmSolver::extend(){
     this->changeStatus(this->basis_idxs_[this->relaxed_iloc_], AsmBasisStatus::kFreeInBasis); // NB use location to account for both cases above
     this->fromActiveToPadding(this->relaxed_iloc_);
     this->addNullSpaceDim();
-    this->relaxed_iloc_ = -1; // book-keeping
     return;
 }
 
@@ -436,6 +436,4 @@ void AsmSolver::replace(){
         this->basis_idxs_[ this->relaxed_iloc_ ] = this->newactive_idx_; // update basis indices
     }
     this->changeStatus( this->newactive_idx_, this->newactive_status_ ); // update status of new active constraint
-    this->newactive_idx_ = -1; // book keeping
-    this->newactive_status_ = AsmBasisStatus::kInactive;
 }
