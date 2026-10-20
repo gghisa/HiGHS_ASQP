@@ -104,11 +104,11 @@ void AsmSolver::Lsolve(std::vector<double>& vec){
     double sum;
     for (HighsInt i {0}; i < this->nullsp_dim_; i++){
         sum = 0;
-        for (HighsInt j {0}; j < i; j++){
-            sum+= this->chol_[ locL(i,j) ] * vec[j + this->rangsp_dim_]; 
-        }
+        HighsInt rowstart = i * (i+1) / 2;
+        for (HighsInt j {0}; j < i; j++)
+            sum+= this->chol_[ rowstart + j ] * vec[j + this->rangsp_dim_]; 
         vec[i + this->rangsp_dim_] -= sum;
-        vec[i + this->rangsp_dim_] /= this->chol_[ locL(i,i) ];
+        vec[i + this->rangsp_dim_] /= this->chol_[ rowstart + i ];
     }
     return;
 }
@@ -119,9 +119,10 @@ void AsmSolver::LTsolve(std::vector<double>& vec){
     HighsInt limit = this->nullsp_dim_ - 1;
     double sum;
     for (HighsInt i {limit}; i > -1; i--){ // loop backwards through entries of solution
-        vec[ i + this->rangsp_dim_ ] /= this->chol_ [ locL(i,i) ];
+        HighsInt rowstart = i * (i+1) / 2;
+        vec[ i + this->rangsp_dim_ ] /= this->chol_ [ rowstart + i ];
         for (HighsInt j {i - 1}; j > -1; j--) // propagate changes in solution
-            vec[ j + this->rangsp_dim_ ] -= this->chol_[ locL(i,j) ] * vec[i +  this->rangsp_dim_];
+            vec[ j + this->rangsp_dim_ ] -= this->chol_[ rowstart + j ] * vec[ i +  this->rangsp_dim_ ];
     }
     return;
 }
