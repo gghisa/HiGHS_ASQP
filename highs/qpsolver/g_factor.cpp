@@ -115,14 +115,13 @@ void AsmSolver::Lsolve(std::vector<double>& vec){
 
 void AsmSolver::LTsolve(std::vector<double>& vec){
     // solve L^T z = y with backward substitution
+    // and backward propagation of updates for better memory access
     HighsInt limit = this->nullsp_dim_ - 1;
     double sum;
-    for (HighsInt i {limit}; i > -1; i--){
-        sum = 0; // for numerical reasons, evaluate first looped sum, then add to potentially bigger number
-        for (HighsInt j {limit}; j > i; j--) // note indices are swapped since we are accessing the upper triangular image of L
-            sum += this->chol_[ locL(j,i) ] * vec[j + this->rangsp_dim_];
-        vec[i + this->rangsp_dim_] -= sum;
-        vec[i +  this->rangsp_dim_] /= this->chol_[ locL(i,i) ];
+    for (HighsInt i {limit}; i > -1; i--){ // loop backwards through entries of solution
+        vec[ i + this->rangsp_dim_ ] /= this->chol_ [ locL(i,i) ];
+        for (HighsInt j {i - 1}; j > -1; j--) // propagate changes in solution
+            vec[ j + this->rangsp_dim_ ] -= this->chol_[ locL(i,j) ] * vec[i +  this->rangsp_dim_];
     }
     return;
 }
