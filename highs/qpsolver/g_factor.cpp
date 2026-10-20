@@ -7,11 +7,6 @@
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 #include "qpsolver/g_solver.hpp"
 
-HighsInt AsmSolver::locL(const HighsInt& i, const HighsInt& j){ // TODO inline?
-    assert( j <= i );
-    return i*(i+1)/2 + j; // assumes indices are given for lower triangular matrix
-}
-
 void AsmSolver::stdvec2hvec(const std::vector<double>& vec, HVector& hvec){
     hvec.setup(vec.size());
     for (size_t i {0}; i < vec.size(); i++){

@@ -89,7 +89,10 @@ class AsmSolver {
         void HFtran(std::vector<double>& vec);
         void stdvec2hvec(const std::vector<double>& vec, HVector& hvec);
         // Reduced Hessian operations
-        HighsInt locL(const HighsInt& i, const HighsInt& j);
+        inline HighsInt locL(const HighsInt& i, const HighsInt& j){
+            assert( j <= i );
+            return i*(i+1)/2 + j; // assumes indices are given for lower triangular matrix
+        }
         void recomputeRedHessian();
         void Lsolve(std::vector<double>& vec);
         void LTsolve(std::vector<double>& vec);
