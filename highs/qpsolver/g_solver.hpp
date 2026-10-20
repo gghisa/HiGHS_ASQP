@@ -130,7 +130,9 @@ class AsmSolver {
         bool keepLooping();
         bool isOptimal();
         bool isUnbounded();
-        // loggin functions
+        // loggin
+        HighsInt logged_atiter {0};
+        double logged_attime {0.};
         void logging();
         std::string AsmStatusToString(const HighsInt idx);
         std::string AsmStatusToString(const AsmBasisStatus status);

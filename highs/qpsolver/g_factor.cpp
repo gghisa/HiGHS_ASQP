@@ -21,7 +21,9 @@ void AsmSolver::stdvec2hvec(const std::vector<double>& vec, HVector& hvec){
 }
 
 void AsmSolver::recomputeRedHessian(){
-    std::cout<<"recomputing Red Hessian\n"<<std::flush;
+    highsLogDev(this->options_.log_options, HighsLogType::kInfo,
+        "Iter %d: (Re)computing reduced Hessian" , this->info_.qp_iteration_count);
+    //
     HVector ZTQi;
     HighsSparseMatrix ZTQ;
     ZTQ.format_ = MatrixFormat::kColwise;

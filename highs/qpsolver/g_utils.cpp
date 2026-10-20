@@ -440,9 +440,14 @@ std::string AsmSolver::AsmStatusToString(const AsmBasisStatus status){
 }
 
 void AsmSolver::logging(){ // TODO
-    //highsLogUser(this->options_.log_options, HighsLogType::kInfo,
-    //             "1 Log User Print Info\n");
-    highsLogDev(this->options_.log_options, HighsLogType::kDetailed,
-                 "Iter %d: objective %f, nullspace dim %d \n",
-                 this->info_.qp_iteration_count, this->objective_, this->nullsp_dim_);
+    double now = this->timer_.read();
+    if ( ( this->info_.qp_iteration_count - this->logged_atiter > 99 ) ||
+         ( now - this->logged_attime > 5.0 ) ){
+        this->logged_attime = now;
+        this->logged_atiter = this->info_.qp_iteration_count;
+        HighsInt num_digits = (int)std::floor(std::log10((double)this->Q_.dim_)) + 1;
+        highsLogUser(this->options_.log_options, HighsLogType::kInfo,
+                 "Iter %d:          Obj %f,           Nullspace dim %*d \n",
+                 this->info_.qp_iteration_count, this->objective_, num_digits, this->nullsp_dim_);
+    }
 }
