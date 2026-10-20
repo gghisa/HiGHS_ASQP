@@ -300,3 +300,4 @@ build-latest
 qps_files
 solution.sol
 perf.data
+perf.data.old
