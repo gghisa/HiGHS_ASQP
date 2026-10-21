@@ -61,7 +61,7 @@ void AsmSolver::HBtran(std::vector<double>& vec){
     return;
 }
 
-void AsmSolver::HFtran(std::vector<double>& vec){
+void AsmSolver::HFtran(std::vector<double>& vec){ // TODO add start to permutation assignment since not all needed
     assert( (HighsInt) this->buffer_.size() == this->Q_.dim_);
     this->B_.ftranCall(vec); // first solve for B^{-1}
     // then apply P^T = P^{-1}
@@ -236,21 +236,14 @@ void AsmSolver::compute_varvals(const double& alpha, std::vector<double>& loc){ 
     return;
 }
 
-double AsmSolver::computeQuadObjective(const std::vector<double>& vec){ // TODO move to HighsHessian
-    double sum {0.};
-    // matrix is stored in full, but it is symmetric
-    for (HighsInt iCol = 0; iCol < this->Q_.dim_; iCol++) {
-        for (HighsInt iEl = this->Q_.start_[iCol]; iEl < this->Q_.start_[iCol + 1]; iEl++) {
-            if ( this->Q_.index_[iEl] < iCol ) sum += vec[iCol] * this->Q_.value_[iEl] * vec[this->Q_.index_[iEl]];
-            else if ( this->Q_.index_[iEl] == iCol ) sum += 0.5 * vec[iCol] * vec[iCol] * this->Q_.value_[iEl];
-        }
-    }
-    return sum;
-}
-
 void AsmSolver::updateObjective(){
-    this->objective_ = this->lp_.objectiveValue(this->solution_.col_value);
-    this->objective_ += computeQuadObjective(this->solution_.col_value);
+    this->objective_ = 0.;
+    this->Q_.product(this->solution_.col_value, this->buffer_);
+    for (HighsInt i {0}; i < this->Q_.dim_; i++){
+        this->objective_ += this->solution_.col_value[i] * this->buffer_[i];
+    }
+    this->objective_ *= 0.5;
+    this->objective_ += this->lp_.objectiveValue(this->solution_.col_value);
     return;
 }
 

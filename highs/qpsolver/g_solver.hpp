@@ -123,7 +123,6 @@ class AsmSolver {
         void updateRedGrad();
         void computeReducedVecs();
         void compute_varvals(const double& alpha, std::vector<double>& loc);
-        double computeQuadObjective(const std::vector<double>& vec);
         void updateObjective();
         // Main loop breaks
         bool keepLooping();
