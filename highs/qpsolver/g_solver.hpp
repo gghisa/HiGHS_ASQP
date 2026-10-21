@@ -55,7 +55,6 @@ class AsmSolver {
         HVector Ztemp_;
         double yQytemp_; 
         // Real numbers vectors
-        std::vector<double> loc_grad_; // current gradient g + Q x_k, where x_k = solution_.col_value
         std::vector<double> red_grad_; // current reduced gradient Z^T (g + Q x_k)
         std::vector<double> pricing_; // a value for each active constraint, based on which the choice of which to deactivate is made
         std::vector<double> step_; // full step, result of Z \delta
@@ -121,7 +120,7 @@ class AsmSolver {
         HighsInt replaceWithUnitVec(HighsInt iloc, HVector& newcol, double& max_abs);
         // Object computations
         void computeRelaxedDirection();
-        void computeLocGrad();
+        void updateRedGrad();
         void computeReducedVecs();
         void compute_varvals(const double& alpha, std::vector<double>& loc);
         double computeQuadObjective(const std::vector<double>& vec);

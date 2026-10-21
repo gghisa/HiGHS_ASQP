@@ -27,7 +27,6 @@ AsmSolver::AsmSolver(const HighsOptions& options,
                      callback_(callback),
                      feasibility_lp_(lp),
                      buffer_(hessian.dim_),
-                     loc_grad_(hessian.dim_),
                      step_(hessian.dim_),
                      newvarvals_(hessian.dim_),
                      newconvals_(lp.num_row_),
@@ -206,17 +205,22 @@ void AsmSolver::buildRelaxedLp(){
     }
 }
 
-void AsmSolver::computeLocGrad(){ // g + Q x_k
-    this->Q_.product(this->solution_.col_value, this->loc_grad_); // stores result in loc_grad_
-    for (HighsInt i {0}; i < this->Q_.dim_; i++){ // add g to Q x_k
-        this->loc_grad_[i] += this->lp_.col_cost_[i];
+void AsmSolver::updateRedGrad(){ // g + Q x_k
+    assert( this->alpha_ <= 1.);
+    double scaling = 1 - this->alpha_;
+    for (HighsInt i {0}; i < this->nullsp_dim_; i++){
+        this->red_grad_[i] *= scaling;
     }
+    // pricing needs updating
     return;
 }
 
 void AsmSolver::computeReducedVecs(){ // solve B x = (g + Q x_k) to compute Dantzig prices and reduced gradient
-    this->computeLocGrad();
-    this->pricing_ = this->loc_grad_;
+    // g + Q x_k
+    this->Q_.product(this->solution_.col_value, this->pricing_); // stores result in pricing_
+    for (HighsInt i {0}; i < this->Q_.dim_; i++){ // add g to Q x_k
+        this->pricing_[i] += this->lp_.col_cost_[i];
+    }
     this->HFtran(this->pricing_); // compute B x = g_k, TODO other types of pricing
     this->red_grad_.assign( std::make_move_iterator(this->pricing_.begin() + this->rangsp_dim_),
                             std::make_move_iterator(this->pricing_.end()));

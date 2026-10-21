@@ -35,7 +35,7 @@ void AsmSolver::doUpdates(){
     if ( this->atFSEP_ ) {
         this->stepAlreadyTaken_ = false;
         if ( this->newactive_idx_ > - 1){ // if a constraint is activated
-            if ( this->nullsp_dim_ == 0) this->replace();
+            if ( this->nullsp_dim_ == 0) this->replace(); // stays at FSEP
             else { // update factorisations of both B and M
                 this->extend();
                 this->activate();
@@ -45,17 +45,19 @@ void AsmSolver::doUpdates(){
             this->extend();
             this->atFSEP_ = false;
         }
+        this->computeReducedVecs();
     } else {
         if ( this->newactive_idx_ > -1){
             this->activate();
             this->stepAlreadyTaken_ = false;
-        } else {
+            this->updateRedGrad();
+        } else { // no need to update reduced gradient, only pricing
             this->atFSEP_ = true;
             this->stepAlreadyTaken_ = true;
+            this->computeReducedVecs();
         }
     }
     this->updateObjective();
-    this->computeReducedVecs(); // red grad needs updating with new position
     this->logging();
     // book keeping
     this->newactive_idx_ = -1;
