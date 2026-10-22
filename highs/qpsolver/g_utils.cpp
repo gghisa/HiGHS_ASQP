@@ -38,7 +38,6 @@ AsmSolver::AsmSolver(const HighsOptions& options,
     // change hessian to square for better memory access
     if (this->Q_.format_ == HessianFormat::kTriangular) this->Q_ = this->Q_.toSquare();
     this->diagonalQ_ = isQdiagonal();
-    if ( this->diagonalQ_ ) std::cout<<"Diagonal Hessian\n"<<std::flush;
     this->Ztemp_.setup(this->Q_.dim_);
 }
 
@@ -100,6 +99,7 @@ HighsModelStatus AsmSolver::feasibility(){
             this->updateObjective();
             this->setupQpBasis();
             this->buildRelaxedLp();
+            if ( this->diagonalQ_ ) highsLogDev(this->options_.log_options, HighsLogType::kInfo, "Hessian is diagonal.");
         }
     }
     return this->model_status_;

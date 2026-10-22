@@ -69,13 +69,16 @@ void AsmSolver::recomputeRedHessian(){
             ZTQi.array[ ZTQi.index[j] ] = ZTQ.value_[ ZTQ.start_[i] + j ];
         }
         ZTQi.packFlag = true;
-        this->B_.ftranCall(ZTQi, 1.); // compute column i of reduced hessian (last nullsp elements in resulting vec)
-        for (HighsInt j {i}; j < this->nullsp_dim_; j++){ // loop through rows of Z^T to only compute lower triangle of red_hessian_
-            this->chol_[ locL(j,i) ] = ZTQi.array[ this->basis_perm_[this->rangsp_dim_ + j] ]; // should be ordered such that chol_ is row-wise of M
+        this->B_.ftranCall(ZTQi, 1.); // compute column i of reduced hessian (last #nullsp elements in resulting vec)
+        // TODO changing chol to colwise would make this loop faster since red hessian is populated column by column
+        for (HighsInt j {i}; j < this->nullsp_dim_; j++){ // loop through columns of M only computing lower triangle of red_hessian_
+            this->chol_[ locL(j,i) ] = ZTQi.array[ this->basis_perm_[this->rangsp_dim_ + j] ];
         }
     }
     // perform cholesky factorization in place, row by row according to Cholesky—Banachiewicz
+    // TODO change when chol will be stored rowise
     for (HighsInt i {0}; i<this->nullsp_dim_; i++){
+        HighsInt rowstart = i * (i + 1) / 2;
         for (HighsInt j {0}; j <= i; j++){
             if (i == j){ // diagonal element
                 sum = 0;
@@ -83,16 +86,17 @@ void AsmSolver::recomputeRedHessian(){
                     double row_el = this->chol_[ locL(i,k)];
                     sum += row_el * row_el;
                 }
-                this->chol_[ locL(i,i) ] -= sum;
-                this->chol_[ locL(i,i) ] = std::sqrt(this->chol_[ locL(i,i) ] + 1e-8); // TODO remove regularisation
+                this->chol_[ rowstart + i ] -= sum;
+                this->chol_[ rowstart + i ] = std::sqrt(this->chol_[ rowstart + i ] + 1e-8); // TODO remove regularisation
             }
             else { // off diagonal element
+                HighsInt colstart = j * (j+1) / 2;
                 sum = 0;
                 for (HighsInt k {0}; k < j; k++){
-                    sum += this->chol_[ locL(i,k) ] * this->chol_[ locL(j,k) ];
+                    sum += this->chol_[ rowstart + k ] * this->chol_[ colstart + k ];
                 }
-                this->chol_[ locL(i,j) ] -= sum;
-                this->chol_[ locL(i,j) ] /= this->chol_[ locL(j,j) ];
+                this->chol_[ rowstart + j ] -= sum;
+                this->chol_[ rowstart + j ] /= this->chol_[ colstart + j ];
             }
         }
     }
