@@ -424,8 +424,6 @@ void AsmSolver::permute(const HighsInt& loc_remove, const HighsInt& dim){
 }
 
 void AsmSolver::replace(){
-    assert(this->getAsmBasisStatus(this->newactive_idx_) != this->newactive_status_);
-    // update statuses
     if ( this->basis_idxs_[ this->relaxed_iloc_] != this->newactive_idx_ ){ // if new index is different than old index
         HVector newcol;
         HighsInt iRow = this->basis_perm_[ this->relaxed_iloc_ ];

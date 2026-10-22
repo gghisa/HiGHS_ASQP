@@ -301,3 +301,8 @@ qps_files
 solution.sol
 perf.data
 perf.data.old
+Maros-MeszarosEasyList
+Maros-MeszarosFailList
+Maros-MeszarosHardList
+Maros-MeszarosVeryEasyList
+banchmarking.cpp

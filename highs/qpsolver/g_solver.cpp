@@ -60,13 +60,14 @@ void AsmSolver::doUpdates(){
     this->updateObjective();
     this->logging();
     // book keeping
+    this->relaxed_idx_ = -1;
+    this->relaxed_iloc_ = -1;
     this->newactive_idx_ = -1;
     this->newactive_status_ = AsmBasisStatus::kInactive;
     this->info_.qp_iteration_count++;
 }
 
 void AsmSolver::findBestPrice(double& bestmultiplier, double& bestpricesign){
-    this->relaxed_idx_ = -1;
     double bestprice = - this->options_.dual_feasibility_tolerance;
     double price {0.}, sign {0.};
     bestpricesign = 0.; // TODO messy initialisations and temp variables
@@ -111,11 +112,8 @@ void AsmSolver::computeRelaxedDirection(){
             this->LTsolve(vec); // M^{-1} Z^T Q y_p
             this->HBtran(vec); // B^{-T} [ 0 | M^{-1} Z^T Q y_p ] = Z M^{-1} Z^T Q y_p
             for (HighsInt i {0}; i < this->Q_.dim_; i++) this->step_[i] -= vec[i]; // ( I - Z M^{-1} Z^T Q ) y_p
-        } else { // compute y_p^T Q y_p for later
-            double sum {0.}; // for numerical reasons, evaluate first looped sum, then add to potentially bigger number
-            for (HighsInt i {0}; i < this->Q_.dim_; i++) sum += this->step_[i] * this->Rtemp_[i];
-            this->yQytemp_ += sum;
-        }
+        } else // compute y_p^T Q y_p for later
+            for (HighsInt i {0}; i < this->Q_.dim_; i++) this->yQytemp_ += this->step_[i] * this->Rtemp_[i];
         // compute step
         double tol = 10 * this->options_.factor_pivot_tolerance; // TODO use a proper number
         if ( std::abs(this->yQytemp_) <= tol){

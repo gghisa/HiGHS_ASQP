@@ -148,6 +148,7 @@ class AsmSolver {
         static void ratio2(double& max_pivot, const double denom, const double lower, const double upper,
                            const double oldval, const double alphamax, double& alpha,
                            const HighsInt idx, HighsInt& newactive_idx, AsmBasisStatus& newactive_status);
+        void cleanOutActive();
         void reinvertBasis();
         void addNullSpaceDim();
         void removeNullSpaceDim();

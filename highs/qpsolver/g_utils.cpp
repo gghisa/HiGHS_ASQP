@@ -84,8 +84,7 @@ HighsModelStatus AsmSolver::feasibility(){
         Highs highs_feasibility;
         highs_feasibility.passModel(this->feasibility_lp_);
         highs_feasibility.passOptions(this->options_);
-        //feasibility_lp.setOptionValue("presolve", kHighsOnString); // presolving phase1 makes it faster, im guessing the postsolve is included
-        highs_feasibility.setOptionValue("output_flag", false); // don't print anything
+        highs_feasibility.setOptionValue("presolve", kHighsOffString); 
         highs_feasibility.setOptionValue("simplex_strategy", kSimplexStrategyDual); // specifying what solver to use in case a basis is set that is known to be either primal or dual feasible
         // use dual simplex if the objective value is all zeros, beacuse that means dual feasibility is guaranteed
         this->status_ = highs_feasibility.run();

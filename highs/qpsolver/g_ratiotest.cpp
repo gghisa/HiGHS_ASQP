@@ -66,12 +66,23 @@ void AsmSolver::ratiotest_pass2(){
     return;
 }
 
+void AsmSolver::cleanOutActive(){ // set zero movement for those active constraints or bounds
+    for (HighsInt i {0}; i < this->rangsp_dim_; i++){
+        if ( this->relaxed_iloc_ != i ){ // if we are not at the relaxed point
+            if ( this->basis_idxs_[i] < this->lp_.num_row_ ) this->newconpivots_[ this->basis_idxs_[i] ] = 0.;
+            else this->step_[ this->basis_idxs_[i] - this->lp_.num_row_ ] = 0.;
+        }
+    }
+}
+
 void AsmSolver::ratiotest(){
     // assumes this->newvarvals are already computed (due to differences between major and minor loop)
     this->lp_.a_matrix_.product(this->newconvals_, this->newvarvals_); // a_i^T x_{k+1}
     this->lp_.a_matrix_.product(this->newconpivots_, this->step_); // a_i^T \s
+    this->cleanOutActive();
     if ( this->ratiotest_pass1() ) this->ratiotest_pass2(); // if we meet a constraint
     else this->alpha_ = this->alpha_relaxed_;
+    assert(this->getAsmBasisStatus(this->newactive_idx_) != this->newactive_status_); // cannot activate constraint at where it's already active
     // TODO unnecessary computations are done here if we are in minor loop
     // TODO is updating step_ to be done?
     // TODO what if alpha is null?
