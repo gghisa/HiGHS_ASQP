@@ -107,7 +107,7 @@ class AsmSolver {
         HighsModelStatus feasibility();
         void setupFeasibilityLp();
         void setupQpBasis();
-        void setupBasisMat(std::vector<HighsInt>& basis_idxs);
+        void setupBasisMat();
         void buildRelaxedLp();
         // Main loop functions
         void computeReducedDirection();
@@ -135,6 +135,7 @@ class AsmSolver {
         std::string AsmStatusToString(const HighsInt idx);
         std::string AsmStatusToString(const AsmBasisStatus status);
         // Helper functions
+        void extractPermutation();
         void buildZtemp(const HighsInt& iloc);
         bool isQdiagonal();
         AsmBasisStatus getAsmBasisStatus(const HighsInt& idx);

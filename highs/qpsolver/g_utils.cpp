@@ -84,6 +84,7 @@ HighsModelStatus AsmSolver::feasibility(){
         Highs highs_feasibility;
         highs_feasibility.passModel(this->feasibility_lp_);
         highs_feasibility.passOptions(this->options_);
+        highs_feasibility.setOptionValue("output_flag", false); // don't print anything
         highs_feasibility.setOptionValue("presolve", kHighsOffString); 
         highs_feasibility.setOptionValue("simplex_strategy", kSimplexStrategyDual); // specifying what solver to use in case a basis is set that is known to be either primal or dual feasible
         // use dual simplex if the objective value is all zeros, beacuse that means dual feasibility is guaranteed
@@ -139,17 +140,10 @@ void AsmSolver::setupQpBasis(){
                              free_idxs.begin(), free_idxs.end());
     this->HFactor_basis_ = this->basis_idxs_; // store buffer
     // free indices at the start are necessarily variables, so they are unit vectors for sure
-    this->setupBasisMat(this->HFactor_basis_); // setup HFactor
+    this->setupBasisMat(); // setup HFactor
     // since basis indices may have been shuffled so that free indices may not trail active ones anymore,
     // set permutation order to match the index sets (A,V) structure
-    for (HighsInt i {0}; i < this->Q_.dim_; i++){
-        for (HighsInt j {0}; j < this->Q_.dim_; j++){
-            if ( this->basis_idxs_[i] == this->HFactor_basis_[j] ){
-                this->basis_perm_[i] = j;
-                break;
-            }
-        }
-    }
+    this->extractPermutation();
     // build Reduced Hessian
     if ( this->nullsp_dim_ > 0 ){
         // replace non-unitary constraints in padding with unit ones
@@ -175,7 +169,19 @@ void AsmSolver::setupQpBasis(){
     return;
 }
 
-void AsmSolver::setupBasisMat(std::vector<HighsInt>& basis_idxs){ // TODO do not create constraint mat copy
+void AsmSolver::extractPermutation(){
+    for (HighsInt i {0}; i < this->Q_.dim_; i++){
+        for (HighsInt j {0}; j < this->Q_.dim_; j++){
+            if ( this->basis_idxs_[i] == this->HFactor_basis_[j] ){
+                this->basis_perm_[i] = j;
+                break;
+            }
+        }
+    }
+    return;
+}
+
+void AsmSolver::setupBasisMat(){ // TODO do not create constraint mat copy
     HighsSparseMatrix constraint_mat = this->lp_.a_matrix_; // create a copy of the constraint matrix
     constraint_mat.ensureRowwise(); // flip the way in which it is stored
     // but "trick it" into thinking it is still stored columnwise
@@ -183,7 +189,7 @@ void AsmSolver::setupBasisMat(std::vector<HighsInt>& basis_idxs){ // TODO do not
     // use same setup as Micheal, flip the number of rows and columns so that when HFactor uses the matrix
     // it receives the constraint matrix stored "column wise"
     this->B_.setup( constraint_mat.num_row_, constraint_mat.num_col_, constraint_mat.start_.data(),
-                    constraint_mat.index_.data(), constraint_mat.value_.data(), basis_idxs.data() );
+                    constraint_mat.index_.data(), constraint_mat.value_.data(), this->HFactor_basis_.data() );
     this->B_.build();
     return;
 }
@@ -282,8 +288,10 @@ bool AsmSolver::isUnbounded(){
 }
 
 void AsmSolver::reinvertBasis(){
-    this->HFactor_basis_.assign(this->Q_.dim_ + this->lp_.num_row_, -1);
-    this->B_.build(); // TODO are indexes changed?
+    for (HighsInt i {0}; i < this->Q_.dim_; i++) // build ordered list of basis indeces as they appear in basis
+        this->HFactor_basis_[ this->basis_perm_[i] ] = this->basis_idxs_[ i ];
+    this->B_.build();
+    this->extractPermutation();
     this->recomputeRedHessian();
     this->num_basis_updates_ = 0;
     return;

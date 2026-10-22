@@ -57,6 +57,7 @@ void AsmSolver::doUpdates(){
             this->computeReducedVecs();
         }
     }
+    //if ( this->num_basis_updates_ == this->reinversion_freq_ ) this->reinvertBasis();
     this->updateObjective();
     this->logging();
     // book keeping
