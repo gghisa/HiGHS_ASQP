@@ -104,7 +104,6 @@ void AsmSolver::setupFeasibility(){ // build feasibility_lp_
     this->feasibility_.passOptions(this->options_);
     this->feasibility_.setOptionValue("output_flag", false); // don't print anything
     this->feasibility_.setOptionValue("presolve", kHighsOnString); 
-    this->feasibility_.setOptionValue("simplex_strategy", kSimplexStrategyPrimal); // specifying what solver to use in case a basis is set that is known to be either primal or dual feasible
     if (false){
         // set basis with free variables as basic
         this->lp_basis_.clear();
@@ -116,7 +115,8 @@ void AsmSolver::setupFeasibility(){ // build feasibility_lp_
             else this->lp_basis_.col_status.push_back(HighsBasisStatus::kNonbasic);
         }
         this->feasibility_.setBasis(this->lp_basis_);
-    }
+        this->feasibility_.setOptionValue("simplex_strategy", kSimplexStrategyPrimal);
+    } else this->feasibility_.setOptionValue("simplex_strategy", kSimplexStrategyDual); // TODO test removal of this line. what is default?
     return;
 }
 
