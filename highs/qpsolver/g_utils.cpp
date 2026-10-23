@@ -105,16 +105,18 @@ void AsmSolver::setupFeasibility(){ // build feasibility_lp_
     this->feasibility_.setOptionValue("output_flag", false); // don't print anything
     this->feasibility_.setOptionValue("presolve", kHighsOnString); 
     this->feasibility_.setOptionValue("simplex_strategy", kSimplexStrategyPrimal); // specifying what solver to use in case a basis is set that is known to be either primal or dual feasible
-    // set basis with free variables as basic
-    this->lp_basis_.clear();
-    this->lp_basis_.alien = true;
-    this->lp_basis_.row_status.assign(this->lp_.num_row_, HighsBasisStatus::kNonbasic);
-    for (HighsInt i {0}; i <  this->Q_.dim_; i++){
-        if ( this->lp_.col_lower_[i] == -kHighsInf && this->lp_.col_upper_[i] == kHighsInf )
-            this->lp_basis_.col_status.push_back(HighsBasisStatus::kBasic);
-        else this->lp_basis_.col_status.push_back(HighsBasisStatus::kNonbasic);
+    if (false){
+        // set basis with free variables as basic
+        this->lp_basis_.clear();
+        this->lp_basis_.alien = true;
+        this->lp_basis_.row_status.assign(this->lp_.num_row_, HighsBasisStatus::kNonbasic);
+        for (HighsInt i {0}; i <  this->Q_.dim_; i++){
+            if ( this->lp_.col_lower_[i] == -kHighsInf && this->lp_.col_upper_[i] == kHighsInf )
+                this->lp_basis_.col_status.push_back(HighsBasisStatus::kBasic);
+            else this->lp_basis_.col_status.push_back(HighsBasisStatus::kNonbasic);
+        }
+        this->feasibility_.setBasis(this->lp_basis_);
     }
-    this->feasibility_.setBasis(this->lp_basis_);
     return;
 }
 

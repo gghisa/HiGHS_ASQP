@@ -170,7 +170,7 @@ void AsmSolver::extend(){
     if (this->yQytemp_ < tol ){
         this->yQytemp_ += 1e-4; // TODO implement noncovex code
     }
-    assert(this->yQytemp_ > - tol);
+    assert(this->yQytemp_ > 0);
     this->chol_.push_back( std::sqrt(this->yQytemp_) );
     // then change padding vector to unit vector if it wasn't a unit vector
     if ( idx_deactivated < this->lp_.num_row_ ){
