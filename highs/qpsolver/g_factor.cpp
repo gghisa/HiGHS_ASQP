@@ -167,12 +167,10 @@ void AsmSolver::extend(){
         this->yQytemp_ -= sum;
     }
     double tol = 10 * this->options_.factor_pivot_tolerance;
-    if (this->yQytemp_ < - tol ){
-        std::cout<<"Reduced matrix is either semi- or indefinite!\n"<<std::flush;
-        throw std::domain_error("Reduced matrix is either semi- or indefinite!");
-    } else if ( this->yQytemp_ < tol ){
-        this->yQytemp_ += this->options_.primal_feasibility_tolerance; // TODO implement noncovex code
+    if (this->yQytemp_ < tol ){
+        this->yQytemp_ += 1e-4; // TODO implement noncovex code
     }
+    assert(this->yQytemp_ > - tol);
     this->chol_.push_back( std::sqrt(this->yQytemp_) );
     // then change padding vector to unit vector if it wasn't a unit vector
     if ( idx_deactivated < this->lp_.num_row_ ){

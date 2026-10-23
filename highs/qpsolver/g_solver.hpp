@@ -42,6 +42,7 @@ class AsmSolver {
         HighsInfo& info_;
         HighsCallback& callback_;
         //
+        Highs feasibility_;
         HighsLp feasibility_lp_;
         double objective_; // objective function value
         HighsStatus status_ {HighsStatus::kOk}; // TODO update as you go
@@ -105,7 +106,7 @@ class AsmSolver {
         void refresh(const double& max_abs, HVector& newcol);
         // Feasibility phase functions
         HighsModelStatus feasibility();
-        void setupFeasibilityLp();
+        void setupFeasibility();
         void setupQpBasis();
         void setupBasisMat();
         void buildRelaxedLp();

@@ -80,22 +80,15 @@ HighsModelStatus AsmSolver::feasibility(){
         this->status_ = HighsStatus::kError; // TODO, for now do not run the active set solver
         this->model_status_ = HighsModelStatus::kUnknown;
     } else {
-        this->setupFeasibilityLp();
-        Highs highs_feasibility;
-        highs_feasibility.passModel(this->feasibility_lp_);
-        highs_feasibility.passOptions(this->options_);
-        highs_feasibility.setOptionValue("output_flag", false); // don't print anything
-        highs_feasibility.setOptionValue("presolve", kHighsOffString); 
-        highs_feasibility.setOptionValue("simplex_strategy", kSimplexStrategyDual); // specifying what solver to use in case a basis is set that is known to be either primal or dual feasible
-        // use dual simplex if the objective value is all zeros, beacuse that means dual feasibility is guaranteed
-        this->status_ = highs_feasibility.run();
-        this->model_status_ = highs_feasibility.getModelStatus();
+        this->setupFeasibility();// use dual simplex if the objective value is all zeros, beacuse that means dual feasibility is guaranteed
+        this->status_ = this->feasibility_.run();
+        this->model_status_ = this->feasibility_.getModelStatus();
         // TODO what if phase 1 finds unbounded problem (hence not optimal)?
         if ( this->model_status_ == HighsModelStatus::kOptimal ){
             this->model_status_ = HighsModelStatus::kNotset;
-            this->info_.simplex_iteration_count = highs_feasibility.getSimplexIterationCount();
-            this->lp_basis_ = highs_feasibility.getBasis();
-            this->solution_ = highs_feasibility.getSolution();
+            this->info_.simplex_iteration_count = this->feasibility_.getSimplexIterationCount();
+            this->lp_basis_ = this->feasibility_.getBasis();
+            this->solution_ = this->feasibility_.getSolution();
             this->updateObjective();
             this->setupQpBasis();
             this->buildRelaxedLp();
@@ -105,14 +98,24 @@ HighsModelStatus AsmSolver::feasibility(){
     return this->model_status_;
 }
 
-void AsmSolver::setupFeasibilityLp(){
-    // build feasibility_lp_
+void AsmSolver::setupFeasibility(){ // build feasibility_lp_
     this->feasibility_lp_.col_cost_.assign(this->Q_.dim_, 0.); // zero out objective
+    this->feasibility_.passModel(this->feasibility_lp_);
+    this->feasibility_.passOptions(this->options_);
+    this->feasibility_.setOptionValue("output_flag", false); // don't print anything
+    this->feasibility_.setOptionValue("presolve", kHighsOnString); 
+    this->feasibility_.setOptionValue("simplex_strategy", kSimplexStrategyPrimal); // specifying what solver to use in case a basis is set that is known to be either primal or dual feasible
+    // set basis with free variables as basic
+    this->lp_basis_.clear();
+    this->lp_basis_.alien = true;
+    this->lp_basis_.row_status.assign(this->lp_.num_row_, HighsBasisStatus::kNonbasic);
+    for (HighsInt i {0}; i <  this->Q_.dim_; i++){
+        if ( this->lp_.col_lower_[i] == -kHighsInf && this->lp_.col_upper_[i] == kHighsInf )
+            this->lp_basis_.col_status.push_back(HighsBasisStatus::kBasic);
+        else this->lp_basis_.col_status.push_back(HighsBasisStatus::kNonbasic);
+    }
+    this->feasibility_.setBasis(this->lp_basis_);
     return;
-    // TODO minimize slacks in this first phase
-    // we want to have as small of a nullspace as possible;
-    // do we also want to have as many bounds, rather than constraints,
-    // active, to maximise HFactor's sparsity?
 }
 
 void AsmSolver::setupQpBasis(){
