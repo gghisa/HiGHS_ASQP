@@ -45,18 +45,17 @@ void AsmSolver::doUpdates(){
             this->extend();
             this->atFSEP_ = false;
         }
-        this->computeReducedVecs();
     } else {
+        // TODO use specific red grad update when using indefinite approach
         if ( this->newactive_idx_ > -1){
             this->activate();
             this->stepAlreadyTaken_ = false;
-            this->updateRedGrad();
         } else { // no need to update reduced gradient, only pricing
             this->atFSEP_ = true;
             this->stepAlreadyTaken_ = true;
-            this->computeReducedVecs();
         }
     }
+    this->computeReducedVecs();
     //if ( this->num_basis_updates_ == this->reinversion_freq_ ) this->reinvertBasis();
     this->updateObjective();
     this->logging();
@@ -176,7 +175,8 @@ void AsmSolver::activate(){
         this->basis_idxs_[loc_remove] = this->newactive_idx_; // update index
     }
     this->changeStatus(this->newactive_idx_, this->newactive_status_);
-    if ( loc_remove > this->rangsp_dim_ ) // perform move if element isnt already neighbouring active indices
+    assert( loc_remove >= this->rangsp_dim_ );
+    if ( loc_remove != this->rangsp_dim_ ) // perform move if element isnt already neighbouring active indices
         this->fromPaddingToActive(loc_remove);
     this->removeNullSpaceDim();
     // logging

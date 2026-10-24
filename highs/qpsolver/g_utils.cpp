@@ -103,20 +103,17 @@ void AsmSolver::setupFeasibility(){ // build feasibility_lp_
     this->feasibility_.passModel(this->feasibility_lp_);
     this->feasibility_.passOptions(this->options_);
     this->feasibility_.setOptionValue("output_flag", false); // don't print anything
-    this->feasibility_.setOptionValue("presolve", kHighsOnString); 
-    if (false){
-        // set basis with free variables as basic
-        this->lp_basis_.clear();
-        this->lp_basis_.alien = true;
-        this->lp_basis_.row_status.assign(this->lp_.num_row_, HighsBasisStatus::kNonbasic);
-        for (HighsInt i {0}; i <  this->Q_.dim_; i++){
-            if ( this->lp_.col_lower_[i] == -kHighsInf && this->lp_.col_upper_[i] == kHighsInf )
-                this->lp_basis_.col_status.push_back(HighsBasisStatus::kBasic);
-            else this->lp_basis_.col_status.push_back(HighsBasisStatus::kNonbasic);
-        }
-        this->feasibility_.setBasis(this->lp_basis_);
-        this->feasibility_.setOptionValue("simplex_strategy", kSimplexStrategyPrimal);
-    } else this->feasibility_.setOptionValue("simplex_strategy", kSimplexStrategyDual); // TODO test removal of this line. what is default?
+    this->feasibility_.setOptionValue("presolve", kHighsOnString);
+    this->lp_basis_.clear();
+    this->lp_basis_.alien = true;
+    this->lp_basis_.row_status.assign(this->lp_.num_row_, HighsBasisStatus::kNonbasic);
+    for (HighsInt i {0}; i <  this->Q_.dim_; i++){
+        if ( this->lp_.col_lower_[i] == -kHighsInf && this->lp_.col_upper_[i] == kHighsInf )
+            this->lp_basis_.col_status.push_back(HighsBasisStatus::kBasic);
+        else this->lp_basis_.col_status.push_back(HighsBasisStatus::kNonbasic);
+    }
+    this->feasibility_.setBasis(this->lp_basis_);
+    this->feasibility_.setOptionValue("simplex_strategy", kSimplexStrategyChoose);
     return;
 }
 
