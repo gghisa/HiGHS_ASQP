@@ -185,7 +185,7 @@ void AsmSolver::extend(){
         // then update reduced hessian factor
         if ( this->nullsp_dim_ > 0 ) // if nullspace wasn't empty before deactivation rotations have a reason to be used
             this->refresh(max_abs, newcol);
-        else this->chol_.back() /= max_abs; // otherwise chol_ is a singleton that only needs scaling
+        else this->chol_.back() /= std::abs(max_abs); // otherwise chol_ is a singleton that only needs scaling
     }
     // update status
     this->changeStatus(this->basis_idxs_[this->relaxed_iloc_], AsmBasisStatus::kFreeInBasis); // NB use location to account for both cases above

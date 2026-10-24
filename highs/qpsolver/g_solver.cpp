@@ -49,6 +49,7 @@ void AsmSolver::doUpdates(){
         // TODO use specific red grad update when using indefinite approach
         if ( this->newactive_idx_ > -1){
             this->activate();
+            if ( this->nullsp_dim_ == 0 ) this->atFSEP_ = true;
             this->stepAlreadyTaken_ = false;
         } else { // no need to update reduced gradient, only pricing
             this->atFSEP_ = true;
