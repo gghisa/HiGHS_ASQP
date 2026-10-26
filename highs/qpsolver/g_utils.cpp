@@ -93,7 +93,9 @@ HighsModelStatus AsmSolver::feasibility(){
             this->updateObjective();
             this->setupQpBasis();
             this->buildRelaxedLp();
-            if ( this->diagonalQ_ ) highsLogDev(this->options_.log_options, HighsLogType::kInfo, "Hessian is diagonal.");
+            if ( this->diagonalQ_ ) highsLogDev(this->options_.log_options, HighsLogType::kInfo, "Hessian is diagonal.\n");
+            highsLogUser(this->options_.log_options, HighsLogType::kInfo,
+                        "Iteraton #             Objective value    Nullspace size\n");
         }
     }
     return this->model_status_;
@@ -453,7 +455,7 @@ void AsmSolver::logging(){ // TODO
         this->logged_attime = now;
         this->logged_atiter = this->info_.qp_iteration_count;
         highsLogUser(this->options_.log_options, HighsLogType::kInfo,
-                 "Iter %10d:    Obj %20f,   Nullspace dim %10d\n",
+                 "%10d        %20f        %10d\n",
                  this->info_.qp_iteration_count, this->objective_, this->nullsp_dim_);
     }
 }
