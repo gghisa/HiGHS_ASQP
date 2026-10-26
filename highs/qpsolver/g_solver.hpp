@@ -53,6 +53,7 @@ class AsmSolver {
         HFactor B_;
         std::vector<double> buffer_; // for operations with permutations
         std::vector<double> Rtemp_; // buffer for the solution of L x = Z^T Q y_p
+        std::vector<double> Qtemp_; // buffer for Q_.product(solution_.col_value) after updates
         HVector Ztemp_;
         double yQytemp_; 
         // Real numbers vectors

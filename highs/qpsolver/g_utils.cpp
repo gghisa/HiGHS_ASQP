@@ -27,6 +27,7 @@ AsmSolver::AsmSolver(const HighsOptions& options,
                      callback_(callback),
                      feasibility_lp_(lp),
                      buffer_(hessian.dim_),
+                     Qtemp_(hessian.dim_),
                      step_(hessian.dim_),
                      newvarvals_(hessian.dim_),
                      newconvals_(lp.num_row_),
@@ -224,7 +225,8 @@ void AsmSolver::updateRedGrad(){ // g + Q x_k
 
 void AsmSolver::computeReducedVecs(){ // solve B x = (g + Q x_k) to compute Dantzig prices and reduced gradient
     // g + Q x_k
-    this->Q_.product(this->solution_.col_value, this->pricing_); // stores result in pricing_
+    this->Q_.product(this->solution_.col_value, this->Qtemp_);
+    this->pricing_ = this->Qtemp_;
     for (HighsInt i {0}; i < this->Q_.dim_; i++){ // add g to Q x_k
         this->pricing_[i] += this->lp_.col_cost_[i];
     }
@@ -245,9 +247,8 @@ void AsmSolver::compute_varvals(const double& alpha, std::vector<double>& loc){ 
 
 void AsmSolver::updateObjective(){
     this->objective_ = 0.;
-    this->Q_.product(this->solution_.col_value, this->buffer_);
     for (HighsInt i {0}; i < this->Q_.dim_; i++){
-        this->objective_ += this->solution_.col_value[i] * this->buffer_[i];
+        this->objective_ += this->solution_.col_value[i] * this->Qtemp_[i];
     }
     this->objective_ *= 0.5;
     this->objective_ += this->lp_.objectiveValue(this->solution_.col_value);

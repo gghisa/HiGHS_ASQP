@@ -310,3 +310,6 @@ asmbenchmarking
 asmbenchmarking.cpp
 Maros-MeszarosFullResults.txt
 results.csv
+benchmark_analysis/benchmark_analysis.ipynb
+benchmark_analysis/results_ASQP.csv
+benchmark_analysis/merged_partial_results.csv
