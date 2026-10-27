@@ -57,7 +57,7 @@ void AsmSolver::doUpdates(){
         }
     }
     this->computeReducedVecs(); // TODO note that Qtemp_ is computed here and used later
-    //if ( this->num_basis_updates_ == this->reinversion_freq_ ) this->reinvertBasis();
+    //if ( this->num_basis_updates_ == this->reinversion_freq_ || this->Bhint_ != 99999 ) this->reinvertBasis();
     this->updateObjective();
     this->logging();
     // book keeping

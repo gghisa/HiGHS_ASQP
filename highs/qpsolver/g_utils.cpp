@@ -90,7 +90,6 @@ HighsModelStatus AsmSolver::feasibility(){
             this->info_.simplex_iteration_count = this->feasibility_.getSimplexIterationCount();
             this->lp_basis_ = this->feasibility_.getBasis();
             this->solution_ = this->feasibility_.getSolution();
-            this->updateObjective();
             this->setupQpBasis();
             this->buildRelaxedLp();
             if ( this->diagonalQ_ ) highsLogDev(this->options_.log_options, HighsLogType::kInfo, "Hessian is diagonal.\n");
@@ -171,6 +170,7 @@ void AsmSolver::setupQpBasis(){
         this->atFSEP_ = false; // so that first minor loop is initiated
     }
     this->computeReducedVecs(); // compute initial reduced gradient and pricing
+    this->updateObjective();
     return;
 }
 
@@ -290,16 +290,6 @@ bool AsmSolver::isUnbounded(){
         return true;
     }
     return false;
-}
-
-void AsmSolver::reinvertBasis(){
-    for (HighsInt i {0}; i < this->Q_.dim_; i++) // build ordered list of basis indeces as they appear in basis
-        this->HFactor_basis_[ this->basis_perm_[i] ] = this->basis_idxs_[ i ];
-    this->B_.build();
-    this->extractPermutation();
-    this->recomputeRedHessian();
-    this->num_basis_updates_ = 0;
-    return;
 }
 
 void AsmSolver::addNullSpaceDim(){

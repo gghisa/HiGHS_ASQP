@@ -422,17 +422,10 @@ set(highs_sources
     presolve/ICrashUtil.cpp
     presolve/ICrashX.cpp
     presolve/PresolveComponent.cpp
-    qpsolver/a_asm.cpp
-    qpsolver/a_quass.cpp
     qpsolver/g_factor.cpp
     qpsolver/g_ratiotest.cpp
     qpsolver/g_solver.cpp
     qpsolver/g_utils.cpp
-    qpsolver/basis.cpp
-    qpsolver/QpAsmWrapper.cpp
-    qpsolver/quass.cpp
-    qpsolver/ratiotest.cpp
-    qpsolver/scaling.cpp
     simplex/HEkk.cpp
     simplex/HEkkControl.cpp
     simplex/HEkkDebug.cpp
@@ -574,31 +567,7 @@ set(highs_headers
     presolve/ICrashUtil.h
     presolve/ICrashX.h
     presolve/PresolveComponent.h
-    qpsolver/a_asm.hpp
-    qpsolver/a_quass.hpp
     qpsolver/g_solver.hpp
-    qpsolver/basis.hpp
-    qpsolver/dantzigpricing.hpp
-    qpsolver/devexpricing.hpp
-    qpsolver/eventhandler.hpp
-    qpsolver/factor.hpp
-    qpsolver/feasibility_bounded.hpp
-    qpsolver/feasibility_highs.hpp
-    qpsolver/gradient.hpp
-    qpsolver/instance.hpp
-    qpsolver/matrix.hpp
-    qpsolver/pricing.hpp
-    qpsolver/QpAsmWrapper.h
-    qpsolver/qpconst.hpp
-    qpsolver/qpvector.hpp
-    qpsolver/quass.hpp
-    qpsolver/ratiotest.hpp
-    qpsolver/runtime.hpp
-    qpsolver/scaling.hpp
-    qpsolver/settings.hpp
-    qpsolver/snippets.hpp
-    qpsolver/statistics.hpp
-    qpsolver/steepestedgepricing.hpp
     simplex/HApp.h
     simplex/HEkk.h
     simplex/HEkkDual.h

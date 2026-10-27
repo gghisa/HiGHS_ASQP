@@ -433,4 +433,16 @@ void AsmSolver::replace(){
         this->basis_idxs_[ this->relaxed_iloc_ ] = this->newactive_idx_; // update basis indices
     }
     this->changeStatus( this->newactive_idx_, this->newactive_status_ ); // update status of new active constraint
+    return;
+}
+
+void AsmSolver::reinvertBasis(){
+    for (HighsInt i {0}; i < this->Q_.dim_; i++) // build ordered list of basis indeces as they appear in basis
+        this->HFactor_basis_[ this->basis_perm_[i] ] = this->basis_idxs_[ i ];
+    this->B_.build();
+    this->extractPermutation();
+    this->recomputeRedHessian();
+    this->num_basis_updates_ = 0;
+    this->Bhint_ = 99999;
+    return;
 }
