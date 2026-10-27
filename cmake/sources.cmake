@@ -426,6 +426,7 @@ set(highs_sources
     qpsolver/g_ratiotest.cpp
     qpsolver/g_solver.cpp
     qpsolver/g_utils.cpp
+    qpsolver/QpAsmWrapper.cpp
     simplex/HEkk.cpp
     simplex/HEkkControl.cpp
     simplex/HEkkDebug.cpp
@@ -568,6 +569,7 @@ set(highs_headers
     presolve/ICrashX.h
     presolve/PresolveComponent.h
     qpsolver/g_solver.hpp
+    qpsolver/QpAsmWrapper.h
     simplex/HApp.h
     simplex/HEkk.h
     simplex/HEkkDual.h

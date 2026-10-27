@@ -382,6 +382,9 @@ bool AsmSolver::isQdiagonal(){
 }
 
 void AsmSolver::AsmToHighs(){
+    highsLogUser(this->options_.log_options, HighsLogType::kInfo,
+                "%10d        %20f        %10d\n",
+                this->info_.qp_iteration_count, this->objective_, this->nullsp_dim_);
     // convert basis statuses
     for (HighsInt i {0}; i < this->Q_.dim_; i++)
         this->lp_basis_.col_status[i] = convertAsmBasisToHighs(this->var_status_[i]);
