@@ -437,8 +437,7 @@ void AsmSolver::replace(){
 }
 
 void AsmSolver::reinvertBasis(){
-    for (HighsInt i {0}; i < this->Q_.dim_; i++) // build ordered list of basis indeces as they appear in basis
-        this->HFactor_basis_[ this->basis_perm_[i] ] = this->basis_idxs_[ i ];
+    this->HFactor_basis_ = this->basis_idxs_;
     this->B_.build();
     this->extractPermutation();
     this->recomputeRedHessian();

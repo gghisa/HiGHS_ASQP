@@ -46,6 +46,7 @@ class AsmSolver {
         HighsLp feasibility_lp_;
         double objective_; // objective function value
         HighsStatus status_ {HighsStatus::kOk}; // TODO update as you go
+        HighsSparseMatrix HFactor_amatrix_;
         // ASM data
         HighsInt nullsp_dim_ {0};
         HighsInt rangsp_dim_ {this->Q_.dim_};
@@ -69,7 +70,7 @@ class AsmSolver {
         double alpha_relaxed_ {1.}; // step size for relaxed (first pass) ratio test
         double alpha_ {1.}; // step size for second pass ratio test
         HighsInt num_basis_updates_ {0};
-        HighsInt reinversion_freq_ {10};
+        HighsInt reinversion_freq_ { 10000 };
         bool diagonalQ_ {false};
         bool stepAlreadyTaken_ {false};
         bool atFSEP_ {true};

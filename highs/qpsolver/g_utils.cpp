@@ -187,14 +187,14 @@ void AsmSolver::extractPermutation(){
 }
 
 void AsmSolver::setupBasisMat(){ // TODO do not create constraint mat copy
-    HighsSparseMatrix constraint_mat = this->lp_.a_matrix_; // create a copy of the constraint matrix
-    constraint_mat.ensureRowwise(); // flip the way in which it is stored
+    this->HFactor_amatrix_ = this->lp_.a_matrix_; // create a copy of the constraint matrix
+    this->HFactor_amatrix_.ensureRowwise(); // flip the way in which it is stored
     // but "trick it" into thinking it is still stored columnwise
     // where each column is a constraint. its inverse transpose will have as columns the nullspace basis
     // use same setup as Micheal, flip the number of rows and columns so that when HFactor uses the matrix
     // it receives the constraint matrix stored "column wise"
-    this->B_.setup( constraint_mat.num_row_, constraint_mat.num_col_, constraint_mat.start_.data(),
-                    constraint_mat.index_.data(), constraint_mat.value_.data(), this->HFactor_basis_.data() );
+    this->B_.setup( this->HFactor_amatrix_.num_row_, this->HFactor_amatrix_.num_col_, this->HFactor_amatrix_.start_.data(),
+                    this->HFactor_amatrix_.index_.data(), this->HFactor_amatrix_.value_.data(), this->HFactor_basis_.data() );
     this->B_.build();
     return;
 }
