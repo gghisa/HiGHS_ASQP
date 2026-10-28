@@ -304,13 +304,9 @@ qps_files
 solution.sol
 perf.data
 perf.data.old
-Maros-MeszarosEasyList
-Maros-MeszarosFailList
-Maros-MeszarosHardList
-Maros-MeszarosVeryEasyList
+Maros-Meszaros*
 banchmarking.cpp
 asmbenchmarking
 asmbenchmarking.cpp
-Maros-MeszarosFullResults.txt
 results*
 benchmark_analysis/
