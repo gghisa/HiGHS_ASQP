@@ -140,7 +140,6 @@ class AsmSolver {
         // Helper functions
         void extractPermutation();
         void buildZtemp(const HighsInt& iloc);
-        bool isQdiagonal();
         AsmBasisStatus getAsmBasisStatus(const HighsInt& idx);
         void fromActiveToPadding(const HighsInt& loc);
         void fromPaddingToActive(const HighsInt& loc);
